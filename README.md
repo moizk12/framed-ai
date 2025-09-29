@@ -1,55 +1,57 @@
-# FRAMED
-The new breakthrough of image ai.
+<h1 align="center">FRAMED — Visual Soul Companion (framed-ai)</h1>
 
-## Features
+<p align="center">
+  <a href="https://github.com/YOURUSER/framed-ai/actions"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/YOURUSER/framed-ai/ci.yml?label=CI"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
+  <a href="https://github.com/YOURUSER/framed-ai/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/YOURUSER/framed-ai"></a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
+</p>
 
-- AI-based critique rooted in photographic legends (Ansel Adams, Fan Ho, Sontag, Cartier-Bresson)
-- Aesthetic scoring, emotional mapping, subject analysis, composition breakdown
-- Remix Engine 2.0 for creative reimaginings and future shoot prompts
-- ECHO: A visual identity system that extracts your evolving artistic “voiceprint”
-- Ask ECHO deep questions about your artistic truth
+<p align="center"><b>AI that maps your photographic identity, writes poetic critiques, and gives assignment cards that push your craft.</b></p>
 
-## Tech Stack
+<p align="center">
+<img src="docs/demo.gif" alt="FRAMED demo" width="760">
+</p>
 
-- **Backend**: Python, Flask, OpenAI GPT-4, YOLOv8, CLIP, TensorFlow, DeepFace
-- **Frontend**: HTML, CSS, JS
-- **Design**: Cinematic, poetic, dark-theme UI
+## Why it matters
+- **Identity, not just analysis:** Builds your ECHO voiceprint across many photos.
+- **Growth you can shoot:** Generates concrete assignment cards (lens/time/scene/sequence).
+- **Independent & verifiable:** Local analysis + optional cloud “poet,” all artifacts signed.
 
-## Setup Instructions
+## What’s inside
+- **Core analyzers:** YOLOv8, OpenCLIP, DeepFace (optional), NIMA, color/tonal/lines
+- **Critique brain:** Local poet (offline) with optional GPT “Cloud Enhance”
+- **ECHO graph:** Clusters motifs and style evolution over time
+- **Remix 2.0:** Shot recipes and next-shoot plans
+- **Proof:** JSON + PDF reports cryptographically signed (ProofLens-ready)
 
-1. Clone the repository  
-git clone https://github.com/YOUR_USERNAME/framed-visual-soul.git
-cd framed-visual-soul
-
-2. (Optional) Create virtual environment  
-python -m venv venv
-source venv/bin/activate # or venv\Scripts\activate on Windows
-
-3. Install dependencies  
+## 1-minute Quickstart
+```bash
+python -m venv .venv && source .venv/bin/activate   # (Windows: .venv\Scripts\activate)
 pip install -r requirements.txt
+python app/main.py
+# Open http://127.0.0.1:5000
+How it works
+mermaid
+Copy code
+flowchart LR
+A[Upload Photos] --> B[Preprocess]
+B --> C[Local Analyzers: YOLO/CLIP/DeepFace/NIMA]
+C --> D[Consolidated JSON Schema]
+D --> E[ECHO Identity & Clusters]
+D --> F[Critique & Remix (Local Poet / Cloud)]
+E --> G[Assignment Cards]
+F --> H[PDF & Signed Manifests]
+Roadmap
+ Portfolio ingest + ECHO graph (UMAP + KMeans)
 
-4. Run the app  
-python app.py
+ Assignment Cards (Intent Lens)
 
-5. Open your browser at `http://127.0.0.1:5000`
+ Local Poet (LoRA) + RAG quotes (offline)
 
-## Deployment
+ Cloud Enhance toggle (GPT)
 
-You can deploy to:
-- [Render](https://render.com/)
-- [Railway](https://railway.app/)
-- [Heroku](https://www.heroku.com/)  
-- or any platform that supports Python/Flask
+ Export: PDF + signed JSON
 
----
-
-## License
-
-MIT License  
-Copyright © 2025
-
----
-
-## Credits
-
-Built by **Moiz Kashif** — with love for photography, philosophy, and AI.
+License
+MIT © Moiz Kashif
