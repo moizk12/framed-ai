@@ -1,5 +1,5 @@
 <h1 align="center">FRAMED — Visual Soul Companion (framed-ai)</h1>
-
+![Build](https://github.com/moizk12/framed-ai/actions/workflows/ci.yml/badge.svg)
 <p align="center">
   <a href="https://github.com/YOURUSER/framed-ai/actions"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/YOURUSER/framed-ai/ci.yml?label=CI"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-green.svg"></a>

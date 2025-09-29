@@ -1,13 +1,18 @@
+# Python
+.venv/
 __pycache__/
 *.pyc
 
-venv*/
-env*/
-
+# Data/weights/uploads
+weights/
+models/
 uploads/
+static/uploads/
 
-*.h5
+# Env & secrets
+.env
+*.env
 
-.vscode/
-.idea/
-.DS_Store
+# Build
+dist/
+build/
