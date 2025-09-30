@@ -1,17 +1,24 @@
 <h1 align="center">FRAMED — Visual Soul Companion (framed-ai)</h1>
-![Build](https://github.com/moizk12/framed-ai/actions/workflows/ci.yml/badge.svg)
+
 <p align="center">
-  <a href="https://github.com/YOURUSER/framed-ai/actions"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/YOURUSER/framed-ai/ci.yml?label=CI"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
-  <a href="https://github.com/YOURUSER/framed-ai/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/YOURUSER/framed-ai"></a>
+  <a href="https://github.com/moizk12/framed-ai/actions/workflows/ci.yml">
+    <img alt="Build" src="https://github.com/moizk12/framed-ai/actions/workflows/ci.yml/badge.svg?branch=main">
+  </a>
+  <a href="LICENSE">
+    <img alt="License" src="https://img.shields.io/badge/License-MIT-blue.svg">
+  </a>
+  <a href="https://github.com/moizk12/framed-ai/stargazers">
+    <img alt="Stars" src="https://img.shields.io/github/stars/moizk12/framed-ai?style=social">
+  </a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
 </p>
 
 <p align="center"><b>AI that maps your photographic identity, writes poetic critiques, and gives assignment cards that push your craft.</b></p>
 
 <p align="center">
-<img src="docs/demo.gif" alt="FRAMED demo" width="760">
+  <img src="docs/demo.gif" alt="FRAMED demo" width="760">
 </p>
+
 
 ## Why it matters
 - **Identity, not just analysis:** Builds your ECHO voiceprint across many photos.
