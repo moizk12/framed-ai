@@ -29,12 +29,12 @@ from config import OPENAI_API_KEY
 # 🚀 INITIALIZE APP + FOLDERS
 # ========================================================
 
-app = Flask(__name__, static_folder="static", template_folder=".")
+app = Flask(__name__, static_folder="static", template_folder="templates")
 CORS(app)  # later: restrict to your domain for production
 
 UPLOAD_FOLDER = "static/uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 ECHO_MEMORY_PATH = "echo_memory.json"
 
 

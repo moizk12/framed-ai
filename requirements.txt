@@ -8,7 +8,5 @@ transformers
 ultralytics
 scikit-learn
 colorthief
-deepface
-tensorflow==2.15.0
 gunicorn
 openai
