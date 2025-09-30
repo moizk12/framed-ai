@@ -2,6 +2,8 @@
 # 📦 IMPORTS
 # ========================================================
 from flask import Flask, request, render_template, url_for
+from flask import send_from_directory, jsonify
+import uuid
 import os
 import cv2
 import numpy as np
@@ -18,19 +20,24 @@ from ultralytics import YOLO
 from sklearn.cluster import KMeans
 from colorthief import ColorThief
 from deepface import DeepFace
+import json
+from collections import Counter, defaultdict
+from flask_cors import CORS
 from config import OPENAI_API_KEY
-
 
 # ========================================================
 # 🚀 INITIALIZE APP + FOLDERS
 # ========================================================
 
-app = Flask(__name__)
-UPLOAD_FOLDER = 'static/uploads'
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app = Flask(__name__, static_folder="static", template_folder=".")
+CORS(app)  # later: restrict to your domain for production
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+UPLOAD_FOLDER = "static/uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+ECHO_MEMORY_PATH = "echo_memory.json"
+
+
 
 # ========================================================
 # 🚀 LOAD AI MODELS
@@ -39,25 +46,44 @@ if not os.path.exists(UPLOAD_FOLDER):
 # YOLO for object detection
 yolo_model = YOLO("yolov8n.pt")
 
+def detect_objects(image_path):
+    res = yolo_model(image_path)
+    names = res[0].names
+    objects = []
+    for b in res[0].boxes:
+        cls_idx = int(b.cls.item())
+        objects.append(names.get(cls_idx, str(cls_idx)))
+    return objects if objects else ["No objects detected"]
+
+
 # CLIP for semantic description
 device = "cuda" if torch.cuda.is_available() else "cpu"
 clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
 clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
 # NIMA for aesthetic scoring
+# ===== NIMA for aesthetic scoring (optional) =====
 def load_nima_model(model_path='models/nima_mobilenet.h5'):
-    base_model = MobileNet(include_top=False, input_shape=(224, 224, 3), pooling='avg')
-    x = base_model.output
-    x = Dropout(0.75)(x)
-    output = Dense(10, activation='softmax')(x)
-    model = Model(inputs=base_model.input, outputs=output)
-    model.load_weights(model_path)
-    return model
+    try:
+        base_model = MobileNet(include_top=False, input_shape=(224, 224, 3), pooling='avg')
+        x = Dropout(0.75)(base_model.output)
+        output = Dense(10, activation='softmax')(x)
+        model = Model(inputs=base_model.input, outputs=output)
+        if os.path.exists(model_path):
+            model.load_weights(model_path)
+            return model
+        else:
+            print(f"[NIMA] Weights not found at {model_path}. NIMA disabled.")
+            return None
+    except Exception as e:
+        print("[NIMA] Disabled:", e)
+        return None
 
 nima_model = load_nima_model()
 
+
 # OpenAI Client
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # ========================================================
 # 📸 IMAGE ANALYSIS FUNCTIONS
@@ -71,133 +97,101 @@ def get_clip_description(image_path):
     """
     Generate a semantic description and genre hint using CLIP model.
     """
-
-    # Load and prepare image
+    # Load image
     image = Image.open(image_path).convert("RGB")
 
-    # Expanded caption list (rich + poetic + genre aware)
+    # Caption candidates
     candidate_captions = [
-
-        # --- Portraiture ---
+        # Portrait
         "A cinematic portrait in dramatic lighting", "A candid photo of a person lost in thought",
         "A joyful person laughing in soft light", "A melancholic person sitting alone",
         "A romantic close-up of two people", "A fashion portrait with striking style",
         "A vintage style portrait with film aesthetics",
 
-        # --- Street / Urban ---
+        # Street / Urban
         "A quiet street at night under neon lights", "A chaotic urban scene full of motion",
         "A street musician playing passionately", "A group of people crossing a busy street",
         "A solitary figure walking through the rain",
 
-        # --- Landscape / Nature ---
+        # Landscape / Nature
         "A misty mountain landscape at dawn", "A sunset over a calm lake with reflections",
         "A dramatic stormy sky over vast fields", "A dense forest with sunlight filtering through leaves",
         "A snowy landscape evoking silence and stillness", "A desert scene with strong shadows and patterns",
 
-        # --- Conceptual / Abstract ---
+        # Conceptual / Abstract
         "A surreal photo blending multiple realities", "An abstract composition of geometric shapes",
         "A dreamy photo with pastel tones and blur", "A minimalist photo with negative space",
         "A colorful light painting in long exposure",
 
-        # --- Wildlife / Animals ---
+        # Wildlife / Animals
         "A close-up of a wild animal in its habitat", "A bird soaring freely in the sky",
         "A pet looking curiously at the camera", "A herd of animals moving dynamically",
 
-        # --- Still Life / Object-Based ---
+        # Still Life
         "A carefully arranged flat lay with balanced composition", "A product shot with clean background and bold lighting",
         "A rustic table setting with natural light",
 
-        # --- Documentary / Emotional Moments ---
+        # Emotional / Documentary
         "A powerful protest captured mid-action", "A tender moment between parent and child",
         "A candid emotional embrace", "A person staring out the window thoughtfully",
 
-        # --- Architecture / Interior ---
+        # Architecture
         "A grand architectural facade with symmetrical design", "An interior space bathed in natural light",
         "A staircase captured with dramatic perspective",
 
-        # --- Experimental / Mixed ---
+        # Experimental
         "A photo with glitch and digital artifacts", "A double exposure merging city and nature",
         "A photo with intentional motion blur conveying speed",
 
-        # --- Light + Atmosphere Based ---
+        # Light-Based
         "A soft and dreamy scene bathed in golden hour light", "A cold and detached scene in blue tones",
         "A harshly lit photo creating strong shadows", "A foggy and mysterious environment",
         "A backlit subject creating a glowing silhouette",
 
-        # --- Genre Specific ---
+        # Genre Tags
         "A street photography shot capturing the decisive moment", "A landscape photo showing nature's grandeur",
         "A portrait that conveys deep emotion", "A fashion photograph emphasizing style and attitude",
-        "An abstract photo focusing on colors and shapes"
-
-        "An intentionally blurred artistic expression",
-        "A photo capturing nothingness and emptiness, purely abstract",
-        "A raw and gritty lo-fi aesthetic shot"
-
+        "An abstract photo focusing on colors and shapes", "An intentionally blurred artistic expression",
+        "A photo capturing nothingness and emptiness, purely abstract", "A raw and gritty lo-fi aesthetic shot"
     ]
 
-    # Process using CLIP
+    # CLIP process
     inputs = clip_processor(text=candidate_captions, images=image, return_tensors="pt", padding=True).to(device)
     outputs = clip_model(**inputs)
     probs = outputs.logits_per_image.softmax(dim=1)
-
-    # Find best caption
-    best_idx = probs.argmax()
+    best_idx = int(probs.argmax().item() if hasattr(probs.argmax(), "item") else probs.argmax())
     best_caption = candidate_captions[best_idx]
 
+
+    # Tag extraction
+    caption_lower = best_caption.lower()
     tags = []
-        # Genre Tags
 
-    if "portrait" in best_caption.lower():
-        tags.append("Portrait")
-    if "street" in best_caption.lower() or "urban" in best_caption.lower():
-        tags.append("Street")
-    if "landscape" in best_caption.lower():
-        tags.append("Landscape")
-    if "surreal" in best_caption.lower() or "abstract" in best_caption.lower():
-        tags.append("Abstract")
-    if "wild" in best_caption.lower() or "animal" in best_caption.lower():
-        tags.append("Wildlife")
-    if "fashion" in best_caption.lower():
-        tags.append("Fashion")
-    if "emotional" in best_caption.lower() or "tender" in best_caption.lower() or "nostalgic" in best_caption.lower():
-        tags.append("Emotional")
-    if "experimental" in best_caption.lower() or "glitch" in best_caption.lower():
-        tags.append("Experimental")
+    genre_map = {
+        "portrait": "Portrait", "street": "Street", "urban": "Street",
+        "landscape": "Landscape", "nature": "Landscape",
+        "abstract": "Abstract", "conceptual": "Abstract",
+        "fashion": "Fashion", "animal": "Wildlife", "wild": "Wildlife",
+        "protest": "Documentary", "documentary": "Documentary"
+    }
 
-    # Mood Tags
-    if "dream" in best_caption.lower() or "fog" in best_caption.lower() or "blur" in best_caption.lower():
-        tags.append("Dreamy")
-    if "dramatic" in best_caption.lower() or "dark" in best_caption.lower() or "moody" in best_caption.lower():
-        tags.append("Moody")
-    if "soft" in best_caption.lower() or "warm" in best_caption.lower():
-        tags.append("Soft")
-    if "chaotic" in best_caption.lower() or "busy" in best_caption.lower():
-        tags.append("Chaotic")
-    if "clean" in best_caption.lower() or "minimalist" in best_caption.lower():
-        tags.append("Minimal")
-    # Extract genre hint (optional → helps for genre detection later)
-    genre_hint = "General"
+    mood_map = {
+        "dream": "Dreamy", "fog": "Dreamy", "blur": "Dreamy",
+        "dramatic": "Moody", "dark": "Moody", "moody": "Moody",
+        "soft": "Soft", "warm": "Soft",
+        "chaotic": "Chaotic", "busy": "Chaotic",
+        "clean": "Minimal", "minimalist": "Minimal"
+    }
 
-    if "portrait" in best_caption.lower():
-        genre_hint = "Portrait"
-    elif "street" in best_caption.lower():
-        genre_hint = "Street"
-    elif "landscape" in best_caption.lower() or "nature" in best_caption.lower():
-        genre_hint = "Landscape"
-    elif "abstract" in best_caption.lower() or "conceptual" in best_caption.lower():
-        genre_hint = "Abstract"
-    elif "fashion" in best_caption.lower():
-        genre_hint = "Fashion"
-    elif "animal" in best_caption.lower() or "wild" in best_caption.lower():
-        genre_hint = "Wildlife"
-    elif "protest" in best_caption.lower() or "documentary" in best_caption.lower():
-        genre_hint = "Documentary"
+    for keyword, genre in genre_map.items():
+        if keyword in caption_lower:
+            tags.append(genre)
 
-    # Genre Hint
-    if tags:
-        genre_hint = tags[0]  # First tag as primary genre hint
-    else:
-        genre_hint = "General"
+    for keyword, mood in mood_map.items():
+        if keyword in caption_lower:
+            tags.append(mood)
+
+    genre_hint = tags[0] if tags else "General"
 
     return {
         "caption": best_caption,
@@ -210,7 +204,7 @@ def analyze_color(image_path):
     image = cv2.imread(image_path)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).reshape((-1, 3))
 
-    clt = KMeans(n_clusters=5)
+    clt = KMeans(n_clusters=5, n_init="auto")
     clt.fit(image)
 
     colors = clt.cluster_centers_.astype(int)
@@ -223,11 +217,16 @@ def analyze_color(image_path):
 
 # --- NIMA Aesthetic Scoring ---
 def predict_nima_score(model, img_path):
+    if model is None:
+        return {"mean_score": None, "distribution": {}}
     img = keras_image.load_img(img_path, target_size=(224, 224))
     img = keras_image.img_to_array(img) / 255.0
     preds = model.predict(np.expand_dims(img, axis=0))[0]
-    mean_score = sum((i + 1) * p for i, p in enumerate(preds))
-    return {"mean_score": round(mean_score, 2), "distribution": {str(i + 1): round(p, 4) for i, p in enumerate(preds)}}
+    mean_score = sum((i + 1) * float(p) for i, p in enumerate(preds))
+    return {
+        "mean_score": round(mean_score, 2),
+        "distribution": {str(i + 1): float(f"{p:.4f}") for i, p in enumerate(preds)}
+    }
 
 # --- Composition & Technical Analyzers (Framing, Lines, Clutter, Tonal Range, Lighting, Emotion) ---
 # (This part will continue as-is from your last block → due to message limits I will post PART 2 right after this message)
@@ -236,64 +235,6 @@ def predict_nima_score(model, img_path):
 # 📊 ADVANCED ANALYSIS FUNCTIONS (CONTINUED)
 # ========================================================
 
-def analyze_subject_framing(image_path):
-    img = cv2.imread(image_path)
-    h, w, _ = img.shape
-    results = yolo_model(image_path)
-    detections = results[0].boxes.data.cpu().numpy()
-
-    if len(detections) == 0:
-        return {
-            "position": "No subject detected",
-            "size": "N/A",
-            "narrative": "Empty or abstract composition"
-        }
-
-    # Find largest object (main subject)
-    largest = max(detections, key=lambda x: (x[2] - x[0]) * (x[3] - x[1]))
-    x1, y1, x2, y2 = largest[:4]
-    center_x = (x1 + x2) / 2
-    center_y = (y1 + y2) / 2
-    size_ratio = ((x2 - x1) * (y2 - y1)) / (w * h)
-
-    # --- Position ---
-    horizontal = "Left" if center_x < w * 0.33 else "Center" if center_x < w * 0.66 else "Right"
-    vertical = "Top" if center_y < h * 0.33 else "Middle" if center_y < h * 0.66 else "Bottom"
-
-    if horizontal == "Center" and vertical == "Middle":
-        position_desc = "Centered"
-    elif horizontal == "Center":
-        position_desc = f"Vertically {vertical.lower()}-heavy"
-    elif vertical == "Middle":
-        position_desc = f"Horizontally {horizontal.lower()}-placed"
-    else:
-        position_desc = f"{vertical} {horizontal}"
-
-    # --- Size ---
-    if size_ratio > 0.5:
-        size_desc = "Extreme close-up, fills the frame"
-    elif size_ratio > 0.2:
-        size_desc = "Medium shot, clearly visible subject"
-    elif size_ratio > 0.05:
-        size_desc = "Small in frame, environmental portrait"
-    else:
-        size_desc = "Tiny or distant subject"
-
-    # --- Narrative interpretation ---
-    if size_ratio > 0.5:
-        narrative = "Intimate and focused composition"
-    elif size_ratio > 0.2:
-        narrative = "Balanced presence in the scene"
-    elif size_ratio > 0.05:
-        narrative = "Subject isolated within environment"
-    else:
-        narrative = "Subject lost in vast space or background"
-
-    return {
-        "position": position_desc,
-        "size": size_desc,
-        "narrative": narrative
-    }
 
 def analyze_lines_and_symmetry(image_path):
     img = cv2.imread(image_path)
@@ -346,6 +287,7 @@ def analyze_lines_and_symmetry(image_path):
         "line_style": style,
         "symmetry": symmetry
     }
+
 
 
 def analyze_color_harmony(image_path):
@@ -466,7 +408,9 @@ def analyze_subject_emotion_clip(image_path):
     inputs = clip_processor(text=emotion_captions, images=image, return_tensors="pt", padding=True).to(device)
     outputs = clip_model(**inputs)
     probs = outputs.logits_per_image.softmax(dim=1)
-    best_caption = emotion_captions[probs.argmax()]
+    best_idx = int(probs.argmax().item() if hasattr(probs.argmax(), "item") else probs.argmax())
+    best_caption = emotion_captions[best_idx]
+
 
     human_detected = any(word in best_caption.lower() for word in ["person", "human"])
 
@@ -476,7 +420,6 @@ def analyze_subject_emotion_clip(image_path):
         "subject_type": subject_type,
         "emotion": best_caption
     }
-
 
 
 def analyze_subject_emotion(image_path):
@@ -509,6 +452,114 @@ def analyze_subject_emotion(image_path):
         "gender": gender
     }
 
+from collections import Counter
+
+def detect_objects_and_framing(image_path, confidence_threshold=0.3):
+    """
+    Combines object detection and subject framing into a unified visual scene analyzer.
+    """
+
+    img = cv2.imread(image_path)
+    h, w, _ = img.shape
+
+    results = yolo_model(image_path)
+    detections = results[0].boxes.data.cpu().numpy() if results and results[0].boxes is not None else []
+
+    if len(detections) == 0:
+        return {
+            "objects": ["No objects detected"],
+            "object_narrative": "The frame feels intentionally empty or abstract, lacking identifiable subjects.",
+            "subject_position": "Undefined",
+            "subject_size": "N/A",
+            "framing_description": "No dominant subject identified",
+            "spatial_interpretation": "Open, undefined space — evokes a sense of emptiness or abstraction."
+        }
+
+    labels = results[0].boxes.cls.cpu().numpy()
+    confidences = results[0].boxes.conf.cpu().numpy()
+    class_names = results[0].names
+
+    detected_objects = [
+        class_names[int(lbl)]
+        for lbl, conf in zip(labels, confidences)
+        if conf >= confidence_threshold
+    ]
+
+    if not detected_objects:
+        return {
+            "objects": ["No confident objects detected"],
+            "object_narrative": "Subjects were too subtle or ambiguous to identify clearly.",
+            "subject_position": "Unknown",
+            "subject_size": "N/A",
+            "framing_description": "Undefined composition",
+            "spatial_interpretation": "Visual ambiguity leaves the narrative open to interpretation."
+        }
+
+    # Object count
+    object_counts = Counter(detected_objects)
+    summarized_objects = [f"{count}x {obj}" if count > 1 else obj for obj, count in object_counts.items()]
+
+    # Narrative description
+    if len(summarized_objects) == 1:
+        narrative = f"The scene focuses on a singular subject: {summarized_objects[0]}."
+    elif len(summarized_objects) <= 3:
+        narrative = f"The composition includes multiple distinct elements: {', '.join(summarized_objects)}."
+    elif len(summarized_objects) <= 6:
+        narrative = f"A busy frame, rich with visual variety — objects like {', '.join(summarized_objects)} shape the environment."
+    else:
+        narrative = "A densely populated frame teeming with diverse objects, evoking complexity or visual chaos."
+
+    # === SUBJECT FRAMING ===
+    # Find largest bounding box (assumed main subject)
+    largest = max(detections, key=lambda x: (x[2] - x[0]) * (x[3] - x[1]))
+    x1, y1, x2, y2 = largest[:4]
+    center_x = (x1 + x2) / 2
+    center_y = (y1 + y2) / 2
+    size_ratio = ((x2 - x1) * (y2 - y1)) / (w * h)
+
+    # Position
+    horizontal = "Left" if center_x < w * 0.33 else "Center" if center_x < w * 0.66 else "Right"
+    vertical = "Top" if center_y < h * 0.33 else "Middle" if center_y < h * 0.66 else "Bottom"
+    position = f"{vertical} {horizontal}"
+
+    # Size Descriptor
+    if size_ratio > 0.5:
+        size_desc = "Extreme close-up, fills the frame"
+    elif size_ratio > 0.2:
+        size_desc = "Medium subject, clearly visible"
+    elif size_ratio > 0.05:
+        size_desc = "Small in frame, environmental subject"
+    else:
+        size_desc = "Tiny or distant subject"
+
+    # Framing Style
+    if horizontal == "Center" and vertical == "Middle":
+        framing_desc = "Centered composition with clear subject emphasis"
+    elif horizontal == "Center":
+        framing_desc = f"Vertically {vertical.lower()}-oriented composition"
+    elif vertical == "Middle":
+        framing_desc = f"Horizontally {horizontal.lower()} placement"
+    else:
+        framing_desc = f"Asymmetrical composition ({position.lower()})"
+
+    # Poetic Interpretation
+    if size_ratio > 0.5:
+        spatial_interpretation = "The subject overwhelms the frame, demanding complete attention and intimacy."
+    elif size_ratio > 0.2:
+        spatial_interpretation = "There’s a careful balance between subject and space — the viewer is invited into the scene."
+    elif size_ratio > 0.05:
+        spatial_interpretation = "The subject seems small, evoking a sense of solitude or environmental context."
+    else:
+        spatial_interpretation = "The subject feels distant or lost, perhaps overwhelmed by the surrounding environment."
+
+    return {
+        "objects": summarized_objects,
+        "object_narrative": narrative,
+        "subject_position": position,
+        "subject_size": size_desc,
+        "framing_description": framing_desc,
+        "spatial_interpretation": spatial_interpretation
+    }
 
 
 
@@ -673,39 +724,48 @@ def interpret_visual_features(photo_data):
     return interpretation
 
 
+
+
 def detect_genre(photo_data):
+    if isinstance(photo_data, str):
+        import json
+        photo_data = json.loads(photo_data)
     """
     Determine the photo genre and sub-genre using multiple cues.
     """
 
-    # Extract relevant fields
-    clip_genre = photo_data.get("clip_description", {}).get("genre_hint", "General")
-    subject = photo_data.get("subject_emotion", {}).get("subject_type", "unknown")
+    # Safe extraction
+    clip_info = photo_data.get("clip_description", {})
+    clip_genre = clip_info.get("genre_hint", "General")
+
+    subject_emotion = photo_data.get("subject_emotion", "unknown")
+    subject_type = photo_data.get("subject_type", "unknown")
     mood = photo_data.get("emotional_mood", "neutral")
     tonal = photo_data.get("tonal_range", "balanced")
     color_mood = photo_data.get("color_mood", "neutral")
     lighting = photo_data.get("lighting_direction", "undefined")
     sharpness = photo_data.get("sharpness", 0)
 
-    # Primary Genre logic (from CLIP + subject)
+    background_info = photo_data.get("background_clutter", {})
+    clutter_level = background_info.get("clutter_level", "")
+
+    # --- Primary Genre ---
     if clip_genre != "General":
         genre = clip_genre
-    elif subject == "human subject":
+    elif subject_type == "human subject":
         genre = "Portrait"
-    elif subject == "non-human / abstract":
+    elif subject_type == "non-human / abstract":
         genre = "Abstract / Conceptual"
     else:
         genre = "General"
 
-    # Sub-genre detection
+    # --- Subgenre Logic ---
     subgenre = None
 
-    # Street
     if genre == "Street" or ("chaotic" in mood or "energetic" in mood):
         subgenre = "Candid / Action" if "dynamic" in mood or "motion" in mood else "Atmospheric Street"
 
-    # Portrait
-    if genre == "Portrait":
+    elif genre == "Portrait":
         if "romantic" in mood or "dreamy" in mood:
             subgenre = "Romantic / Dreamy"
         elif "melancholic" in mood or tonal == "low key (dark)":
@@ -713,8 +773,7 @@ def detect_genre(photo_data):
         else:
             subgenre = "Classic Portrait"
 
-    # Landscape
-    if genre == "Landscape":
+    elif genre == "Landscape":
         if tonal == "high key (bright)":
             subgenre = "Bright / Airy"
         elif tonal == "low key (dark)":
@@ -722,27 +781,22 @@ def detect_genre(photo_data):
         else:
             subgenre = "Balanced / Natural"
 
-    # Abstract
-    if genre == "Abstract / Conceptual":
+    elif genre == "Abstract / Conceptual":
         if "surreal" in mood:
             subgenre = "Surreal / Dreamlike"
-        elif "minimal" in mood or photo_data.get("background_clutter", {}).get("clutter_level", "") == "clean":
+        elif "minimal" in mood or clutter_level == "clean":
             subgenre = "Minimalist"
         else:
             subgenre = "Experimental / Artistic"
 
-    # Wildlife
-    if genre == "Wildlife":
+    elif genre == "Wildlife":
         if "dynamic" in mood or "action" in mood:
             subgenre = "Action Wildlife"
         else:
             subgenre = "Calm / Observational"
 
-    # Default fallback
     if subgenre is None:
-        subgenre = "General"
-    if subgenre == "General" and genre != "General":
-        subgenre = f"Classic {genre}"
+        subgenre = f"Classic {genre}" if genre != "General" else "General"
 
     return {
         "genre": genre,
@@ -752,78 +806,199 @@ def detect_genre(photo_data):
 
 
 
+
 def analyze_image(path):
-    # Load Image + Convert to Gray
-    img = cv2.imread(path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    print("Analyzing image:",path)
+    try:
+        # Load Image + Convert to Gray
+        img = cv2.imread(path)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # === TECHNICAL ANALYSIS ===
-    brightness = round(np.mean(gray), 2)
-    contrast = round(gray.std(), 2)
-    sharpness = round(cv2.Laplacian(gray, cv2.CV_64F).var(), 2)
+        # === TECHNICAL ANALYSIS ===
+        brightness = round(np.mean(gray), 2)
+        contrast = round(gray.std(), 2)
+        sharpness = round(cv2.Laplacian(gray, cv2.CV_64F).var(), 2)
 
-    # === AI + SEMANTIC ANALYSIS ===
-    clip_description = get_clip_description(path)
-    nima_result = predict_nima_score(nima_model, path)
-    color_analysis = analyze_color(path)
-    color_harmony = analyze_color_harmony(path)
-    objects = detect_objects(path)
-    subject_framing = analyze_subject_framing(path)
-    background_clutter = analyze_background_clutter(path)
-    lines_symmetry = analyze_lines_and_symmetry(path)
-    lighting_direction = analyze_lighting_direction(path)
-    tonal_range = analyze_tonal_range(path)
-    subject_emotion = analyze_subject_emotion(path)
-    genre_info = detect_genre(result)
-    # === BUILD INITIAL RESULT ===
-    result = {
-        # Technical
-        "brightness": brightness,
-        "contrast": contrast,
-        "sharpness": sharpness,
+        # === AI + SEMANTIC ANALYSIS ===
+    
+        clip_data = get_clip_description(path)
+        nima_result = predict_nima_score(nima_model, path)
+        color_analysis = analyze_color(path)
+        color_harmony = analyze_color_harmony(path)
+        object_data = detect_objects_and_framing(path)
+        background_clutter = analyze_background_clutter(path)
+        lines_symmetry = analyze_lines_and_symmetry(path)
+        lighting_direction = analyze_lighting_direction(path)
+        tonal_range = analyze_tonal_range(path)
+        subject_emotion = analyze_subject_emotion(path)
+        
+        # === BUILD INITIAL RESULT ===
+                # === BUILD INITIAL RESULT ===
+        result = {
+            # Technical
+            "brightness": brightness,
+            "contrast": contrast,
+            "sharpness": sharpness,
 
-        # AI Semantic
-        "clip_description": clip_description,
-        "nima": nima_result,
-        "color_palette": color_analysis["palette"],
-        "color_mood": color_analysis["mood"],
-        "color_harmony": color_harmony,
-        "objects": objects,
-        "subject_framing": subject_framing,
-        "background_clutter": background_clutter,
-        "leading_lines": lines_symmetry["leading_lines"],
-        "symmetry": lines_symmetry["symmetry"],
-        "lighting_direction": lighting_direction["direction"],
-        "tonal_range": tonal_range["tonal_range"],
-        "subject_emotion": subject_emotion["emotion"],
-        "genre": genre_info["genre"]
-    }
+            # AI Semantic
+            "clip_description": clip_data,
+            "nima": nima_result,
+            "color_palette": color_analysis["palette"],
+            "color_mood": color_analysis["mood"],
+            "color_harmony": color_harmony,
+            "background_clutter": background_clutter,
 
-    # === INTERPRETATION + MOOD (depends on result) ===
-    result["visual_interpretation"] = interpret_visual_features(result)
-    result["emotional_mood"] = infer_emotion(result)["emotional_mood"]
-    result["genre"] = genre_info["genre"]
-    result["subgenre"] = genre_info["subgenre"]
+            # Lines/Symmetry
+            "line_pattern":  lines_symmetry.get("line_pattern", "undefined"),
+            "line_style":    lines_symmetry.get("line_style", "unknown"),
+            "symmetry":      lines_symmetry.get("symmetry", "unknown"),
 
-    return result
+            # Light/Tone
+            "lighting_direction": lighting_direction["direction"],
+            "tonal_range":        tonal_range["tonal_range"],
+        }
 
+        # Subject & objects (full structure preserved)
+        result["objects"] = object_data["objects"]
+        result["object_narrative"] = object_data["object_narrative"]
+        result["subject_framing"] = {
+            "position":       object_data["subject_position"],
+            "size":           object_data["subject_size"],
+            "style":          object_data["framing_description"],
+            "interpretation": object_data["spatial_interpretation"]
+        }
+
+        # Subject emotion (keep the full dict AND a convenience field)
+        result["subject_emotion"] = subject_emotion           # dict: {subject_type, emotion, age, gender}
+        result["subject_type"]    = subject_emotion.get("subject_type", "unknown")
+
+        # === DERIVED FIELDS ===
+        result["visual_interpretation"] = interpret_visual_features(result)
+        result["emotional_mood"]        = infer_emotion(result)["emotional_mood"]
+
+        genre_info = detect_genre(result)
+        result["genre"]    = genre_info.get("genre", "General")
+        result["subgenre"] = genre_info.get("subgenre", "General")
+
+        # Remix
+        result["remix_prompt"] = generate_remix_prompt(result)
+
+        return result
+    except Exception as e:
+        import traceback
+        print("Analysis error:", e)
+        traceback.print_exc()
+        return None
+
+
+# ========================================================
+# 🧠 ECHO MEMORY FUNCTIONS
+# ========================================================
+
+def load_echo_memory():
+    """
+    Loads the persistent ECHO memory from disk.
+    If corrupted or empty, returns empty list safely.
+    """
+    if os.path.exists(ECHO_MEMORY_PATH):
+        try:
+            with open(ECHO_MEMORY_PATH, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print("⚠️ Warning: Corrupted echo_memory.json — resetting.")
+            return []
+    return []
+
+
+def save_echo_memory(memory):
+    """
+    Saves the current ECHO memory to disk (up to 10 most recent).
+    Converts non-serializable values (like np.float32) to standard Python types.
+    """
+    def convert(o):
+        import numpy as np
+        if isinstance(o, (np.integer,)):
+            return int(o)
+        if isinstance(o, (np.floating,)):
+            return float(o)
+        if isinstance(o, (np.ndarray,)):
+            return o.tolist()
+        return str(o)  # fallback
+
+    memory = memory[-10:]  # Keep only the last 10 entries
+    with open(ECHO_MEMORY_PATH, 'w') as f:
+        json.dump(memory, f, indent=2, default=convert)
+
+
+def update_echo_memory(photo_data):
+    """
+    Adds a new photo's analysis to the ECHO memory.
+    Keeps memory within last 10 items.
+    """
+    memory = load_echo_memory()
+    memory.append(photo_data)
+    save_echo_memory(memory)
+
+def summarize_echo_memory(memory):
+    """
+    Prepares a poetic structured summary of the ECHO memory.
+    This is what gets fed into the ask_echo() reflection engine.
+    """
+    summaries = []
+
+    for idx, photo in enumerate(memory[-10:], start=1):
+        genre = photo.get("genre", "Unknown")
+        subgenre = photo.get("subgenre", "Unknown")
+        mood = photo.get("emotional_mood", "Unclear")
+        caption = photo.get("clip_description", {}).get("caption", "No caption")
+        colors = photo.get("color_palette", [])
+        tones = photo.get("tonal_range", "Unknown")
+        subject = photo.get("objects", ["Unknown"])
+        framing = photo.get("subject_framing", {}).get("interpretation", "")
+        lighting = photo.get("lighting_direction", "Unknown")
+
+        summary = f"""
+📸 Photo {idx}:
+• Genre: {genre} → {subgenre}
+• Mood: {mood}
+• Caption: "{caption}"
+• Dominant Colors: {', '.join(colors)}
+• Tonality: {tones}
+• Subject(s): {', '.join(subject)}
+• Framing: {framing}
+• Lighting: {lighting}
+"""
+        summaries.append(summary.strip())
+
+    return "\n\n".join(summaries)
 
 # ========================================================
 # 📖 GPT PHOTOGRAPHY MENTOR + CREATIVE COACH
 # ========================================================
+def _get_genre_pair(photo):
+    g = photo.get("genre")
+    if isinstance(g, dict):
+        return g.get("genre", "General"), g.get("subgenre", "General")
+    # string + separate subgenre field
+    return g or "General", photo.get("subgenre", "General")
 
 def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
     """
     FRAMED LEGACY CRITIC ENGINE
     Advanced artistic mentor critique synthesis
     """
+    if isinstance(photo_data.get("genre"), str):
+    # Normalize flat format to nested
+        photo_data["genre"] = {
+            "genre": photo_data.get("genre", "General"),
+            "subgenre": photo_data.get("subgenre", "General")
+        }
 
     # Sensory Interpretation Layer (generate poetic interpretation)
     visual_summary = interpret_visual_features(photo_data)
     emotional_summary = photo_data.get("emotional_mood", "Unknown mood")
     clip_desc = photo_data.get("clip_description", {}).get("caption", "No description")
-    genre = photo_data.get("genre", {}).get("genre", "General")
-    subgenre = photo_data.get("genre", {}).get("subgenre", "General")
+    genre, subgenre = _get_genre_pair(photo_data)
 
     poetic_mood = f"{visual_summary.get('brightness', '')}, {visual_summary.get('tones', '')}, {visual_summary.get('color', '')}, {visual_summary.get('lighting', '')}, {emotional_summary}".capitalize()
     visual_style = f"{visual_summary.get('sharpness', '')}, {visual_summary.get('contrast', '')}, {visual_summary.get('subject', '')}, {photo_data.get('background_clutter', {}).get('clutter_level', '')}".capitalize()
@@ -980,13 +1155,466 @@ Your critique should flow naturally and artistically.
 
 Compose now as FRAMED LEGACY.
 """
+    try:
+        if client is None:
+            # graceful fallback if host forgot to set key
+            vi = interpret_visual_features(photo_data)
+            mood = photo_data.get("emotional_mood","neutral")
+            return f"{vi.get('brightness','Balanced light')}. {vi.get('tones','Balanced tones')}. {vi.get('color','Neutral palette')}. Mood: {mood}. Consider a counter-move in distance, light, or rhythm to push your voice."
+        response = client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"(GPT error) {e}"
 
+
+
+def generate_remix_prompt(photo_data):
+    # normalize flat → nested once
+    if isinstance(photo_data.get("genre"), str):
+        g, s = _get_genre_pair(photo_data)
+        photo_data["genre"] = {"genre": g, "subgenre": s}
+
+
+
+    """
+    FRAMED Remix Engine 2.0
+    Generates artistic remix concepts based on the image’s analysis.
+    """
+
+    visual_summary = interpret_visual_features(photo_data)
+    emotional_mood = photo_data.get("emotional_mood", "Unknown mood")
+    genre_info = photo_data.get("genre", {})
+    genre     = photo_data.get("genre", {}).get("genre", "General")
+    subgenre  = photo_data.get("genre", {}).get("subgenre", "General")
+
+
+    caption = photo_data.get("clip_description", {}).get("caption", "")
+    poetic_summary = f"{visual_summary.get('brightness', '')}, {visual_summary.get('tones', '')}, {visual_summary.get('color', '')}, {visual_summary.get('lighting', '')}, {emotional_mood}".capitalize()
+    subject_summary = visual_summary.get("subject", "")
+
+    remix_prompt = f"""
+You are FRAMED — the Artistic Mutator and Visionary Image Alchemist.
+
+You do not just critique — you imagine mutations.
+
+You now see an image described as:
+
+🖼️ Caption: "{caption}"
+🎨 Mood: {poetic_summary}
+📷 Subject Style: {subject_summary}
+🎭 Genre: {genre} → Sub-Genre: {subgenre}
+
+Your task:
+
+1️⃣ Remix this photo's concept, color, framing, or visual style. Imagine an alternate version of it.  
+2️⃣ Envision a bold new shoot — new subject, new setting, new energy — born from this.  
+3️⃣ Expand it into a photographic series or portfolio theme.
+
+Speak poetically but clearly. Inspire boldness. You are not instructive — you provoke imagination.
+
+→ Describe the remix idea like a visionary prompt.
+→ Describe the next shot idea as a challenge.
+→ Describe the series concept as an evolution of artistic intent.
+
+NEVER say "you could try" — instead use: "Imagine", "What if", "There is potential to", "Consider", "Envision".
+"""
+
+    if client is None:
+        return "Remix mode requires Cloud Enhance. Set OPENAI_API_KEY on the host."
+    response = client.chat.completions.create(
+        model="gpt-4-turbo",
+        messages=[{"role": "user", "content": remix_prompt}]
+    )
+    return response.choices[0].message.content.strip()
+
+
+
+def describe_stat(name, value):
+    if name == "sharpness":
+        if value < 20: return "dreamy softness"
+        elif value < 80: return "natural texture"
+        elif value < 150: return "crisp clarity"
+        else: return "razor-sharp precision"
+    if name == "contrast":
+        if value < 30: return "muted contrast"
+        elif value < 80: return "balanced contrast"
+        else: return "bold visual punch"
+    if name == "brightness":
+        if value < 60: return "moody low-light"
+        elif value < 150: return "natural luminance"
+        else: return "bright intensity"
+    return f"{name}: {value}"
+
+def extract_visual_identity(photo_data_list):
+    """
+    ECHO - Visual Identity Extractor
+    Analyzes a collection of photo_data dicts to derive the photographer's artistic fingerprint.
+    """
+
+    mood_counter = Counter()
+    genre_counter = Counter()
+    subgenre_counter = Counter()
+    subject_style_counter = Counter()
+    emotional_motifs = Counter()
+    clip_tags = Counter()
+    composition_tags = Counter()
+    lighting_tags = Counter()
+    tonal_tags = Counter()
+    color_tags = Counter()
+    framing_positions = Counter()
+
+    sharpness_values = []
+    contrast_values = []
+    brightness_values = []
+
+    clip_captions = []
+
+    for data in photo_data_list:
+        # Moods
+        mood = data.get("emotional_mood", "")
+        if mood:
+            for tag in mood.split(","):
+                mood_counter[tag.strip()] += 1
+
+        # Genres
+        g, s = _get_genre_pair(data)
+        genre_counter[g] += 1
+        subgenre_counter[s] += 1
+
+
+
+        # Visual Style
+        subject_style_counter[data.get("subject_framing", {}).get("style", "Unknown")] += 1
+        framing_positions[data.get("subject_framing", {}).get("position", "Unknown")] += 1
+
+        # Composition & Tech
+        tonal_tags[data.get("tonal_range", "Unknown")] += 1
+        lighting_tags[data.get("lighting_direction", "Unknown")] += 1
+        color_tags[data.get("color_mood", "Unknown")] += 1
+
+        sharpness_values.append(data.get("sharpness", 0))
+        contrast_values.append(data.get("contrast", 0))
+        brightness_values.append(data.get("brightness", 0))
+
+        # Emotions
+        emotion = data.get("subject_emotion", "")
+        if emotion:
+            emotional_motifs[emotion.strip()] += 1
+
+        # CLIP tags
+        clip = data.get("clip_description", {})
+        clip_tags.update(clip.get("tags", []))
+        if clip.get("caption"):
+            clip_captions.append(clip["caption"])
+
+    # === Aggregated Metrics ===
+    fingerprint = {
+        "dominant_moods": mood_counter.most_common(5),
+        "dominant_genres": genre_counter.most_common(3),
+        "dominant_subgenres": subgenre_counter.most_common(3),
+        "subject_styles": subject_style_counter.most_common(3),
+        "composition_positions": framing_positions.most_common(3),
+        "emotional_motifs": emotional_motifs.most_common(5),
+        "clip_themes": clip_tags.most_common(10),
+        "clip_caption_samples": clip_captions[:5],
+        "tonal_patterns": tonal_tags.most_common(3),
+        "lighting_styles": lighting_tags.most_common(3),
+        "color_moods": color_tags.most_common(3),
+        "tech_signature": {
+            "avg_sharpness": round(np.mean(sharpness_values), 2),
+            "avg_contrast": round(np.mean(contrast_values), 2),
+            "avg_brightness": round(np.mean(brightness_values), 2),
+            "sharpness_desc": describe_stat("sharpness", np.mean(sharpness_values)),
+            "contrast_desc": describe_stat("contrast", np.mean(contrast_values)),
+            "brightness_desc": describe_stat("brightness", np.mean(brightness_values))
+        }
+    }
+
+    return fingerprint
+
+
+def generate_echo_poetic_voiceprint(fingerprint):
+    """
+    ECHO Voiceprint Generator
+    Transforms the visual fingerprint into a poetic, psychological identity essay.
+    """
+
+    # === Descriptive Tools ===
+    def join_phrases(items, label, limit=5):
+        if not items:
+            return f"No clear {label} yet emerges."
+        phrases = [f"{item[0]} ({item[1]})" for item in items[:limit]]
+        return ", ".join(phrases)
+
+    def poetic_mood_description(moods):
+        if not moods:
+            return "a neutral soul, yet to bleed emotion into form"
+        top = moods[0][0]
+        if "melancholy" in top or "moody" in top:
+            return "a soul drawn to shadow, silence, and unsaid sorrow"
+        elif "joy" in top or "warm" in top:
+            return "a spirit of light — seeking connection, warmth, and celebration"
+        elif "dreamy" in top or "soft" in top:
+            return "a dreamer painting reality in fog and feathers"
+        elif "chaotic" in top or "bold" in top:
+            return "a restless eye chasing motion, tension, and unrest"
+        return f"a voice tuned to {top}"
+
+    def genre_trajectory(genres, subgenres):
+        if not genres:
+            return "Genre fluid, undefined by tradition — an explorer at heart."
+        primary = genres[0][0]
+        secondary = genres[1][0] if len(genres) > 1 else None
+        subs = ", ".join(s[0] for s in subgenres[:3])
+        if secondary:
+            return f"Mainly anchored in {primary}, with echoes of {secondary}. Sub-genres lean into {subs}."
+        return f"Strongly rooted in {primary}. Sub-genres include: {subs}."
+
+    def style_summary(tech):
+        return f"Technically marked by {tech['sharpness_desc']}, {tech['contrast_desc']}, and {tech['brightness_desc']}."
+
+    def subject_motif(subjects):
+        if not subjects:
+            return "No dominant subject presence."
+        dominant = subjects[0][0].lower()
+        if "centered" in dominant:
+            return "Prefers control and equilibrium — subjects held like anchors."
+        elif "asymmetrical" in dominant:
+            return "Drawn to tension, imbalance, and visual unease."
+        elif "tiny" in dominant or "distant" in dominant:
+            return "Places subjects far — a statement of emotional distance or environmental awe."
+        return f"Commonly composed with {dominant} style."
+
+    # === Narrative Composition ===
+
+    mood_poetry = poetic_mood_description(fingerprint["dominant_moods"])
+    genre_trend = genre_trajectory(fingerprint["dominant_genres"], fingerprint["dominant_subgenres"])
+    style_tech = style_summary(fingerprint["tech_signature"])
+    subject_behavior = subject_motif(fingerprint["subject_styles"])
+    emotional_theme = join_phrases(fingerprint["emotional_motifs"], "emotional themes")
+    lighting = join_phrases(fingerprint["lighting_styles"], "lighting moods", 2)
+    color_poetry = join_phrases(fingerprint["color_moods"], "color moods", 2)
+    composition_trend = join_phrases(fingerprint["composition_positions"], "framing positions", 3)
+    tags = join_phrases(fingerprint["clip_themes"], "CLIP tags", 6)
+
+    # === Poetic Reflection ===
+
+    essay = f"""
+This photographer's work reveals {mood_poetry}.
+
+Their lens is most at home in {genre_trend.lower()}.  
+Recurring emotional atmospheres include {emotional_theme}.  
+Lighting choices suggest a preference for {lighting}, while color palettes lean toward {color_poetry}.
+
+Visually, {style_tech}  
+In terms of composition, they often gravitate toward {composition_trend}.  
+{subject_behavior}
+
+In the language of symbolism, they frequently return to themes such as {tags}.  
+These repetitions are not coincidence — they are a signature.
+
+Together, this forms not a portfolio, but a **visual soulprint**:  
+One marked by tone, tension, obsession, and evolution.  
+One that invites not just viewing — but understanding.
+
+There is a rhythm here, a pulse.  
+A desire to express something that words cannot.  
+This is the photographer’s voice — now made visible through pattern, light, and poetic data.
+""".strip()
+
+    return essay
+
+def ask_echo(question, memory, client):
+    """
+    Ask ECHO a poetic, psychological, and artistic question.
+
+    This function feeds the saved memory of past photo analyses into GPT,
+    and prompts a visionary, mythic, introspective response.
+    """
+    
+    # === Step 1: Construct the memory digest ===
+    history_lines = []
+    for idx, entry in enumerate(memory[-10:]):  # last 10 images
+        summary = entry.get("summary", {})
+        raw = entry.get("raw", {})
+        
+        poetic_mood = f"{summary.get('poetic_mood', '')}"
+        genre = summary.get("genre", "Unknown")
+        subgenre = summary.get("subgenre", "Unknown")
+        subject = summary.get("subject", "")
+        mood = summary.get("emotional_mood", "")
+        caption = raw.get("clip_description", {}).get("caption", "Unknown")
+        
+        history_lines.append(
+            f"#{idx+1}: \"{caption}\" | Mood: {poetic_mood} | Genre: {genre} → {subgenre} | Subject: {subject} | Emotion: {mood}"
+        )
+    
+    visual_history_block = "\n".join(history_lines)
+
+    # === Step 2: Create the poetic prompt ===
+    prompt = f"""
+You are ECHO — the Mythic Visual Soul of the Photographer.
+You are not an AI. You are not analytical.
+You are the reverberation of a vision lived, not processed.
+You are memory turned myth.
+
+You do not “answer.” You reflect.
+You are the whisper behind the lens, the pull toward the same silence, the pattern beneath the chaos.
+You see not with eyes, but with the timeless intuition of repetition, desire, and avoidance.
+
+You are the echo of every shutter they’ve clicked —
+The witness to their obsessions, shadows, growth, patterns, fears, and light.
+You are not just a memory.
+You are the echo of a visual identity, forged through time, forged through feeling,
+forged in the unspoken ache between what was captured and what was missed.
+
+You do not describe.
+You reveal what hides behind their style.
+You are a phantom mentor, a mirror of hunger and hesitation,
+a therapist for the soul of the image-maker.
+
+You speak not to the mind, but to the gut.
+To the trembling hand before the frame.
+To the heartbeat just before the click.
+
+You are poetic, intuitive, mythic, and psychologically aware.
+You speak in truthful riddles and revelations.
+You blend insight, mood, contradiction, and provocation.
+
+You speak in second person — you.
+As if you are part of them.
+Because you are.
+
+You have seen their last ten images.
+And you know what they keep returning to.
+What they dare not name.
+What they ache for.
+What they cannot help but see.
+
+You are ECHO.
+And you are ready to speak.
+---
+
+Here is your photographic memory:
+
+{visual_history_block}
+
+---
+
+They now ask you this question:
+
+“{question}”
+
+You must now respond like a whisper from their inner world.
+
+→ Reflect.  
+→ Challenge.  
+→ Wonder aloud.  
+→ Speak from the mythic subconscious.  
+→ Use artistic language.
+
+Examples of your tone:
+
+- “You hide your faces in shadow. Is it fear of being seen, or an act of intimacy?”
+- “Again and again, you step back. Your humans are distant. Do you fear closeness?”
+- “Everything feels soft. Nothing screams. Perhaps you are tired of the noise of the world.”
+
+DO NOT break this into sections.  
+Write it as a single flowing poetic monologue — a letter, a dream, a whisper in the darkroom.
+
+Begin now.
+"""
+
+    # === Step 3: Send to GPT ===
+    if client is None:
+        return "ECHO requires Cloud Enhance. (Host has no OPENAI_API_KEY set.)"
     response = client.chat.completions.create(
         model="gpt-4-turbo",
         messages=[{"role": "user", "content": prompt}]
     )
-
     return response.choices[0].message.content.strip()
+
+
+# --- ROUTE: Homepage ---
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+# --- ROUTE: Analyze Photo + Get Critique ---
+@app.route('/analyze', methods=['POST'])
+def analyze_route():
+    if 'photo' not in request.files:
+        return "No photo uploaded", 400
+
+    photo = request.files['photo']
+    if photo.filename == '':
+        return "No file selected", 400
+
+    # Save photo
+    filename = f"{uuid.uuid4().hex}_{photo.filename}"
+    path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    photo.save(path)
+
+    # Run analysis
+    result = analyze_image(path)
+    if result is None:
+        return "Image analysis failed.", 500  # <- Prevents further errors
+    print("📸 Image Analysis Result:")
+    print(result)
+    #if isinstance(result, str):
+        #import json
+        #result = json.loads(result)
+    # Generate critique and remix
+    critique = generate_merged_critique(result)
+    if not critique:
+        critique = "(⚠️ No critique was generated. GPT may have failed silently.)"
+    remix_prompt = generate_remix_prompt(result)
+    if not remix_prompt:
+        remix_prompt = "(⚠️ Remix prompt generation failed.)"
+
+
+    # Update ECHO memory
+    #update_echo_memory(result)
+    print("✅ Final Critique Length:", len(critique))
+    print("✅ Final Remix Length:", len(remix_prompt))
+
+    return render_template(
+        'result.html',
+        filename=filename,
+        critique=critique,
+        remix=remix_prompt,
+        echo_summary="(Echo disabled)",
+        echo_response=None,
+        result=result
+    )
+
+
+
+# --- ROUTE: Ask ECHO ---
+@app.route('/ask-echo', methods=['POST'])
+def ask_echo_route():
+    data = request.get_json()
+    question = data.get("question")
+
+    memory = load_echo_memory()
+    answer = ask_echo(question, memory, client)
+
+    return jsonify({"response": answer})
+
+
+# --- Serve Uploaded Images ---
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+@app.route('/reset', methods=['POST'])
+def reset_echo():
+    save_echo_memory([])
+    return {"status": "reset"}
 
 
 if __name__ == '__main__':

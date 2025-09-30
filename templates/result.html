@@ -70,7 +70,9 @@
         <p><span class="highlight">Color Mood:</span> {{ result['color_mood'] }}</p>
         <p><span class="highlight">Lighting Direction:</span> {{ result['lighting_direction'] }}</p>
         <p><span class="highlight">Tonal Range:</span> {{ result['tonal_range'] }}</p>
-        <p><span class="highlight">Subject Emotion:</span> {{ result['subject_emotion'] }}</p>
+        <p><span class="highlight">Subject Emotion:</span>
+            {{ result['subject_emotion']['emotion'] if result['subject_emotion'] else '—' }}
+        </p>
     </div>
 
 </div>

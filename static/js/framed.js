@@ -102,8 +102,8 @@ async function askEchoQuestion() {
       body: JSON.stringify({ question: question }),
     });
 
-    const result = await response.text();
-    resultBox.innerHTML = `<div class="echo-output">${result}</div>`;
+    const { response: text } = await response.json();
+    resultBox.innerHTML = `<div class="echo-output">${text}</div>`;
   } catch (err) {
     console.error("ECHO failed:", err);
     resultBox.innerHTML = `<p class="error">Something went wrong.</p>`;
