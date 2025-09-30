@@ -1,64 +1,55 @@
-<h1 align="center">FRAMED — Visual Soul Companion (framed-ai)</h1>
+---
+title: FRAMED — Visual Soul Companion
+emoji: 🎞️
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: true
+license: mit
+---
 
-<p align="center">
-  <a href="https://github.com/moizk12/framed-ai/actions/workflows/ci.yml">
-    <img alt="Build" src="https://github.com/moizk12/framed-ai/actions/workflows/ci.yml/badge.svg?branch=main">
-  </a>
-  <a href="LICENSE">
-    <img alt="License" src="https://img.shields.io/badge/License-MIT-blue.svg">
-  </a>
-  <a href="https://github.com/moizk12/framed-ai/stargazers">
-    <img alt="Stars" src="https://img.shields.io/github/stars/moizk12/framed-ai?style=social">
-  </a>
-  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
-</p>
+# FRAMED — Visual Soul Companion (framed-ai)
 
-<p align="center"><b>AI that maps your photographic identity, writes poetic critiques, and gives assignment cards that push your craft.</b></p>
+![Build](https://github.com/moizk12/framed-ai/actions/workflows/ci.yml/badge.svg?branch=main)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Stars](https://img.shields.io/github/stars/moizk12/framed-ai?style=social)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
-<p align="center">
-  <img src="docs/demo.gif" alt="FRAMED demo" width="760">
-</p>
+**Live app (Space):** https://huggingface.co/spaces/moizk12/framed-ai  
+**Direct app URL:** https://moizk12-framed-ai.hf.space  
+**GitHub repo:** https://github.com/moizk12/framed-ai
 
+FRAMED analyzes a photograph and speaks back in a mentor’s voice — mapping genre/subgenre, emotional mood, lighting/tonal structure, line/symmetry, color harmony, subject framing, and more. It then proposes shot-recipes (“Remix”) and answers questions via **Ask-ECHO**. Cloud Enhance (OpenAI) is **host-side** only — users never need their own keys.
+
+---
 
 ## Why it matters
-- **Identity, not just analysis:** Builds your ECHO voiceprint across many photos.
-- **Growth you can shoot:** Generates concrete assignment cards (lens/time/scene/sequence).
-- **Independent & verifiable:** Local analysis + optional cloud “poet,” all artifacts signed.
+- **Find your voice:** turn raw analysis into guidance that sounds like a human mentor.  
+- **Actionable next steps:** shot recipes, framing moves, light changes, timing suggestions.  
+- **Built for photographers:** fast local analyzers; optional GPT enhancement on the server.
+
+---
 
 ## What’s inside
-- **Core analyzers:** YOLOv8, OpenCLIP, DeepFace (optional), NIMA, color/tonal/lines
-- **Critique brain:** Local poet (offline) with optional GPT “Cloud Enhance”
-- **ECHO graph:** Clusters motifs and style evolution over time
-- **Remix 2.0:** Shot recipes and next-shoot plans
-- **Proof:** JSON + PDF reports cryptographically signed (ProofLens-ready)
+- **Analyzers:** YOLOv8 (object cues + framing), OpenCLIP (caption/tags), DeepFace (+ CLIP fallback), color clusters + harmony, lines/symmetry, tonal/lighting stats, visual interpretation.
+- **ECHO:** memory scaffolding + Q&A endpoint (rate-limit ready).
+- **Remix Lab:** prompt → shot recipe generator.
+- **Web:** Flask, templates, static JS/CSS, JSON endpoints.
+- **Infra:** Dockerfile (ports 7860), Git LFS for audio, CI (ruff/pytest/bandit).
 
-## 1-minute Quickstart
+---
+
+## Quickstart (local)
+
 ```bash
-python -m venv .venv && source .venv/bin/activate   # (Windows: .venv\Scripts\activate)
+python -m venv .venv
+# Windows
+.\.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
+
 pip install -r requirements.txt
-python app/main.py
-# Open http://127.0.0.1:5000
-How it works
-mermaid
-Copy code
-flowchart LR
-A[Upload Photos] --> B[Preprocess]
-B --> C[Local Analyzers: YOLO/CLIP/DeepFace/NIMA]
-C --> D[Consolidated JSON Schema]
-D --> E[ECHO Identity & Clusters]
-D --> F[Critique & Remix (Local Poet / Cloud)]
-E --> G[Assignment Cards]
-F --> H[PDF & Signed Manifests]
-Roadmap
- Portfolio ingest + ECHO graph (UMAP + KMeans)
-
- Assignment Cards (Intent Lens)
-
- Local Poet (LoRA) + RAG quotes (offline)
-
- Cloud Enhance toggle (GPT)
-
- Export: PDF + signed JSON
-
-License
-MIT © Moiz Kashif
+set OPENAI_API_KEY=your_key_here   # PowerShell: $env:OPENAI_API_KEY="..."
+python app.py
+# visit http://127.0.0.1:5000
