@@ -1,0 +1,25 @@
+# Python
+.venv/
+venv*/
+__pycache__/
+*.pyc
+
+
+# Data/weights/uploads
+*.pt
+*.h5
+weights/
+models/
+uploads/
+static/uploads/
+
+# Env & secrets
+.env
+*.env
+
+# Build
+dist/
+build/
+r e p o _ a u d i t . p s 1 
+ 
+ 
