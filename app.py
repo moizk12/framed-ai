@@ -1,36 +1,65 @@
 # ========================================================
 # 📦 IMPORTS
 # ========================================================
-from flask import Flask, request, render_template, url_for
-from flask import send_from_directory, jsonify
-import uuid
-import os
+# ========================================================
+# 📦 IMPORTS
+# ========================================================
+from flask import Flask, request, render_template, url_for, send_from_directory, jsonify
+import os, uuid, json
 import cv2
 import numpy as np
 from PIL import Image
+
+# OpenAI (Cloud Enhance)
 from openai import OpenAI
-import tensorflow as tf
-from tensorflow.keras.preprocessing import image as keras_image
-from tensorflow.keras.applications import MobileNet
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import GlobalAveragePooling2D, Dropout, Dense
-from transformers import CLIPProcessor, CLIPModel
+
+# Torch/CLIP/YOLO + utils
 import torch
+from transformers import CLIPProcessor, CLIPModel
 from ultralytics import YOLO
 from sklearn.cluster import KMeans
 from colorthief import ColorThief
-from deepface import DeepFace
-import json
-from collections import Counter, defaultdict
+
 from flask_cors import CORS
-from config import OPENAI_API_KEY
+from collections import Counter, defaultdict
+
+# Optional config (OPENAI_API_KEY), else env var
+try:
+    from config import OPENAI_API_KEY
+except Exception:
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+# ---- Optional NIMA (TensorFlow) guarded import
+NIMA_AVAILABLE = False
+try:
+    import tensorflow as tf  # noqa: F401
+    from tensorflow.keras.applications import MobileNet
+    from tensorflow.keras.layers import Dropout, Dense
+    from tensorflow.keras.models import Model
+    from tensorflow.keras.preprocessing import image as keras_image
+    NIMA_AVAILABLE = True
+except Exception:
+    MobileNet = Dropout = Dense = Model = None
+    keras_image = None
+
+# ---- Optional DeepFace (feature-flag via env)
+DEEPFACE_ENABLE = os.getenv("DEEPFACE_ENABLE", "false").lower() == "true"
+DeepFace = None
+if DEEPFACE_ENABLE:
+    try:
+        from deepface import DeepFace
+    except Exception as e:
+        print("[DeepFace] Disabled:", e)
+        DeepFace = None
+
+
 
 # ========================================================
 # 🚀 INITIALIZE APP + FOLDERS
 # ========================================================
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
-CORS(app)  # later: restrict to your domain for production
+CORS(app)  # later: restrict to domain for production
 
 UPLOAD_FOLDER = "static/uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -64,6 +93,9 @@ clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 # NIMA for aesthetic scoring
 # ===== NIMA for aesthetic scoring (optional) =====
 def load_nima_model(model_path='models/nima_mobilenet.h5'):
+    if not NIMA_AVAILABLE:
+        print("[NIMA] TensorFlow not present. NIMA disabled.")
+        return None
     try:
         base_model = MobileNet(include_top=False, input_shape=(224, 224, 3), pooling='avg')
         x = Dropout(0.75)(base_model.output)
@@ -71,15 +103,16 @@ def load_nima_model(model_path='models/nima_mobilenet.h5'):
         model = Model(inputs=base_model.input, outputs=output)
         if os.path.exists(model_path):
             model.load_weights(model_path)
-            return model
+            print(f"[NIMA] Weights loaded: {model_path}")
         else:
-            print(f"[NIMA] Weights not found at {model_path}. NIMA disabled.")
-            return None
+            print(f"[NIMA] Weights missing at {model_path}. Running without weights.")
+        return model
     except Exception as e:
         print("[NIMA] Disabled:", e)
         return None
 
 nima_model = load_nima_model()
+
 
 
 # OpenAI Client
@@ -217,7 +250,7 @@ def analyze_color(image_path):
 
 # --- NIMA Aesthetic Scoring ---
 def predict_nima_score(model, img_path):
-    if model is None:
+    if model is None or not NIMA_AVAILABLE or keras_image is None:
         return {"mean_score": None, "distribution": {}}
     img = keras_image.load_img(img_path, target_size=(224, 224))
     img = keras_image.img_to_array(img) / 255.0
@@ -423,34 +456,17 @@ def analyze_subject_emotion_clip(image_path):
 
 
 def analyze_subject_emotion(image_path):
-    try:
-        analysis = DeepFace.analyze(img_path=image_path, actions=['emotion', 'age', 'gender'], enforce_detection=False)
-        emotion = analysis['dominant_emotion']
-        age = analysis['age']
-        gender = analysis['gender']
+    # If DeepFace available and enabled, try it first
+    if DeepFace is not None:
+        try:
+            res = DeepFace.analyze(img_path=image_path, actions=['emotion'], enforce_detection=False)
+            emo = res[0]['dominant_emotion'] if isinstance(res, list) else res['dominant_emotion']
+            return {"subject_type": "human subject", "emotion": emo, "age": None, "gender": "Unknown"}
+        except Exception as e:
+            print("[DeepFace] error, falling back to CLIP:", e)
+    # Fallback: CLIP-based emotion (existing implementation)
+    return analyze_subject_emotion_clip(image_path)
 
-        if emotion.lower() == "neutral" or emotion.lower() == "unknown":
-            # Fallback if DeepFace fails or very neutral
-            clip_result = analyze_subject_emotion_clip(image_path)
-            emotion = clip_result["emotion"]
-            subject_type = clip_result["subject_type"]
-        else:
-            subject_type = "human subject"
-
-    except Exception as e:
-        # If DeepFace fails completely
-        clip_result = analyze_subject_emotion_clip(image_path)
-        emotion = clip_result["emotion"]
-        subject_type = clip_result["subject_type"]
-        age = None
-        gender = "Unknown"
-
-    return {
-        "subject_type": subject_type,
-        "emotion": emotion,
-        "age": age,
-        "gender": gender
-    }
 
 from collections import Counter
 
