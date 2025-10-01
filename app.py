@@ -12,23 +12,34 @@ from PIL import Image
 
 # OpenAI (Cloud Enhance)
 from openai import OpenAI
-# ---- Writable caches for HF/torch on Spaces ----
-DATA_ROOT = os.getenv("DATA_ROOT", "/data")  # keep your existing default
-HF_HOME = os.path.join(DATA_ROOT, "hf")
-TRANSFORMERS_CACHE = os.path.join(DATA_ROOT, "hf", "transformers")
-HUGGINGFACE_HUB_CACHE = os.path.join(DATA_ROOT, "hf", "hub")
-TORCH_HOME = os.path.join(DATA_ROOT, "torch")
-XDG_CACHE_HOME = os.path.join(DATA_ROOT, ".cache")
 
-for p in [HF_HOME, TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE, TORCH_HOME, XDG_CACHE_HOME]:
+# ===== Writable paths & caches (HF Spaces) =====
+DATA_ROOT = os.getenv("DATA_ROOT", "/data")
+
+# App write dirs
+UPLOAD_FOLDER = os.path.join(DATA_ROOT, "uploads")
+RESULTS_FOLDER = os.path.join(DATA_ROOT, "results")
+TMP_FOLDER = os.path.join(DATA_ROOT, "tmp")
+for p in [UPLOAD_FOLDER, RESULTS_FOLDER, TMP_FOLDER]:
     os.makedirs(p, exist_ok=True)
 
+# Model weights & caches
+MODELS_DIR = os.path.join(DATA_ROOT, "models")
+HF_HOME = os.path.join(DATA_ROOT, "hf")
+TRANSFORMERS_CACHE = os.path.join(HF_HOME, "transformers")
+HUGGINGFACE_HUB_CACHE = os.path.join(HF_HOME, "hub")
+TORCH_HOME = os.path.join(DATA_ROOT, "torch")
+XDG_CACHE_HOME = os.path.join(DATA_ROOT, ".cache")
+for p in [MODELS_DIR, HF_HOME, TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE, TORCH_HOME, XDG_CACHE_HOME]:
+    os.makedirs(p, exist_ok=True)
+
+# Export cache env vars BEFORE importing transformers/torch/ultralytics
 os.environ["HF_HOME"] = HF_HOME
 os.environ["TRANSFORMERS_CACHE"] = TRANSFORMERS_CACHE
 os.environ["HUGGINGFACE_HUB_CACHE"] = HUGGINGFACE_HUB_CACHE
 os.environ["TORCH_HOME"] = TORCH_HOME
 os.environ["XDG_CACHE_HOME"] = XDG_CACHE_HOME
-# -----------------------------------------------
+# ==============================================
 
 # Torch/CLIP/YOLO + utils
 import torch
