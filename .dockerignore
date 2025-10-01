@@ -1,0 +1,32 @@
+#.dockerignore
+
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python virtual environment
+.venv
+venv
+env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local config
+.env
+*.env.*
+
+# Test files
+tests/
+pytest.ini
+.pytest_cache/
+coverage.xml
+.coverage
+
+# IDE files
+.idea/
+.vscode/
