@@ -104,7 +104,13 @@ ECHO_MEMORY_PATH = "echo_memory.json"
 # ========================================================
 
 # YOLO for object detection
-yolo_model = YOLO("yolov8n.pt")
+# Store YOLO weights in /data so HF Spaces can write the file
+YOLO_WEIGHTS = os.path.join(DATA_ROOT, "models", "yolov8n.pt")
+os.makedirs(os.path.dirname(YOLO_WEIGHTS), exist_ok=True)
+
+# This will auto-download to YOLO_WEIGHTS if the file is missing
+yolo_model = YOLO(YOLO_WEIGHTS)
+
 
 def detect_objects(image_path):
     res = yolo_model(image_path)
