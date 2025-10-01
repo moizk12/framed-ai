@@ -22,3 +22,4 @@ EXPOSE 7860
 CMD ["gunicorn","-w","2","-k","gthread","-t","120","--log-level","debug","-b","0.0.0.0:7860","app:app"]
 
 
+

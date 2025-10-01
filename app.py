@@ -30,17 +30,24 @@ except Exception:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # ---- Optional NIMA (TensorFlow) guarded import
-NIMA_AVAILABLE = False
-try:
-    import tensorflow as tf  # noqa: F401
-    from tensorflow.keras.applications import MobileNet
-    from tensorflow.keras.layers import Dropout, Dense
-    from tensorflow.keras.models import Model
-    from tensorflow.keras.preprocessing import image as keras_image
-    NIMA_AVAILABLE = True
-except Exception:
-    MobileNet = Dropout = Dense = Model = None
-    keras_image = None
+# ---- Optional NIMA (TensorFlow) LAZY import via importlib
+import importlib.util
+def _tf_available():
+    return importlib.util.find_spec("tensorflow") is not None
+
+def _import_tf_keras():
+    # Import only when needed, never at module load
+    import importlib
+    tf_keras = importlib.import_module("tensorflow.keras")
+    MobileNet = importlib.import_module("tensorflow.keras.applications").MobileNet
+    Dropout = importlib.import_module("tensorflow.keras.layers").Dropout
+    Dense = importlib.import_module("tensorflow.keras.layers").Dense
+    Model = importlib.import_module("tensorflow.keras.models").Model
+    keras_image = importlib.import_module("tensorflow.keras.preprocessing.image")
+    return MobileNet, Dropout, Dense, Model, keras_image
+
+NIMA_AVAILABLE = _tf_available()
+
 
 # ---- Optional DeepFace (feature-flag via env)
 DEEPFACE_ENABLE = os.getenv("DEEPFACE_ENABLE", "false").lower() == "true"
@@ -97,6 +104,7 @@ def load_nima_model(model_path='models/nima_mobilenet.h5'):
         print("[NIMA] TensorFlow not present. NIMA disabled.")
         return None
     try:
+        MobileNet, Dropout, Dense, Model, keras_image = _import_tf_keras()
         base_model = MobileNet(include_top=False, input_shape=(224, 224, 3), pooling='avg')
         x = Dropout(0.75)(base_model.output)
         output = Dense(10, activation='softmax')(x)
@@ -106,12 +114,12 @@ def load_nima_model(model_path='models/nima_mobilenet.h5'):
             print(f"[NIMA] Weights loaded: {model_path}")
         else:
             print(f"[NIMA] Weights missing at {model_path}. Running without weights.")
+        # stash accessor so predict can import lazily too
+        model._nima_has_keras = True
         return model
     except Exception as e:
         print("[NIMA] Disabled:", e)
         return None
-
-nima_model = load_nima_model()
 
 
 
@@ -250,16 +258,21 @@ def analyze_color(image_path):
 
 # --- NIMA Aesthetic Scoring ---
 def predict_nima_score(model, img_path):
-    if model is None or not NIMA_AVAILABLE or keras_image is None:
+    if model is None or not NIMA_AVAILABLE:
         return {"mean_score": None, "distribution": {}}
-    img = keras_image.load_img(img_path, target_size=(224, 224))
-    img = keras_image.img_to_array(img) / 255.0
-    preds = model.predict(np.expand_dims(img, axis=0))[0]
-    mean_score = sum((i + 1) * float(p) for i, p in enumerate(preds))
-    return {
-        "mean_score": round(mean_score, 2),
-        "distribution": {str(i + 1): float(f"{p:.4f}") for i, p in enumerate(preds)}
-    }
+    try:
+        # Lazy import again (no globals)
+        _, _, _, _, keras_image = _import_tf_keras()
+        img = keras_image.load_img(img_path, target_size=(224, 224))
+        img = keras_image.img_to_array(img) / 255.0
+        preds = model.predict(np.expand_dims(img, axis=0))[0]
+        mean_score = sum((i + 1) * float(p) for i, p in enumerate(preds))
+        return {
+            "mean_score": round(mean_score, 2),
+            "distribution": {str(i + 1): float(f"{p:.4f}") for i, p in enumerate(preds)}
+        }
+    except Exception:
+        return {"mean_score": None, "distribution": {}}
 
 # --- Composition & Technical Analyzers (Framing, Lines, Clutter, Tonal Range, Lighting, Emotion) ---
 # (This part will continue as-is from your last block → due to message limits I will post PART 2 right after this message)
