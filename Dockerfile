@@ -11,6 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
 RUN pip install --no-cache-dir -r requirements.txt
+# Writable dirs on HF Spaces
+ENV DATA_ROOT=/data
+ENV YOLO_CONFIG_DIR=/data/Ultralytics
+
+# Create and open perms so non-root user can write
+RUN mkdir -p /data/uploads /data/Ultralytics && chmod -R 777 /data
 
 # app code
 COPY . .

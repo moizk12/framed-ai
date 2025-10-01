@@ -68,9 +68,33 @@ if DEEPFACE_ENABLE:
 app = Flask(__name__, static_folder="static", template_folder="templates")
 CORS(app)  # later: restrict to domain for production
 
-UPLOAD_FOLDER = "static/uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# --- paths & writable dirs (HF Spaces safe) -------------------------------
+# Use /data for persistent writes on Hugging Face Spaces (fallback to /tmp).
+DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
+YOLO_CONFIG_DIR = os.environ.get("YOLO_CONFIG_DIR", os.path.join(DATA_ROOT, "Ultralytics"))
+os.environ.setdefault("YOLO_CONFIG_DIR", YOLO_CONFIG_DIR)
+
+UPLOAD_FOLDER = os.path.join(DATA_ROOT, "uploads")
+
+# Ensure directories exist even on read-only root FS
+try:
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs(YOLO_CONFIG_DIR, exist_ok=True)
+except Exception as e:
+    # Last-ditch fallback if /data were ever unavailable
+    fallback = "/tmp/uploads"
+    os.makedirs(fallback, exist_ok=True)
+    UPLOAD_FOLDER = fallback
+
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
+# Serve uploaded files from /uploads/<filename>
+from flask import send_from_directory
+
+@app.route("/uploads/<path:filename>")
+def uploaded_file(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
 ECHO_MEMORY_PATH = "echo_memory.json"
 
 
