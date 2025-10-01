@@ -12,6 +12,23 @@ from PIL import Image
 
 # OpenAI (Cloud Enhance)
 from openai import OpenAI
+# ---- Writable caches for HF/torch on Spaces ----
+DATA_ROOT = os.getenv("DATA_ROOT", "/data")  # keep your existing default
+HF_HOME = os.path.join(DATA_ROOT, "hf")
+TRANSFORMERS_CACHE = os.path.join(DATA_ROOT, "hf", "transformers")
+HUGGINGFACE_HUB_CACHE = os.path.join(DATA_ROOT, "hf", "hub")
+TORCH_HOME = os.path.join(DATA_ROOT, "torch")
+XDG_CACHE_HOME = os.path.join(DATA_ROOT, ".cache")
+
+for p in [HF_HOME, TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE, TORCH_HOME, XDG_CACHE_HOME]:
+    os.makedirs(p, exist_ok=True)
+
+os.environ["HF_HOME"] = HF_HOME
+os.environ["TRANSFORMERS_CACHE"] = TRANSFORMERS_CACHE
+os.environ["HUGGINGFACE_HUB_CACHE"] = HUGGINGFACE_HUB_CACHE
+os.environ["TORCH_HOME"] = TORCH_HOME
+os.environ["XDG_CACHE_HOME"] = XDG_CACHE_HOME
+# -----------------------------------------------
 
 # Torch/CLIP/YOLO + utils
 import torch
