@@ -1,20 +1,13 @@
-# ========================================================
-# 📦 IMPORTS
-# ========================================================
-# ========================================================
-# 📦 IMPORTS
-# ========================================================
-from flask import Flask, request, render_template, url_for, send_from_directory, jsonify
 import os, uuid, json
 import cv2
 import numpy as np
 from PIL import Image
-
-# OpenAI (Cloud Enhance)
 from openai import OpenAI
 
 # ===== Writable paths & caches (HF Spaces) =====
-DATA_ROOT = os.getenv("DATA_ROOT", "/data")
+# ===== Writable paths & caches (HF Spaces) =====
+DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
+os.makedirs(DATA_ROOT, exist_ok=True)
 
 # App write dirs
 UPLOAD_FOLDER = os.path.join(DATA_ROOT, "uploads")
@@ -29,115 +22,109 @@ HF_HOME = os.path.join(DATA_ROOT, "hf")
 TRANSFORMERS_CACHE = os.path.join(HF_HOME, "transformers")
 HUGGINGFACE_HUB_CACHE = os.path.join(HF_HOME, "hub")
 TORCH_HOME = os.path.join(DATA_ROOT, "torch")
-XDG_CACHE_HOME = os.path.join(DATA_ROOT, ".cache")
-for p in [MODELS_DIR, HF_HOME, TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE, TORCH_HOME, XDG_CACHE_HOME]:
+XDG_CACHE_HOME = os.path.join(DATA_ROOT, "cache")
+
+# ✅ Ultralytics settings in /data
+YOLO_CONFIG_DIR = os.path.join(DATA_ROOT, "Ultralytics")
+ULTRALYTICS_CFG = os.path.join(YOLO_CONFIG_DIR, "settings.json")
+
+# ✅ Set environment variables with setdefault (won't override existing)
+os.environ.setdefault("HF_HOME", HF_HOME)
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", HUGGINGFACE_HUB_CACHE)
+os.environ.setdefault("TRANSFORMERS_CACHE", TRANSFORMERS_CACHE)
+os.environ.setdefault("TORCH_HOME", TORCH_HOME)
+os.environ.setdefault("XDG_CACHE_HOME", XDG_CACHE_HOME)
+os.environ.setdefault("YOLO_CONFIG_DIR", YOLO_CONFIG_DIR)
+os.environ.setdefault("ULTRALYTICS_CFG", ULTRALYTICS_CFG)
+
+# ✅ Create all necessary directories
+for p in [
+    MODELS_DIR, HF_HOME, TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE, 
+    TORCH_HOME, XDG_CACHE_HOME, YOLO_CONFIG_DIR,
+    os.path.dirname(ULTRALYTICS_CFG)  # Ensure Ultralytics directory exists
+]:
     os.makedirs(p, exist_ok=True)
 
-# Export cache env vars BEFORE importing transformers/torch/ultralytics
-os.environ["HF_HOME"] = HF_HOME
-os.environ["TRANSFORMERS_CACHE"] = TRANSFORMERS_CACHE
-os.environ["HUGGINGFACE_HUB_CACHE"] = HUGGINGFACE_HUB_CACHE
-os.environ["TORCH_HOME"] = TORCH_HOME
-os.environ["XDG_CACHE_HOME"] = XDG_CACHE_HOME
-# ==============================================
+ECHO_MEMORY_PATH = os.path.join(DATA_ROOT, "echo_memory.json")
 
-# Torch/CLIP/YOLO + utils
+
+
 import torch
 from transformers import CLIPProcessor, CLIPModel
 from ultralytics import YOLO
 from sklearn.cluster import KMeans
 from colorthief import ColorThief
 
-from flask_cors import CORS
 from collections import Counter, defaultdict
+import importlib.util
 
-# Optional config (OPENAI_API_KEY), else env var
 try:
     from config import OPENAI_API_KEY
-except Exception:
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+except ImportError:
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-# ---- Optional NIMA (TensorFlow) guarded import
-# ---- Optional NIMA (TensorFlow) LAZY import via importlib
-import importlib.util
-def _tf_available():
-    return importlib.util.find_spec("tensorflow") is not None
+NIMA_AVAILABLE = importlib.util.find_spec("tensorflow") is not None
+if NIMA_AVAILABLE:
+    def _import_tf_keras():
+        from tensorflow.keras.models import Model
+        from tensorflow.keras.layers import Dense, Dropout
+        from tensorflow.keras.applications.mobilenet import MobileNet, preprocess_input
+        from tensorflow.keras.preprocessing import image as keras_image
+        return Model, Dense, Dropout, MobileNet, preprocess_input, keras_image
+else:
+    _import_tf_keras = None
 
-def _import_tf_keras():
-    # Import only when needed, never at module load
-    import importlib
-    tf_keras = importlib.import_module("tensorflow.keras")
-    MobileNet = importlib.import_module("tensorflow.keras.applications").MobileNet
-    Dropout = importlib.import_module("tensorflow.keras.layers").Dropout
-    Dense = importlib.import_module("tensorflow.keras.layers").Dense
-    Model = importlib.import_module("tensorflow.keras.models").Model
-    keras_image = importlib.import_module("tensorflow.keras.preprocessing.image")
-    return MobileNet, Dropout, Dense, Model, keras_image
-
-NIMA_AVAILABLE = _tf_available()
-
-
-# ---- Optional DeepFace (feature-flag via env)
-DEEPFACE_ENABLE = os.getenv("DEEPFACE_ENABLE", "false").lower() == "true"
-DeepFace = None
+DEEPFACE_ENABLE = os.environ.get("DEEPFACE_ENABLE", "false").lower() == "true"
 if DEEPFACE_ENABLE:
     try:
         from deepface import DeepFace
-    except Exception as e:
-        print("[DeepFace] Disabled:", e)
+    except ImportError:
+        print("DeepFace not installed. Facial analysis will be disabled.")
         DeepFace = None
+else:
+    DeepFace = None
+
+# ✅ YOLO model loading with proper path handling
+YOLO_WEIGHTS = os.environ.get("YOLO_WEIGHTS", os.path.join(DATA_ROOT, "models", "yolov8n.pt"))
+
+def _ensure_yolo_weights():
+    """Ensure YOLO weights directory exists and handle download if needed"""
+    weights_dir = os.path.dirname(YOLO_WEIGHTS)
+    os.makedirs(weights_dir, exist_ok=True)
+    # If weights don't exist, YOLO will download them automatically to the writable location
+
+_ensure_yolo_weights()
+yolo_model = YOLO(YOLO_WEIGHTS)  # ✅ Now uses writable path
 
 
-
-# ========================================================
-# 🚀 INITIALIZE APP + FOLDERS
-# ========================================================
-
-app = Flask(__name__, static_folder="static", template_folder="templates")
-CORS(app)  # later: restrict to domain for production
-
-# --- paths & writable dirs (HF Spaces safe) -------------------------------
-# Use /data for persistent writes on Hugging Face Spaces (fallback to /tmp).
-DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
-YOLO_CONFIG_DIR = os.environ.get("YOLO_CONFIG_DIR", os.path.join(DATA_ROOT, "Ultralytics"))
-os.environ.setdefault("YOLO_CONFIG_DIR", YOLO_CONFIG_DIR)
-
-UPLOAD_FOLDER = os.path.join(DATA_ROOT, "uploads")
-
-# Ensure directories exist even on read-only root FS
-try:
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    os.makedirs(YOLO_CONFIG_DIR, exist_ok=True)
-except Exception as e:
-    # Last-ditch fallback if /data were ever unavailable
-    fallback = "/tmp/uploads"
-    os.makedirs(fallback, exist_ok=True)
-    UPLOAD_FOLDER = fallback
-
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
-# Serve uploaded files from /uploads/<filename>
-from flask import send_from_directory
-
-@app.route("/uploads/<path:filename>")
-def uploaded_file(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
-
-ECHO_MEMORY_PATH = "echo_memory.json"
+device = "cuda" if torch.cuda.is_available() else "cpu"
+clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
 
+nima_model = None
+if NIMA_AVAILABLE:
+    def load_nima_model(model_path=os.path.join(MODELS_DIR, 'nima_mobilenet.h5')):
+        global nima_model
+        Model, Dense, Dropout, MobileNet, _, _ = _import_tf_keras()
+        base_model = MobileNet((None, None, 3), include_top=False, pooling='avg', weights=None)
+        x = Dropout(0.75)(base_model.output)
+        x = Dense(10, activation='softmax')(x)
+        nima_model = Model(base_model.input, x)
+        try:
+            nima_model.load_weights(model_path)
+            print("✅ NIMA model loaded.")
+        except Exception as e:
+            print(f"⚠️ NIMA weights not found at {model_path}. Aesthetic scoring disabled. Error: {e}")
+            nima_model = None
+    load_nima_model()
 
-# ========================================================
-# 🚀 LOAD AI MODELS
-# ========================================================
-
-# YOLO for object detection
-# Store YOLO weights in /data so HF Spaces can write the file
-YOLO_WEIGHTS = os.path.join(DATA_ROOT, "models", "yolov8n.pt")
-os.makedirs(os.path.dirname(YOLO_WEIGHTS), exist_ok=True)
-
-# This will auto-download to YOLO_WEIGHTS if the file is missing
-yolo_model = YOLO(YOLO_WEIGHTS)
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if client:
+    print("✅ OpenAI client configured.")
+else:
+    print("⚠️ OpenAI API key not found. Cloud-enhanced features disabled.")
+    
 
 
 def detect_objects(image_path):
@@ -148,49 +135,6 @@ def detect_objects(image_path):
         cls_idx = int(b.cls.item())
         objects.append(names.get(cls_idx, str(cls_idx)))
     return objects if objects else ["No objects detected"]
-
-
-# CLIP for semantic description
-device = "cuda" if torch.cuda.is_available() else "cpu"
-clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-
-# NIMA for aesthetic scoring
-# ===== NIMA for aesthetic scoring (optional) =====
-def load_nima_model(model_path='models/nima_mobilenet.h5'):
-    if not NIMA_AVAILABLE:
-        print("[NIMA] TensorFlow not present. NIMA disabled.")
-        return None
-    try:
-        MobileNet, Dropout, Dense, Model, keras_image = _import_tf_keras()
-        base_model = MobileNet(include_top=False, input_shape=(224, 224, 3), pooling='avg')
-        x = Dropout(0.75)(base_model.output)
-        output = Dense(10, activation='softmax')(x)
-        model = Model(inputs=base_model.input, outputs=output)
-        if os.path.exists(model_path):
-            model.load_weights(model_path)
-            print(f"[NIMA] Weights loaded: {model_path}")
-        else:
-            print(f"[NIMA] Weights missing at {model_path}. Running without weights.")
-        # stash accessor so predict can import lazily too
-        model._nima_has_keras = True
-        return model
-    except Exception as e:
-        print("[NIMA] Disabled:", e)
-        return None
-
-
-
-# OpenAI Client
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-
-# ========================================================
-# 📸 IMAGE ANALYSIS FUNCTIONS
-# ========================================================
-
-# --- CLIP Semantic Description ---
-
-# --- CLIP Semantic Description (Expanded + Smart version) ---
 
 def get_clip_description(image_path):
     """
@@ -257,7 +201,8 @@ def get_clip_description(image_path):
     # CLIP process
     inputs = clip_processor(text=candidate_captions, images=image, return_tensors="pt", padding=True).to(device)
     outputs = clip_model(**inputs)
-    probs = outputs.logits_per_image.softmax(dim=1)
+    logits_per_image = outputs.logits_per_image
+    probs = logits_per_image.softmax(dim=1)
     best_idx = int(probs.argmax().item() if hasattr(probs.argmax(), "item") else probs.argmax())
     best_caption = candidate_captions[best_idx]
 
@@ -298,29 +243,28 @@ def get_clip_description(image_path):
         "genre_hint": genre_hint
     }
 
-# --- Color Analysis ---
+
 def analyze_color(image_path):
     image = cv2.imread(image_path)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).reshape((-1, 3))
-
-    clt = KMeans(n_clusters=5, n_init="auto")
-    clt.fit(image)
-
-    colors = clt.cluster_centers_.astype(int)
-    hex_colors = ['#%02x%02x%02x' % tuple(color) for color in colors]
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pixels = image.reshape(-1, 3)
+    kmeans = KMeans(n_clusters=5, random_state=42, n_init=10)
+    kmeans.fit(pixels)
+    colors = kmeans.cluster_centers_.astype(int)
+    hex_colors = ['#%02x%02x%02x' % (c, c[1], c[2]) for c in colors]
     
     avg_color = np.mean(colors, axis=0)
     mood = "warm" if avg_color[0] > avg_color[2] else "cool"
 
     return {"palette": hex_colors, "mood": mood}
 
-# --- NIMA Aesthetic Scoring ---
+
 def predict_nima_score(model, img_path):
     if model is None or not NIMA_AVAILABLE:
         return {"mean_score": None, "distribution": {}}
     try:
         # Lazy import again (no globals)
-        _, _, _, _, keras_image = _import_tf_keras()
+        _, _, _, _, preprocess_input, keras_image = _import_tf_keras()
         img = keras_image.load_img(img_path, target_size=(224, 224))
         img = keras_image.img_to_array(img) / 255.0
         preds = model.predict(np.expand_dims(img, axis=0))[0]
@@ -331,13 +275,26 @@ def predict_nima_score(model, img_path):
         }
     except Exception:
         return {"mean_score": None, "distribution": {}}
+    
 
-# --- Composition & Technical Analyzers (Framing, Lines, Clutter, Tonal Range, Lighting, Emotion) ---
-# (This part will continue as-is from your last block → due to message limits I will post PART 2 right after this message)
+# framed/analysis/vision.py
 
-# ========================================================
-# 📊 ADVANCED ANALYSIS FUNCTIONS (CONTINUED)
-# ========================================================
+def run_full_analysis(image_path):
+    """Orchestrates the full analysis pipeline."""
+    try:
+        # Use the comprehensive analyze_image function instead of limited analysis
+        analysis_result = analyze_image(image_path)
+        
+        if analysis_result and "error" not in analysis_result:
+            # Update echo memory with the new analysis
+            update_echo_memory(analysis_result)
+        
+        return analysis_result
+    except Exception as e:
+        print(f"Error in full analysis: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
 
 
 def analyze_lines_and_symmetry(image_path):
@@ -372,26 +329,39 @@ def analyze_lines_and_symmetry(image_path):
     else:
         style = "Geometric and structured"
 
-    # Analyze symmetry
-    flipped = cv2.flip(gray, 1)
-    diff = cv2.absdiff(gray, flipped)
-    symmetry_score = np.mean(diff)
+    height, width = gray.shape
+    if width > 1:
+        left_half = gray[:, :width // 2]
+        right_half = gray[:, width // 2:]
+        # Ensure right_half is flipped correctly
+        right_half_flipped = cv2.flip(right_half, 1)
+        
+        # Resize to match dimensions if width is odd
+        h1, w1 = left_half.shape
+        h2, w2 = right_half_flipped.shape
+        if w1!= w2:
+            min_w = min(w1, w2)
+            left_half = left_half[:, :min_w]
+            right_half_flipped = right_half_flipped[:, :min_w]
 
-    if symmetry_score < 10:
-        symmetry = "Perfect symmetry (Highly balanced)"
-    elif symmetry_score < 30:
-        symmetry = "Near symmetry (Natural and pleasant)"
-    elif symmetry_score < 60:
-        symmetry = "Moderate asymmetry (Dynamic and modern)"
+        diff = cv2.absdiff(left_half, right_half_flipped)
+        symmetry_score = np.mean(diff)
+        
+        symmetry_desc = "Asymmetrical"
+        if symmetry_score < 10:
+            symmetry_desc = "Highly symmetrical"
+        elif symmetry_score < 30:
+            symmetry_desc = "Largely symmetrical with some minor differences"
+        elif symmetry_score < 60:
+            symmetry_desc = "Noticeably asymmetrical"
     else:
-        symmetry = "No symmetry (Chaotic or intentionally imbalanced)"
+        symmetry_desc = "Image too narrow to analyze symmetry"
 
     return {
         "line_pattern": pattern,
         "line_style": style,
-        "symmetry": symmetry
+        "symmetry": symmetry_desc
     }
-
 
 
 def analyze_color_harmony(image_path):
@@ -420,7 +390,6 @@ def analyze_color_harmony(image_path):
         "dominant_color": f"#{r:02x}{g:02x}{b:02x}",
         "harmony": harmony
     }
-
 
 
 def analyze_lighting_direction(image_path):
@@ -481,6 +450,17 @@ def analyze_background_clutter(image_path):
         "narrative": narrative
     }
 
+def analyze_subject_emotion(image_path):
+    # If DeepFace available and enabled, try it first
+    if DeepFace is not None:
+        try:
+            res = DeepFace.analyze(img_path=image_path, actions=['emotion'], enforce_detection=False)
+            emo = res[0]['dominant_emotion'] if isinstance(res, list) else res['dominant_emotion']
+            return {"subject_type": "human subject", "emotion": emo, "age": None, "gender": "Unknown"}
+        except Exception as e:
+            print("[DeepFace] error, falling back to CLIP:", e)
+    # Fallback: CLIP-based emotion (existing implementation)
+    return analyze_subject_emotion_clip(image_path)
 
 def analyze_subject_emotion_clip(image_path):
     image = Image.open(image_path).convert("RGB")
@@ -524,20 +504,6 @@ def analyze_subject_emotion_clip(image_path):
         "subject_type": subject_type,
         "emotion": best_caption
     }
-
-
-def analyze_subject_emotion(image_path):
-    # If DeepFace available and enabled, try it first
-    if DeepFace is not None:
-        try:
-            res = DeepFace.analyze(img_path=image_path, actions=['emotion'], enforce_detection=False)
-            emo = res[0]['dominant_emotion'] if isinstance(res, list) else res['dominant_emotion']
-            return {"subject_type": "human subject", "emotion": emo, "age": None, "gender": "Unknown"}
-        except Exception as e:
-            print("[DeepFace] error, falling back to CLIP:", e)
-    # Fallback: CLIP-based emotion (existing implementation)
-    return analyze_subject_emotion_clip(image_path)
-
 
 from collections import Counter
 
@@ -648,12 +614,6 @@ def detect_objects_and_framing(image_path, confidence_threshold=0.3):
         "spatial_interpretation": spatial_interpretation
     }
 
-
-
-
-# ========================================================
-# 📊 MASTER IMAGE ANALYSIS WRAPPER
-# ========================================================
 def infer_emotion(photo_data):
     brightness = photo_data.get("brightness", 0)
     contrast = photo_data.get("contrast", 0)
@@ -895,10 +855,13 @@ def detect_genre(photo_data):
 
 
 def analyze_image(path):
-    print("Analyzing image:",path)
+    print("Analyzing image:", path)
     try:
         # Load Image + Convert to Gray
         img = cv2.imread(path)
+        if img is None:
+            return {"error": "Could not load image"}
+            
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         # === TECHNICAL ANALYSIS ===
@@ -907,7 +870,6 @@ def analyze_image(path):
         sharpness = round(cv2.Laplacian(gray, cv2.CV_64F).var(), 2)
 
         # === AI + SEMANTIC ANALYSIS ===
-    
         clip_data = get_clip_description(path)
         nima_result = predict_nima_score(nima_model, path)
         color_analysis = analyze_color(path)
@@ -919,8 +881,7 @@ def analyze_image(path):
         tonal_range = analyze_tonal_range(path)
         subject_emotion = analyze_subject_emotion(path)
         
-        # === BUILD INITIAL RESULT ===
-                # === BUILD INITIAL RESULT ===
+        # === BUILD RESULT ===
         result = {
             # Technical
             "brightness": brightness,
@@ -936,46 +897,48 @@ def analyze_image(path):
             "background_clutter": background_clutter,
 
             # Lines/Symmetry
-            "line_pattern":  lines_symmetry.get("line_pattern", "undefined"),
-            "line_style":    lines_symmetry.get("line_style", "unknown"),
-            "symmetry":      lines_symmetry.get("symmetry", "unknown"),
+            "line_pattern": lines_symmetry.get("line_pattern", "undefined"),
+            "line_style": lines_symmetry.get("line_style", "unknown"),
+            "symmetry": lines_symmetry.get("symmetry", "unknown"),
 
             # Light/Tone
             "lighting_direction": lighting_direction["direction"],
-            "tonal_range":        tonal_range["tonal_range"],
-        }
+            "tonal_range": tonal_range["tonal_range"],
 
-        # Subject & objects (full structure preserved)
-        result["objects"] = object_data["objects"]
-        result["object_narrative"] = object_data["object_narrative"]
-        result["subject_framing"] = {
-            "position":       object_data["subject_position"],
-            "size":           object_data["subject_size"],
-            "style":          object_data["framing_description"],
-            "interpretation": object_data["spatial_interpretation"]
-        }
+            # Subject & objects
+            "objects": object_data["objects"],
+            "object_narrative": object_data["object_narrative"],
+            "subject_framing": {
+                "position": object_data["subject_position"],
+                "size": object_data["subject_size"],
+                "style": object_data["framing_description"],
+                "interpretation": object_data["spatial_interpretation"]
+            },
 
-        # Subject emotion (keep the full dict AND a convenience field)
-        result["subject_emotion"] = subject_emotion           # dict: {subject_type, emotion, age, gender}
-        result["subject_type"]    = subject_emotion.get("subject_type", "unknown")
+            # Subject emotion
+            "subject_emotion": subject_emotion,
+            "subject_type": subject_emotion.get("subject_type", "unknown")
+        }
 
         # === DERIVED FIELDS ===
         result["visual_interpretation"] = interpret_visual_features(result)
-        result["emotional_mood"]        = infer_emotion(result)["emotional_mood"]
+        result["emotional_mood"] = infer_emotion(result)["emotional_mood"]
 
         genre_info = detect_genre(result)
-        result["genre"]    = genre_info.get("genre", "General")
+        result["genre"] = genre_info.get("genre", "General")
         result["subgenre"] = genre_info.get("subgenre", "General")
 
-        # Remix
+        # Generate critique and remix
+        result["critique"] = generate_merged_critique(result)
         result["remix_prompt"] = generate_remix_prompt(result)
 
         return result
+        
     except Exception as e:
         import traceback
         print("Analysis error:", e)
         traceback.print_exc()
-        return None
+        return {"error": str(e)}
 
 
 # ========================================================
@@ -1625,93 +1588,5 @@ Begin now.
     return response.choices[0].message.content.strip()
 
 
-# --- ROUTE: Homepage ---
-@app.route('/')
-def index():
-    return render_template('index.html')
 
 
-# --- ROUTE: Analyze Photo + Get Critique ---
-@app.route('/analyze', methods=['POST'])
-def analyze_route():
-    if 'photo' not in request.files:
-        return "No photo uploaded", 400
-
-    photo = request.files['photo']
-    if photo.filename == '':
-        return "No file selected", 400
-
-    # Save photo
-    filename = f"{uuid.uuid4().hex}_{photo.filename}"
-    path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    photo.save(path)
-
-    # Run analysis
-    result = analyze_image(path)
-    if result is None:
-        return "Image analysis failed.", 500  # <- Prevents further errors
-    print("📸 Image Analysis Result:")
-    print(result)
-    #if isinstance(result, str):
-        #import json
-        #result = json.loads(result)
-    # Generate critique and remix
-    critique = generate_merged_critique(result)
-    if not critique:
-        critique = "(⚠️ No critique was generated. GPT may have failed silently.)"
-    remix_prompt = generate_remix_prompt(result)
-    if not remix_prompt:
-        remix_prompt = "(⚠️ Remix prompt generation failed.)"
-
-
-    # Update ECHO memory
-    #update_echo_memory(result)
-    print("✅ Final Critique Length:", len(critique))
-    print("✅ Final Remix Length:", len(remix_prompt))
-
-    return render_template(
-        'result.html',
-        filename=filename,
-        critique=critique,
-        remix=remix_prompt,
-        echo_summary="(Echo disabled)",
-        echo_response=None,
-        result=result
-    )
-
-
-
-# --- ROUTE: Ask ECHO ---
-@app.route('/ask-echo', methods=['POST'])
-def ask_echo_route():
-    data = request.get_json()
-    question = data.get("question")
-
-    memory = load_echo_memory()
-    answer = ask_echo(question, memory, client)
-
-    return jsonify({"response": answer})
-
-
-# --- Serve Uploaded Images ---
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-@app.route('/reset', methods=['POST'])
-def reset_echo():
-    save_echo_memory([])
-    return {"status": "reset"}
-
-
-if __name__ == '__main__':
-    app.run(debug=True)
-
-# ========================================================
-# 🚧 FUTURE ROADMAP (TO BE IMPLEMENTED NEXT)
-# ========================================================
-
-# 👉 Portfolio / Series Mode (multi-image analysis)
-# 👉 Mentor Selector (choose Ansel Adams / Cartier-Bresson style feedback)
-# 👉 Creative Rewrite (AI suggests re-edits and alternative versions)
-# 👉 Personal Artistic Profile (track growth and style evolution)
