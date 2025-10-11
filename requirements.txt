@@ -1,5 +1,6 @@
 flask
 flask-cors
+flask-caching
 opencv-python
 numpy
 pillow
@@ -10,3 +11,4 @@ scikit-learn
 colorthief
 gunicorn
 openai
+requests
