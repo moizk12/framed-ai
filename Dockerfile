@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/home/appuser/.cache/huggingface
 
-# Install system dependencies - UPDATED PACKAGES
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     git \
@@ -26,32 +26,29 @@ RUN git lfs install
 # Create a non-root user and group
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
-# Switch to the non-root user
-USER appuser
-
 # Set the working directory
-WORKDIR /home/appuser/app
+WORKDIR /app
 
 # ---- Builder Stage ----
 FROM base as builder
 
 # Copy only the requirements file to leverage Docker layer caching
-COPY --chown=appuser:appgroup requirements.txt .
+COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Install Python dependencies to a temporary location
+RUN pip install --no-cache-dir --target /dependencies -r requirements.txt
 
 # ---- Final Stage ----
 FROM base as final
 
-# Copy installed packages from the builder stage
-COPY --from=builder /home/appuser/.local /home/appuser/.local
-
-# Add the local user's bin to the PATH
-ENV PATH=/home/appuser/.local/bin:$PATH
+# Copy dependencies from builder stage
+COPY --from=builder /dependencies /usr/local/lib/python3.11/site-packages
 
 # Copy application code
 COPY --chown=appuser:appgroup . .
+
+# Switch to the non-root user (do this AFTER copying files)
+USER appuser
 
 # Expose the port the app will run on
 EXPOSE 7860
