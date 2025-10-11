@@ -1,14 +1,36 @@
-flask
-flask-cors
-flask-caching
-opencv-python
-numpy
-pillow
-torch
-transformers
-ultralytics
-scikit-learn
-colorthief
-gunicorn
-openai
-requests
+# ===================================
+# FRAMED Requirements - Updated
+# ===================================
+
+# Web Framework
+flask==3.0.0
+flask-cors==4.0.0
+Werkzeug==3.0.1
+
+# Computer Vision
+opencv-python-headless==4.8.1.78
+
+# Core ML/Data Science
+numpy==1.24.3
+pillow==10.1.0
+scikit-learn==1.3.2
+
+# Deep Learning
+torch==2.1.0
+torchvision==0.16.0
+transformers==4.35.2
+
+# Object Detection
+ultralytics==8.0.220
+
+# Image Analysis
+colorthief==0.2.1
+
+# Web Server
+gunicorn==21.2.0
+
+# AI Integration
+openai==1.3.5
+
+# Utilities
+requests==2.31.0

@@ -1,37 +1,55 @@
-# framed/__init__.py
+"""
+FRAMED - AI-Powered Photography Analysis Platform
+Flask Application Factory
 
+⚠️ CRITICAL FILE - This must exist for the app to work!
+"""
 import os
 from flask import Flask
 from flask_cors import CORS
 
-def create_app(test_config=None):
-    """Create and configure the Flask application."""
-    app = Flask(__name__, instance_relative_config=True)
+
+def create_app(config=None):
+    """
+    Application factory pattern for Flask
     
-    # Load configuration
-    app.config.from_mapping(
-        SECRET_KEY=os.environ.get('SECRET_KEY', 'dev'),
-        UPLOAD_FOLDER=os.path.join(app.instance_path, 'uploads'),
-        MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB max file size
+    This creates and configures the Flask application.
+    Called by run.py when starting the server.
+    """
+    app = Flask(
+        __name__,
+        template_folder='templates',
+        static_folder='static'
     )
-
-    if test_config is None:
-        # Load the instance config, if it exists, when not testing
-        app.config.from_pyfile('config.py', silent=True)
-    else:
-        # Load the test config if passed in
-        app.config.from_mapping(test_config)
-
-    # Ensure the instance folder exists
+    
+    # Basic configuration
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+    app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_DIR', '/data/uploads')
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+    
+    # Apply any additional config
+    if config:
+        app.config.update(config)
+    
+    # Enable CORS for all routes
+    CORS(app, resources={r"/*": {"origins": "*"}})
+    
+    # Register blueprints (routes)
+    from framed.routes import main
+    app.register_blueprint(main)
+    
+    # Ensure necessary directories exist
     try:
-        os.makedirs(app.instance_path)
-    except OSError:
-        pass
-
-    CORS(app)
-
-    # Register blueprints
-    from framed.main import routes as main_routes
-    app.register_blueprint(main_routes.bp)
-
+        from framed.analysis.vision import ensure_directories
+        with app.app_context():
+            ensure_directories()
+    except Exception as e:
+        app.logger.warning(f"Could not pre-create directories: {e}")
+    
+    # Health check endpoint
+    @app.route('/health')
+    def health():
+        """Health check for monitoring"""
+        return {'status': 'healthy', 'service': 'framed'}, 200
+    
     return app
