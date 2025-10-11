@@ -1,23 +1,27 @@
-# ===================================
-# FRAMED - Fixed Dockerfile for HF Spaces
-# ===================================
+# Simplified single-stage Dockerfile for HF Spaces
+FROM python:3.11-slim
 
-FROM python:3.11-slim as base
-
+# Prevent Python from writing pyc files and buffering stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git git-lfs curl ca-certificates \
-    libgl1-mesa-glx libglib2.0-0 \
+    git \
+    git-lfs \
+    curl \
+    ca-certificates \
+    libgl1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
 # Create non-root user
-RUN groupadd -r appgroup && useradd -r -g appgroup -m appuser
+RUN groupadd -r appgroup && \
+    useradd -r -g appgroup -m -d /home/appuser appuser
 
-# ✅ CREATE DATA DIRECTORIES AS ROOT (fixes permission issues)
+# Create all data directories as root with proper permissions
 RUN mkdir -p \
     /data/uploads \
     /data/results \
@@ -27,30 +31,24 @@ RUN mkdir -p \
     /data/hf/transformers \
     /data/torch \
     /data/cache \
-    /data/Ultralytics \
-    && chown -R appuser:appgroup /data \
-    && chmod -R 755 /data
+    /data/Ultralytics && \
+    chown -R appuser:appgroup /data && \
+    chmod -R 755 /data
 
-USER appuser
+# Set working directory
 WORKDIR /home/appuser/app
 
-# ===================================
-# Builder stage
-# ===================================
-FROM base as builder
-
+# Copy requirements first (for better caching)
 COPY --chown=appuser:appgroup requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
 
-# ===================================
-# Final stage
-# ===================================
-FROM base as final
+# Install Python dependencies as root (to avoid permission issues)
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --from=builder /home/appuser/.local /home/appuser/.local
+# Copy application code
+COPY --chown=appuser:appgroup . .
 
-ENV PATH=/home/appuser/.local/bin:$PATH \
-    DATA_ROOT=/data \
+# Set environment variables
+ENV DATA_ROOT=/data \
     HF_HOME=/data/hf \
     HUGGINGFACE_HUB_CACHE=/data/hf/hub \
     TRANSFORMERS_CACHE=/data/hf/transformers \
@@ -60,13 +58,17 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
     ULTRALYTICS_CFG=/data/Ultralytics/settings.json \
     UPLOAD_DIR=/data/uploads
 
-COPY --chown=appuser:appgroup . .
+# Switch to non-root user
+USER appuser
 
+# Expose port
 EXPOSE 7860
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:7860/health || exit 1
 
+# Run application
 CMD ["gunicorn", "-k", "gthread", "--threads", "4", "-w", "1", \
      "--timeout", "120", "--keep-alive", "5", \
      "-b", "0.0.0.0:7860", "run:app"]
