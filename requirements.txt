@@ -1,5 +1,5 @@
 # ===================================
-# FRAMED Requirements - Updated
+# FRAMED Requirements - Fixed
 # ===================================
 
 # Web Framework
@@ -29,8 +29,8 @@ colorthief==0.2.1
 # Web Server
 gunicorn==21.2.0
 
-# AI Integration
-openai==1.3.5
+# AI Integration - FIXED VERSION
+openai==1.54.3
 
 # Utilities
 requests==2.31.0
