@@ -6,15 +6,14 @@ from openai import OpenAI
 
 # ===== Writable paths & caches (HF Spaces) =====
 # ===== Writable paths & caches (HF Spaces) =====
-DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
-os.makedirs(DATA_ROOT, exist_ok=True)
+# ===== Writable paths & caches (HF Spaces) =====
+# ===== Writable paths & caches (HF Spaces) =====
+DATA_ROOT = os.getenv("DATA_ROOT", "/data")
 
 # App write dirs
 UPLOAD_FOLDER = os.path.join(DATA_ROOT, "uploads")
 RESULTS_FOLDER = os.path.join(DATA_ROOT, "results")
 TMP_FOLDER = os.path.join(DATA_ROOT, "tmp")
-for p in [UPLOAD_FOLDER, RESULTS_FOLDER, TMP_FOLDER]:
-    os.makedirs(p, exist_ok=True)
 
 # Model weights & caches
 MODELS_DIR = os.path.join(DATA_ROOT, "models")
@@ -24,9 +23,28 @@ HUGGINGFACE_HUB_CACHE = os.path.join(HF_HOME, "hub")
 TORCH_HOME = os.path.join(DATA_ROOT, "torch")
 XDG_CACHE_HOME = os.path.join(DATA_ROOT, "cache")
 
-# ✅ Ultralytics settings in /data
+# ✅ Ultralytics settings
 YOLO_CONFIG_DIR = os.path.join(DATA_ROOT, "Ultralytics")
 ULTRALYTICS_CFG = os.path.join(YOLO_CONFIG_DIR, "settings.json")
+
+def ensure_directories():
+    """Create directories only when actually needed, with error handling"""
+    directories = [
+        UPLOAD_FOLDER, RESULTS_FOLDER, TMP_FOLDER, MODELS_DIR, HF_HOME,
+        TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE, TORCH_HOME, XDG_CACHE_HOME,
+        YOLO_CONFIG_DIR
+    ]
+    
+    for p in directories:
+        try:
+            os.makedirs(p, exist_ok=True)
+        except PermissionError as e:
+            print(f"⚠️ Warning: Cannot create directory {p}: {e}")
+            # Fallback to a user-writable directory
+            if p.startswith(DATA_ROOT):
+                fallback_path = p.replace(DATA_ROOT, "/tmp/app_data")
+                os.makedirs(fallback_path, exist_ok=True)
+                print(f"✅ Using fallback path: {fallback_path}")
 
 # ✅ Set environment variables with setdefault (won't override existing)
 os.environ.setdefault("HF_HOME", HF_HOME)
@@ -37,13 +55,8 @@ os.environ.setdefault("XDG_CACHE_HOME", XDG_CACHE_HOME)
 os.environ.setdefault("YOLO_CONFIG_DIR", YOLO_CONFIG_DIR)
 os.environ.setdefault("ULTRALYTICS_CFG", ULTRALYTICS_CFG)
 
-# ✅ Create all necessary directories
-for p in [
-    MODELS_DIR, HF_HOME, TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE, 
-    TORCH_HOME, XDG_CACHE_HOME, YOLO_CONFIG_DIR,
-    os.path.dirname(ULTRALYTICS_CFG)  # Ensure Ultralytics directory exists
-]:
-    os.makedirs(p, exist_ok=True)
+# ✅ Create all necessary directories with error handling
+ensure_directories()
 
 ECHO_MEMORY_PATH = os.path.join(DATA_ROOT, "echo_memory.json")
 
@@ -282,7 +295,10 @@ def predict_nima_score(model, img_path):
 def run_full_analysis(image_path):
     """Orchestrates the full analysis pipeline."""
     try:
-        # Use the comprehensive analyze_image function instead of limited analysis
+        # Ensure directories exist before starting analysis
+        ensure_directories()
+        
+        # Use the comprehensive analyze_image function
         analysis_result = analyze_image(image_path)
         
         if analysis_result and "error" not in analysis_result:
@@ -855,6 +871,7 @@ def detect_genre(photo_data):
 
 
 def analyze_image(path):
+    ensure_directories()
     print("Analyzing image:", path)
     try:
         # Load Image + Convert to Gray

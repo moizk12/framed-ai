@@ -1,42 +1,75 @@
-# Dockerfile
+# ---- Multi-stage build for optimized image size ----
+FROM python:3.11-slim as base
 
-FROM python:3.11-slim
+# Set environment variables for best practices
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/app/.cache/huggingface
-ENV DATA_ROOT=/app/app_data 
+# Install system dependencies including Git LFS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git git-lfs curl ca-certificates \
+    libgl1-mesa-glx libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && git lfs install
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    git \
-    git-lfs \
-    libgl1 \
-    libglib2.0-0 \
-    && apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Create a non-root user and group
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
-# Initialize Git LFS
-RUN git lfs install
+# Create and set permissions for data directory
+RUN mkdir -p /data && chown -R appuser:appgroup /data
 
-WORKDIR /app
+# Switch to the non-root user
+USER appuser
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Set the working directory
+WORKDIR /home/appuser/app
 
-COPY . .
+# ---- Builder Stage ----
+FROM base as builder
 
-# Create app data directory and set permissions
-RUN mkdir -p /app/app_data && chmod 755 /app/app_data
+# Copy only the requirements file to leverage Docker layer caching
+COPY --chown=appuser:appgroup requirements.txt .
 
-# Create non-root user with proper permissions
-RUN adduser --disabled-password --gecos '' --shell /bin/bash user
-RUN chown -R user:user /app
-USER user
+# Install Python dependencies to user directory
+RUN pip install --no-cache-dir --user -r requirements.txt
 
+# ---- Final Stage ----
+FROM base as final
+
+# Copy installed packages from the builder stage
+COPY --from=builder /home/appuser/.local /home/appuser/.local
+
+# Add the local user's bin to the PATH
+ENV PATH=/home/appuser/.local/bin:$PATH
+
+# Copy application code
+COPY --chown=appuser:appgroup . .
+
+# Set cache environment variables for writable paths
+ENV DATA_ROOT=/data \
+    HF_HOME=/data/hf \
+    HUGGINGFACE_HUB_CACHE=/data/hf/hub \
+    TRANSFORMERS_CACHE=/data/hf/transformers \
+    TORCH_HOME=/data/torch \
+    XDG_CACHE_HOME=/data/cache \
+    YOLO_CONFIG_DIR=/data/Ultralytics \
+    ULTRALYTICS_CFG=/data/Ultralytics/settings.json
+
+# Create necessary subdirectories with proper permissions
+RUN mkdir -p \
+    /data/uploads \
+    /data/results \
+    /data/tmp \
+    /data/models \
+    /data/hf \
+    /data/hf/hub \
+    /data/hf/transformers \
+    /data/torch \
+    /data/cache \
+    /data/Ultralytics
+
+# Expose the port the app will run on
 EXPOSE 7860
 
-# Use Python directly
-CMD ["python", "run.py"]
+# Command to run the application using Gunicorn with gthread worker
+CMD ["gunicorn", "-k", "gthread", "-w", "2", "-b", "0.0.0.0:7860", "run:app"]
