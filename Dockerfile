@@ -17,9 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
-# Create non-root user
+# Create non-root user and app directory first
 RUN groupadd -r appgroup && \
-    useradd -r -g appgroup -m -d /home/appuser appuser
+    useradd -r -g appgroup -m -d /home/appuser appuser && \
+    mkdir -p /home/appuser/app && \
+    chown -R appuser:appgroup /home/appuser
 
 # Create all data directories as root with proper permissions
 RUN mkdir -p \
