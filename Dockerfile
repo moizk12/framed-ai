@@ -1,20 +1,17 @@
 # Dockerfile
 
-# ---- Base Stage ----
-FROM python:3.11-slim as base
+FROM python:3.11-slim
 
-# Set environment variables for best practices
+# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/home/appuser/.cache/huggingface
+ENV HF_HOME=/app/.cache/huggingface
 
 # Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     git \
     git-lfs \
-    curl \
-    ca-certificates \
     libgl1 \
     libglib2.0-0 \
     && apt-get clean && \
@@ -23,35 +20,25 @@ RUN apt-get update && \
 # Initialize Git LFS
 RUN git lfs install
 
-# Create a non-root user and group
-RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
-
-# Set the working directory
+# Set working directory
 WORKDIR /app
 
-# ---- Builder Stage ----
-FROM base as builder
-
-# Copy only the requirements file to leverage Docker layer caching
+# Copy requirements first
 COPY requirements.txt .
 
-# Install Python dependencies to a temporary location
-RUN pip install --no-cache-dir --target /dependencies -r requirements.txt
-
-# ---- Final Stage ----
-FROM base as final
-
-# Copy dependencies from builder stage
-COPY --from=builder /dependencies /usr/local/lib/python3.11/site-packages
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY --chown=appuser:appgroup . .
+COPY . .
 
-# Switch to the non-root user (do this AFTER copying files)
-USER appuser
+# Create a non-root user and set permissions
+RUN adduser --disabled-password --gecos '' --shell /bin/bash user
+RUN chown -R user:user /app
+USER user
 
-# Expose the port the app will run on
+# Expose port
 EXPOSE 7860
 
-# Command to run the application using Gunicorn
+# Command to run the application
 CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "2", "run:app"]
