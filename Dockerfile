@@ -1,4 +1,4 @@
-# Simple and reliable Dockerfile for HF Spaces
+# Fixed Dockerfile with proper permissions
 FROM python:3.11-slim
 
 # Install system dependencies
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
-# Create app directory and set as WORKDIR first
+# Create app directory
 WORKDIR /app
 
 # Copy requirements and install
@@ -22,8 +22,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create data directories (use /data which is writable in HF Spaces)
-RUN mkdir -p /data/uploads /data/results /data/tmp /data/models /data/hf/hub /data/hf/transformers /data/torch /data/cache /data/Ultralytics
+# Create all necessary directories with proper permissions
+RUN mkdir -p \
+    /data/uploads \
+    /data/results \
+    /data/tmp \
+    /data/models \
+    /data/hf/hub \
+    /data/hf/transformers \
+    /data/torch \
+    /data/cache \
+    /data/Ultralytics && \
+    chmod -R 777 /data  # Give full permissions to /data and all subdirectories
 
 # Set environment variables
 ENV DATA_ROOT=/data \
@@ -43,7 +53,7 @@ EXPOSE 7860
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:7860/health || exit 1
 
-# Run application (no user switching to avoid permission issues)
+# Run application
 CMD ["gunicorn", "-k", "gthread", "--threads", "4", "-w", "1", \
      "--timeout", "120", "--keep-alive", "5", \
      "-b", "0.0.0.0:7860", "run:app"]
