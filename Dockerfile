@@ -17,13 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
-# Create non-root user and app directory first
+# Create non-root user and ensure app directory exists
 RUN groupadd -r appgroup && \
     useradd -r -g appgroup -m -d /home/appuser appuser && \
     mkdir -p /home/appuser/app && \
     chown -R appuser:appgroup /home/appuser
 
-# Create all data directories as root with proper permissions
+# Create all data directories with proper permissions
 RUN mkdir -p \
     /data/uploads \
     /data/results \
@@ -37,13 +37,13 @@ RUN mkdir -p \
     chown -R appuser:appgroup /data && \
     chmod -R 755 /data
 
-# Set working directory
+# Set working directory (this directory was created above)
 WORKDIR /home/appuser/app
 
 # Copy requirements first (for better caching)
 COPY --chown=appuser:appgroup requirements.txt .
 
-# Install Python dependencies as root (to avoid permission issues)
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
