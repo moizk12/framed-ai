@@ -6,6 +6,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/app/.cache/huggingface
+ENV DATA_ROOT=/app/app_data  # Add this line
 
 # Install system dependencies
 RUN apt-get update && \
@@ -20,25 +21,22 @@ RUN apt-get update && \
 # Initialize Git LFS
 RUN git lfs install
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
 COPY . .
 
-# Create a non-root user and set permissions
+# Create app data directory and set permissions
+RUN mkdir -p /app/app_data && chmod 755 /app/app_data
+
+# Create non-root user with proper permissions
 RUN adduser --disabled-password --gecos '' --shell /bin/bash user
 RUN chown -R user:user /app
 USER user
 
-# Expose port
 EXPOSE 7860
 
-# Command to run the application
-CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "2", "run:app"]
+# Use Python directly
+CMD ["python", "run.py"]
