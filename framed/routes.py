@@ -44,8 +44,9 @@ def analyze():
     if not allowed_file(file.filename):
         return jsonify({"error":"Unsupported file type"}), 400
 
-    # ✅ write to a directory Spaces lets us write to
-    upload_dir = os.environ.get("UPLOAD_DIR", "/data/uploads")
+    # ✅ Use centralized runtime directory from vision.py
+    from framed.analysis.vision import UPLOAD_DIR
+    upload_dir = UPLOAD_DIR
     os.makedirs(upload_dir, exist_ok=True)
 
     safe_name = secure_filename(file.filename)

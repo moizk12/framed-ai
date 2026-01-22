@@ -16,15 +16,21 @@ def create_app(config=None):
     This creates and configures the Flask application.
     Called by run.py when starting the server.
     """
+    # Get the directory containing this file (framed package)
+    from pathlib import Path
+    base_dir = Path(__file__).parent
+    
     app = Flask(
         __name__,
-        template_folder='templates',
-        static_folder='static'
+        template_folder=str(base_dir / 'templates'),
+        static_folder=str(base_dir / 'static')
     )
     
     # Basic configuration
     app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-    app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_DIR', '/data/uploads')
+    # Use centralized runtime directory from vision.py
+    from framed.analysis.vision import UPLOAD_DIR
+    app.config['UPLOAD_FOLDER'] = UPLOAD_DIR
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
     
     # Apply any additional config
@@ -46,10 +52,15 @@ def create_app(config=None):
     except Exception as e:
         app.logger.warning(f"Could not pre-create directories: {e}")
     
-    # Health check endpoint
+    # Health check endpoint - STEP 4.5: NEVER triggers model loading
+    # This endpoint returns instantly and does not import or reference any model getters
     @app.route('/health')
     def health():
-        """Health check for monitoring"""
+        """
+        Health check for monitoring.
+        Returns instantly without loading any models.
+        Safe for cold-start verification.
+        """
         return {'status': 'healthy', 'service': 'framed'}, 200
     
     return app

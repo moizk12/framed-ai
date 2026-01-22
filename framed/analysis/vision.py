@@ -1,64 +1,82 @@
 import os, uuid, json
+import logging
 import cv2
 import numpy as np
 from PIL import Image
 from openai import OpenAI
 
-# ===== Writable paths & caches (HF Spaces) =====
-# ===== Writable paths & caches (HF Spaces) =====
-# ===== Writable paths & caches (HF Spaces) =====
-# ===== Writable paths & caches (HF Spaces) =====
-DATA_ROOT = os.getenv("DATA_ROOT", "/data")
+# Configure logging for production
+logger = logging.getLogger(__name__)
 
-# App write dirs
-UPLOAD_FOLDER = os.path.join(DATA_ROOT, "uploads")
-RESULTS_FOLDER = os.path.join(DATA_ROOT, "results")
-TMP_FOLDER = os.path.join(DATA_ROOT, "tmp")
+# ========================================================
+# STEP 4.2: CENTRALIZED RUNTIME DIRECTORY STRATEGY
+# ========================================================
+# Production-safe runtime directory configuration
+# Uses FRAMED_DATA_DIR if set, otherwise defaults to /tmp/framed locally
+# On Hugging Face Spaces, set FRAMED_DATA_DIR=/data/framed
 
-# Model weights & caches
-MODELS_DIR = os.path.join(DATA_ROOT, "models")
-HF_HOME = os.path.join(DATA_ROOT, "hf")
-TRANSFORMERS_CACHE = os.path.join(HF_HOME, "transformers")
-HUGGINGFACE_HUB_CACHE = os.path.join(HF_HOME, "hub")
-TORCH_HOME = os.path.join(DATA_ROOT, "torch")
-XDG_CACHE_HOME = os.path.join(DATA_ROOT, "cache")
+# Base data directory - centralized and writable
+BASE_DATA_DIR = os.getenv("FRAMED_DATA_DIR", "/tmp/framed")
 
-# ✅ Ultralytics settings
-YOLO_CONFIG_DIR = os.path.join(DATA_ROOT, "Ultralytics")
+# Subdirectories under BASE_DATA_DIR
+MODEL_DIR = os.path.join(BASE_DATA_DIR, "models")
+UPLOAD_DIR = os.path.join(BASE_DATA_DIR, "uploads")
+CACHE_DIR = os.path.join(BASE_DATA_DIR, "cache")
+
+# Legacy compatibility (for backward compatibility)
+DATA_ROOT = BASE_DATA_DIR
+UPLOAD_FOLDER = UPLOAD_DIR
+RESULTS_FOLDER = os.path.join(BASE_DATA_DIR, "results")
+TMP_FOLDER = os.path.join(BASE_DATA_DIR, "tmp")
+MODELS_DIR = MODEL_DIR
+
+# Hugging Face and Transformers cache - explicitly set to CACHE_DIR
+HF_HOME = CACHE_DIR
+TRANSFORMERS_CACHE = CACHE_DIR
+HUGGINGFACE_HUB_CACHE = CACHE_DIR
+TORCH_HOME = CACHE_DIR
+XDG_CACHE_HOME = CACHE_DIR
+
+# Ultralytics settings
+YOLO_CONFIG_DIR = os.path.join(BASE_DATA_DIR, "Ultralytics")
 ULTRALYTICS_CFG = os.path.join(YOLO_CONFIG_DIR, "settings.json")
 
 def ensure_directories():
-    """Create directories only when actually needed, with error handling"""
+    """Create all necessary runtime directories with error handling"""
     directories = [
-        UPLOAD_FOLDER, RESULTS_FOLDER, TMP_FOLDER, MODELS_DIR, HF_HOME,
-        TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE, TORCH_HOME, XDG_CACHE_HOME,
+        BASE_DATA_DIR,
+        MODEL_DIR,
+        UPLOAD_DIR,
+        CACHE_DIR,
+        RESULTS_FOLDER,
+        TMP_FOLDER,
         YOLO_CONFIG_DIR
     ]
     
     for p in directories:
         try:
             os.makedirs(p, exist_ok=True)
-        except PermissionError as e:
+        except (PermissionError, OSError) as e:
             print(f"⚠️ Warning: Cannot create directory {p}: {e}")
-            # Fallback to a user-writable directory
-            if p.startswith(DATA_ROOT):
-                fallback_path = p.replace(DATA_ROOT, "/tmp/app_data")
-                os.makedirs(fallback_path, exist_ok=True)
-                print(f"✅ Using fallback path: {fallback_path}")
+            # Fallback to /tmp/framed if BASE_DATA_DIR fails
+            if p == BASE_DATA_DIR:
+                fallback_base = "/tmp/framed"
+                os.makedirs(fallback_base, exist_ok=True)
+                print(f"✅ Using fallback base directory: {fallback_base}")
 
-# ✅ Set environment variables with setdefault (won't override existing)
-os.environ.setdefault("HF_HOME", HF_HOME)
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", HUGGINGFACE_HUB_CACHE)
-os.environ.setdefault("TRANSFORMERS_CACHE", TRANSFORMERS_CACHE)
-os.environ.setdefault("TORCH_HOME", TORCH_HOME)
-os.environ.setdefault("XDG_CACHE_HOME", XDG_CACHE_HOME)
-os.environ.setdefault("YOLO_CONFIG_DIR", YOLO_CONFIG_DIR)
-os.environ.setdefault("ULTRALYTICS_CFG", ULTRALYTICS_CFG)
+# Set environment variables explicitly (for Hugging Face and Transformers)
+os.environ["HF_HOME"] = CACHE_DIR
+os.environ["HUGGINGFACE_HUB_CACHE"] = CACHE_DIR
+os.environ["TRANSFORMERS_CACHE"] = CACHE_DIR
+os.environ["TORCH_HOME"] = CACHE_DIR
+os.environ["XDG_CACHE_HOME"] = CACHE_DIR
+os.environ["YOLO_CONFIG_DIR"] = YOLO_CONFIG_DIR
+os.environ["ULTRALYTICS_CFG"] = ULTRALYTICS_CFG
 
-# ✅ Create all necessary directories with error handling
+# Create all necessary directories
 ensure_directories()
 
-ECHO_MEMORY_PATH = os.path.join(DATA_ROOT, "echo_memory.json")
+ECHO_MEMORY_PATH = os.path.join(BASE_DATA_DIR, "echo_memory.json")
 
 
 
@@ -97,40 +115,77 @@ if DEEPFACE_ENABLE:
 else:
     DeepFace = None
 
-# ✅ YOLO model loading with proper path handling
-YOLO_WEIGHTS = os.environ.get("YOLO_WEIGHTS", os.path.join(DATA_ROOT, "models", "yolov8n.pt"))
+# ========================================================
+# STEP 4.3: LAZY-LOAD ALL HEAVY MODELS
+# ========================================================
+# NO models load at import time - all are lazy-loaded on first use
 
-def _ensure_yolo_weights():
-    """Ensure YOLO weights directory exists and handle download if needed"""
-    weights_dir = os.path.dirname(YOLO_WEIGHTS)
-    os.makedirs(weights_dir, exist_ok=True)
-    # If weights don't exist, YOLO will download them automatically to the writable location
+# YOLO model - lazy loaded
+YOLO_WEIGHTS = os.environ.get("YOLO_WEIGHTS", os.path.join(MODEL_DIR, "yolov8n.pt"))
+_yolo_model = None
 
-_ensure_yolo_weights()
-yolo_model = YOLO(YOLO_WEIGHTS)  # ✅ Now uses writable path
-
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-
-
-nima_model = None
-if NIMA_AVAILABLE:
-    def load_nima_model(model_path=os.path.join(MODELS_DIR, 'nima_mobilenet.h5')):
-        global nima_model
-        Model, Dense, Dropout, MobileNet, _, _ = _import_tf_keras()
-        base_model = MobileNet((None, None, 3), include_top=False, pooling='avg', weights=None)
-        x = Dropout(0.75)(base_model.output)
-        x = Dense(10, activation='softmax')(x)
-        nima_model = Model(base_model.input, x)
+def get_yolo_model():
+    """Lazy-load YOLO model on first use - NEVER called at import time"""
+    global _yolo_model
+    if _yolo_model is None:
+        logger.info("Loading YOLO model (first use)")
         try:
-            nima_model.load_weights(model_path)
-            print("✅ NIMA model loaded.")
+            # Ensure weights directory exists
+            weights_dir = os.path.dirname(YOLO_WEIGHTS)
+            os.makedirs(weights_dir, exist_ok=True)
+            # YOLO will auto-download weights if missing
+            _yolo_model = YOLO(YOLO_WEIGHTS)
+            logger.info("YOLO model loaded successfully")
         except Exception as e:
-            print(f"⚠️ NIMA weights not found at {model_path}. Aesthetic scoring disabled. Error: {e}")
-            nima_model = None
-    load_nima_model()
+            logger.error(f"Failed to load YOLO model: {e}", exc_info=True)
+            raise
+    return _yolo_model
+
+# CLIP model - lazy loaded
+_clip_model = None
+_clip_processor = None
+_device = None
+
+def get_clip_model():
+    """Lazy-load CLIP model and processor on first use - NEVER called at import time"""
+    global _clip_model, _clip_processor, _device
+    if _clip_model is None:
+        logger.info("Loading CLIP model (first use)")
+        try:
+            # Graceful GPU/CPU fallback - never crashes on device selection
+            _device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"Using device: {_device}")
+            _clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(_device)
+            _clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+            logger.info("CLIP model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load CLIP model: {e}", exc_info=True)
+            raise
+    return _clip_model, _clip_processor, _device
+
+# NIMA model - lazy loaded
+_nima_model = None
+
+def get_nima_model():
+    """Lazy-load NIMA model on first use (if TensorFlow available) - NEVER called at import time"""
+    global _nima_model
+    if _nima_model is None and NIMA_AVAILABLE:
+        logger.info("Loading NIMA model (first use)")
+        try:
+            model_path = os.path.join(MODEL_DIR, 'nima_mobilenet.h5')
+            Model, Dense, Dropout, MobileNet, _, _ = _import_tf_keras()
+            base_model = MobileNet((None, None, 3), include_top=False, pooling='avg', weights=None)
+            x = Dropout(0.75)(base_model.output)
+            x = Dense(10, activation='softmax')(x)
+            _nima_model = Model(base_model.input, x)
+            _nima_model.load_weights(model_path)
+            logger.info("NIMA model loaded successfully")
+        except Exception as e:
+            logger.warning(f"NIMA weights not found at {model_path}. Aesthetic scoring disabled. Error: {e}")
+            _nima_model = None
+    elif not NIMA_AVAILABLE:
+        logger.debug("NIMA not available (TensorFlow not installed)")
+    return _nima_model
 
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 if client:
@@ -141,6 +196,7 @@ else:
 
 
 def detect_objects(image_path):
+    yolo_model = get_yolo_model()  # Lazy load
     res = yolo_model(image_path)
     names = res[0].names
     objects = []
@@ -211,7 +267,8 @@ def get_clip_description(image_path):
         "A photo capturing nothingness and emptiness, purely abstract", "A raw and gritty lo-fi aesthetic shot"
     ]
 
-    # CLIP process
+    # CLIP process - lazy load models
+    clip_model, clip_processor, device = get_clip_model()
     inputs = clip_processor(text=candidate_captions, images=image, return_tensors="pt", padding=True).to(device)
     outputs = clip_model(**inputs)
     logits_per_image = outputs.logits_per_image
@@ -264,7 +321,7 @@ def analyze_color(image_path):
     kmeans = KMeans(n_clusters=5, random_state=42, n_init=10)
     kmeans.fit(pixels)
     colors = kmeans.cluster_centers_.astype(int)
-    hex_colors = ['#%02x%02x%02x' % (c, c[1], c[2]) for c in colors]
+    hex_colors = ['#%02x%02x%02x' % (c[0], c[1], c[2]) for c in colors]
     
     avg_color = np.mean(colors, axis=0)
     mood = "warm" if avg_color[0] > avg_color[2] else "cool"
@@ -293,24 +350,31 @@ def predict_nima_score(model, img_path):
 # framed/analysis/vision.py
 
 def run_full_analysis(image_path):
-    """Orchestrates the full analysis pipeline."""
+    """
+    Orchestrates the full analysis pipeline.
+    STEP 4.6: Graceful degradation - partial results returned even if some steps fail.
+    """
     try:
         # Ensure directories exist before starting analysis
         ensure_directories()
         
         # Use the comprehensive analyze_image function
+        # analyze_image() wraps all steps with safe_analyze() and tracks errors
         analysis_result = analyze_image(image_path)
         
+        # Update echo memory only if we have valid results (even with partial errors)
         if analysis_result and "error" not in analysis_result:
             # Update echo memory with the new analysis
+            # Note: analysis_result may contain errors dict for partial failures
             update_echo_memory(analysis_result)
         
         return analysis_result
     except Exception as e:
-        print(f"Error in full analysis: {e}")
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e)}
+        logger.error(f"Fatal error in full analysis pipeline: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "errors": {"pipeline": str(e)}
+        }
 
 
 def analyze_lines_and_symmetry(image_path):
@@ -426,6 +490,7 @@ def analyze_tonal_range(image_path):
     return {"tonal_range": tone}
 
 def analyze_background_clutter(image_path):
+    yolo_model = get_yolo_model()  # Lazy load
     results = yolo_model(image_path)
     detections = results[0].boxes.data.cpu().numpy()
     num_objects = len(detections)
@@ -505,6 +570,8 @@ def analyze_subject_emotion_clip(image_path):
         "An abstract and ambiguous image"
     ]
 
+    # Lazy load CLIP models
+    clip_model, clip_processor, device = get_clip_model()
     inputs = clip_processor(text=emotion_captions, images=image, return_tensors="pt", padding=True).to(device)
     outputs = clip_model(**inputs)
     probs = outputs.logits_per_image.softmax(dim=1)
@@ -531,6 +598,7 @@ def detect_objects_and_framing(image_path, confidence_threshold=0.3):
     img = cv2.imread(image_path)
     h, w, _ = img.shape
 
+    yolo_model = get_yolo_model()  # Lazy load
     results = yolo_model(image_path)
     detections = results[0].boxes.data.cpu().numpy() if results and results[0].boxes is not None else []
 
@@ -887,16 +955,51 @@ def analyze_image(path):
         sharpness = round(cv2.Laplacian(gray, cv2.CV_64F).var(), 2)
 
         # === AI + SEMANTIC ANALYSIS ===
-        clip_data = get_clip_description(path)
-        nima_result = predict_nima_score(nima_model, path)
-        color_analysis = analyze_color(path)
-        color_harmony = analyze_color_harmony(path)
-        object_data = detect_objects_and_framing(path)
-        background_clutter = analyze_background_clutter(path)
-        lines_symmetry = analyze_lines_and_symmetry(path)
-        lighting_direction = analyze_lighting_direction(path)
-        tonal_range = analyze_tonal_range(path)
-        subject_emotion = analyze_subject_emotion(path)
+        # Initialize error tracking dictionary
+        errors = {}
+        
+        # Wrap each analysis in try-except to prevent one failure from breaking the entire analysis
+        def safe_analyze(func, *args, error_key=None, default=None, **kwargs):
+            """
+            Safely run an analysis function, returning default on error.
+            Tracks errors in the errors dictionary for production monitoring.
+            """
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                error_msg = str(e)
+                func_name = func.__name__ if hasattr(func, '__name__') else str(func)
+                logger.warning(f"Analysis step '{func_name}' failed: {error_msg}")
+                if error_key:
+                    errors[error_key] = error_msg
+                return default if default is not None else {}
+        
+        # Each analysis step is wrapped with error tracking
+        # One failing model does not block others - graceful degradation
+        clip_data = safe_analyze(get_clip_description, path, error_key="clip", default={"caption": "Analysis unavailable", "tags": [], "genre_hint": "General"})
+        
+        # NIMA - optional, failure doesn't block other analysis
+        nima_model = None
+        try:
+            nima_model = get_nima_model()  # Lazy load
+        except Exception as e:
+            logger.warning(f"NIMA model load failed (non-fatal): {e}")
+            errors["nima_load"] = str(e)
+        nima_result = safe_analyze(predict_nima_score, nima_model, path, error_key="nima", default={"mean_score": None, "distribution": {}})
+        
+        # Color analysis - lightweight, rarely fails
+        color_analysis = safe_analyze(analyze_color, path, error_key="color", default={"palette": ["#000000"], "mood": "neutral"})
+        color_harmony = safe_analyze(analyze_color_harmony, path, error_key="color_harmony", default={"dominant_color": "#000000", "harmony": "Unknown"})
+        
+        # YOLO-based analysis - failure doesn't block color/CLIP/NIMA
+        object_data = safe_analyze(detect_objects_and_framing, path, error_key="objects", default={"objects": ["Unknown"], "object_narrative": "Analysis unavailable", "subject_position": "Unknown", "subject_size": "Unknown", "framing_description": "Unknown", "spatial_interpretation": "Unknown"})
+        background_clutter = safe_analyze(analyze_background_clutter, path, error_key="clutter", default={"num_objects": 0, "clutter_level": "Unknown", "impact": "Unknown", "narrative": "Unknown"})
+        
+        # OpenCV-based analysis - lightweight
+        lines_symmetry = safe_analyze(analyze_lines_and_symmetry, path, error_key="lines_symmetry", default={"line_pattern": "Unknown", "line_style": "Unknown", "symmetry": "Unknown"})
+        lighting_direction = safe_analyze(analyze_lighting_direction, path, error_key="lighting", default={"direction": "Unknown"})
+        tonal_range = safe_analyze(analyze_tonal_range, path, error_key="tonal_range", default={"tonal_range": "Unknown"})
+        subject_emotion = safe_analyze(analyze_subject_emotion, path, error_key="emotion", default={"subject_type": "Unknown", "emotion": "Unknown"})
         
         # === BUILD RESULT ===
         result = {
@@ -938,16 +1041,24 @@ def analyze_image(path):
         }
 
         # === DERIVED FIELDS ===
-        result["visual_interpretation"] = interpret_visual_features(result)
-        result["emotional_mood"] = infer_emotion(result)["emotional_mood"]
+        result["visual_interpretation"] = safe_analyze(interpret_visual_features, result, error_key="visual_interpretation", default={})
+        emotion_result = safe_analyze(infer_emotion, result, error_key="emotion_inference", default={"emotional_mood": "neutral"})
+        result["emotional_mood"] = emotion_result.get("emotional_mood", "neutral")
 
-        genre_info = detect_genre(result)
+        genre_info = safe_analyze(detect_genre, result, error_key="genre_detection", default={"genre": "General", "subgenre": "General"})
         result["genre"] = genre_info.get("genre", "General")
         result["subgenre"] = genre_info.get("subgenre", "General")
 
-        # Generate critique and remix
-        result["critique"] = generate_merged_critique(result)
-        result["remix_prompt"] = generate_remix_prompt(result)
+        # Generate critique and remix (these can fail if OpenAI is unavailable, but should not crash)
+        result["critique"] = safe_analyze(generate_merged_critique, result, error_key="critique", default="Analysis complete, but critique generation unavailable.")
+        result["remix_prompt"] = safe_analyze(generate_remix_prompt, result, error_key="remix", default="Remix suggestions unavailable.")
+
+        # Add error metadata to result for production monitoring
+        if errors:
+            result["errors"] = errors
+            logger.info(f"Analysis completed with {len(errors)} error(s): {list(errors.keys())}")
+        else:
+            result["errors"] = {}
 
         return result
         
