@@ -36,7 +36,7 @@
     <!-- TAB PANELS -->
     <div class="tab-panel" id="uploadTabPanel">
       <form id="uploadForm" onsubmit="submitImage(event)" enctype="multipart/form-data">
-        <input type="file" name="photo" accept="image/*" onchange="previewImage(this)" required/>
+        <input type="file" name="image" accept="image/*" onchange="previewImage(this)" required/>
         <img id="imagePreview" class="preview hidden" alt="Image Preview" />
         <button id="analyzeButton" type="submit" class="analyze-btn">Analyze</button>
       </form>

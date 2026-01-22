@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
 
     // === Image Preview ===
-    const fileInput = document.querySelector('input[name="photo"]');
+    const fileInput = document.querySelector('input[name="image"]');
     const preview = document.getElementById('imagePreview');
 
     if (fileInput && preview) {

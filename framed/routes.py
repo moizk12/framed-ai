@@ -36,10 +36,15 @@ def upload():
 
 @main.post("/analyze")
 def analyze():
+    # Debug: Log incoming request data
+    current_app.logger.info(f"FILES: {list(request.files.keys())}")
+    current_app.logger.info(f"FORM: {dict(request.form)}")
+    
     file = request.files.get("image")
     mentor_mode = request.form.get("mentor_mode", "Balanced Mentor")
 
     if not file or file.filename == "":
+        current_app.logger.warning(f"No file uploaded. Available keys: {list(request.files.keys())}")
         return jsonify({"error":"No file uploaded"}), 400
     if not allowed_file(file.filename):
         return jsonify({"error":"Unsupported file type"}), 400
