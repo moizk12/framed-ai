@@ -192,6 +192,7 @@ def get_nima_model():
 # ========================================================
 # OpenAI client is lazy-loaded to prevent import-time initialization
 # This ensures /health endpoint and app creation never trigger client creation
+# Version: 2026-01-22 - Fixed import-time client initialization error
 
 _openai_client = None
 
