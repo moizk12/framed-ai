@@ -774,7 +774,13 @@ def infer_emotion(photo_data):
     sharpness = photo_data.get("sharpness", 0)
     color_mood = photo_data.get("color_mood", "neutral")
     tonal_range = photo_data.get("tonal_range", "balanced")
-    subject_emotion = photo_data.get("subject_emotion", "")
+    # subject_emotion is typically a dict like {"subject_type": "...", "emotion": "..."}
+    # but can be a string in older/partial results — normalize to text.
+    _subject_emotion_val = photo_data.get("subject_emotion", "")
+    if isinstance(_subject_emotion_val, dict):
+        subject_emotion = str(_subject_emotion_val.get("emotion", "") or "")
+    else:
+        subject_emotion = str(_subject_emotion_val or "")
     clutter = photo_data.get("background_clutter", {}).get("clutter_level", "minimal clutter")
     symmetry = photo_data.get("symmetry", "moderate")
 
@@ -807,11 +813,12 @@ def infer_emotion(photo_data):
         emotion_tags.append("quiet and subtle")
 
     # --- Subject Emotion ---
-    if "sad" in subject_emotion.lower() or "melancholic" in subject_emotion.lower():
+    subj_lower = subject_emotion.lower()
+    if "sad" in subj_lower or "melancholic" in subj_lower:
         emotion_tags.append("melancholic")
-    elif "happy" in subject_emotion.lower() or "smiling" in subject_emotion.lower():
+    elif "happy" in subj_lower or "smiling" in subj_lower:
         emotion_tags.append("joyful")
-    elif "serene" in subject_emotion.lower():
+    elif "serene" in subj_lower:
         emotion_tags.append("peaceful")
 
     # --- Background Clutter ---
