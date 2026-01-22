@@ -187,12 +187,81 @@ def get_nima_model():
         logger.debug("NIMA not available (TensorFlow not installed)")
     return _nima_model
 
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-if client:
-    print("✅ OpenAI client configured.")
-else:
-    print("⚠️ OpenAI API key not found. Cloud-enhanced features disabled.")
+# ========================================================
+# STEP 4.5: LAZY-LOAD OpenAI CLIENT (Cold-Start Compliance)
+# ========================================================
+# OpenAI client is lazy-loaded to prevent import-time initialization
+# This ensures /health endpoint and app creation never trigger client creation
+
+_openai_client = None
+
+def get_openai_client():
+    """
+    Lazy-load OpenAI client on first use - NEVER called at import time.
+    Handles version compatibility issues gracefully.
+    """
+    global _openai_client
+    if _openai_client is None:
+        if not OPENAI_API_KEY:
+            logger.debug("OpenAI API key not found. Cloud-enhanced features disabled.")
+            return None
+        
+        try:
+            logger.info("Initializing OpenAI client (first use)")
+            # Initialize with API key only to avoid compatibility issues
+            # Let OpenAI library handle defaults for timeout, retries, etc.
+            _openai_client = OpenAI(api_key=OPENAI_API_KEY)
+            logger.info("OpenAI client initialized successfully")
+        except TypeError as e:
+            # Handle version compatibility issues gracefully (e.g., proxies parameter)
+            if "proxies" in str(e) or "unexpected keyword" in str(e):
+                logger.warning(f"OpenAI client initialization issue (version compatibility): {e}")
+                logger.warning("This may be due to httpx/OpenAI version mismatch. Client will be unavailable.")
+                _openai_client = None
+            else:
+                logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
+                _openai_client = None
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
+            _openai_client = None
     
+    return _openai_client
+
+# Legacy export for backward compatibility (but client is now lazy)
+# This allows existing code to import 'client' and use it as before
+# The proxy lazy-loads the actual client on first attribute access
+class _ClientProxy:
+    """Proxy for OpenAI client that lazy-loads on access - STEP 4.5 compliance"""
+    _actual_client = None
+    
+    def _get_client(self):
+        """Get the actual client, lazy-loading if needed"""
+        if self._actual_client is None:
+            self._actual_client = get_openai_client()
+        return self._actual_client
+    
+    def __getattr__(self, name):
+        # Only called when attribute doesn't exist on proxy itself
+        actual_client = self._get_client()
+        if actual_client is None:
+            # Return None for any attribute access when client is unavailable
+            return None
+        return getattr(actual_client, name)
+    
+    def __bool__(self):
+        return self._get_client() is not None
+    
+    def __repr__(self):
+        actual_client = self._get_client()
+        if actual_client is None:
+            return "None"
+        return repr(actual_client)
+
+# Export client as a proxy that lazy-loads
+# This ensures no OpenAI client initialization at import time (STEP 4.5 compliance)
+# Functions that use the client have been updated to use get_openai_client() directly
+# The proxy is maintained for backward compatibility with imports
+client = _ClientProxy()
 
 
 def detect_objects(image_path):
@@ -1334,12 +1403,14 @@ Your critique should flow naturally and artistically.
 Compose now as FRAMED LEGACY.
 """
     try:
-        if client is None:
+        # Use get_openai_client() for lazy loading and proper None checking
+        openai_client = get_openai_client()
+        if openai_client is None:
             # graceful fallback if host forgot to set key
             vi = interpret_visual_features(photo_data)
             mood = photo_data.get("emotional_mood","neutral")
             return f"{vi.get('brightness','Balanced light')}. {vi.get('tones','Balanced tones')}. {vi.get('color','Neutral palette')}. Mood: {mood}. Consider a counter-move in distance, light, or rhythm to push your voice."
-        response = client.chat.completions.create(
+        response = openai_client.chat.completions.create(
             model="gpt-4-turbo",
             messages=[{"role": "user", "content": prompt}]
         )
@@ -1400,9 +1471,11 @@ Speak poetically but clearly. Inspire boldness. You are not instructive — you 
 NEVER say "you could try" — instead use: "Imagine", "What if", "There is potential to", "Consider", "Envision".
 """
 
-    if client is None:
+    # Use get_openai_client() for lazy loading and proper None checking
+    openai_client = get_openai_client()
+    if openai_client is None:
         return "Remix mode requires Cloud Enhance. Set OPENAI_API_KEY on the host."
-    response = client.chat.completions.create(
+    response = openai_client.chat.completions.create(
         model="gpt-4-turbo",
         messages=[{"role": "user", "content": remix_prompt}]
     )
@@ -1605,12 +1678,15 @@ This is the photographer’s voice — now made visible through pattern, light, 
 
     return essay
 
-def ask_echo(question, memory, client):
+def ask_echo(question, memory, client=None):
     """
     Ask ECHO a poetic, psychological, and artistic question.
 
     This function feeds the saved memory of past photo analyses into GPT,
     and prompts a visionary, mythic, introspective response.
+    
+    Note: 'client' parameter maintained for backward compatibility but
+    function now uses get_openai_client() internally for lazy loading.
     """
     
     # === Step 1: Construct the memory digest ===
@@ -1707,9 +1783,11 @@ Begin now.
 """
 
     # === Step 3: Send to GPT ===
-    if client is None:
+    # Use get_openai_client() for lazy loading and proper None checking
+    openai_client = get_openai_client()
+    if openai_client is None:
         return "ECHO requires Cloud Enhance. (Host has no OPENAI_API_KEY set.)"
-    response = client.chat.completions.create(
+    response = openai_client.chat.completions.create(
         model="gpt-4-turbo",
         messages=[{"role": "user", "content": prompt}]
     )
