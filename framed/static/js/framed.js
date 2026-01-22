@@ -58,33 +58,143 @@ function playAnalyzePing() {
 
 // === Submit Form to /analyze ===
 async function submitImage(event) {
-    event.preventDefault();
-    const form = document.getElementById("uploadForm");
-    const formData = new FormData(form);
-  
-    showLoading("results", "Interpreting your visual soul...");
-  
-    try {
-      const response = await fetch("/analyze", {
-        method: "POST",
-        body: formData
-      });
-  
-      const html = await response.text();
-      document.getElementById("results").innerHTML = html;
+  event.preventDefault();
+  const form = document.getElementById("uploadForm");
+  const formData = new FormData(form);
+
+  showLoading("results", "Interpreting your visual soul...");
+
+  try {
+    const response = await fetch("/analyze", {
+      method: "POST",
+      body: formData
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      const message =
+        (data && data.error) ||
+        "FRAMED fell silent for a moment. Try another image, or breathe and try again.";
+      document.getElementById("results").innerHTML = `
+        <div class="result-shell result-shell-error fade-in">
+          <div class="result-section result-section-error">
+            <div class="result-label">Something went quiet</div>
+            <p class="result-body">${message}</p>
+          </div>
+        </div>
+      `;
       switchTab("resultsTab");
-  
-      // Extract mood from hidden field if sent
-      const match = html.match(/data-mood="([^"]+)"/);
-      if (match && match[1]) {
-        applyMoodAudio(match[1]);
-      }
-    } catch (err) {
-      console.error("Analysis failed:", err);
-      alert("Something went wrong. Try again.");
+      return;
     }
+
+    const view = data._ui || data;
+
+    const caption =
+      (view.clip_description && view.clip_description.caption) ||
+      view.caption ||
+      "";
+    const critique = view.critique || data.critique || "";
+    const remix = view.remix_prompt || data.remix_prompt || "";
+    const mood =
+      view.emotional_mood ||
+      (view.summary && view.summary.emotional_mood) ||
+      "";
+    const poeticMood =
+      view.poetic_mood ||
+      (view.summary && view.summary.poetic_mood) ||
+      "";
+    const genre =
+      (typeof view.genre === "string" && view.genre) ||
+      (view.genre && view.genre.genre) ||
+      "";
+    const subgenre =
+      view.subgenre ||
+      (view.genre && view.genre.subgenre) ||
+      "";
+    const colorMood = view.color_mood || "";
+    const lighting = view.lighting_direction || "";
+
+    const mentorModeSelect = document.getElementById("mentorMode");
+    const mentorTone = mentorModeSelect ? mentorModeSelect.value : "Balanced Mentor";
+
+    const resultsEl = document.getElementById("results");
+    resultsEl.innerHTML = `
+      <div class="result-shell fade-in">
+        <div class="result-header">
+          <div class="result-title">A Quiet Reading of Your Frame</div>
+          <div class="result-mentor">Mentor Tone · ${mentorTone}</div>
+        </div>
+
+        <div class="result-section result-section-core">
+          <div class="result-label">Core Critique</div>
+          <p class="result-body">${critique ||
+            "The image has been read, but FRAMED is choosing silence over empty words."}</p>
+        </div>
+
+        <div class="result-section-grid">
+          <div class="result-section">
+            <div class="result-label">Visual Mood</div>
+            <p class="result-body">
+              ${poeticMood ||
+                mood ||
+                "A mood still forming — soft, undecided, almost on the verge of speaking."}
+            </p>
+          </div>
+          <div class="result-section">
+            <div class="result-label">Color &amp; Light</div>
+            <p class="result-body">
+              ${colorMood || lighting
+                ? [colorMood, lighting].filter(Boolean).join(" · ")
+                : "Light and color sit quietly here, more whisper than announcement."}
+            </p>
+          </div>
+          <div class="result-section">
+            <div class="result-label">Subject &amp; Genre</div>
+            <p class="result-body">
+              ${caption
+                ? `“${caption}”`
+                : "The subject stays unnamed, but the frame still remembers being seen."}
+              ${genre || subgenre
+                ? `<br/><span class="result-subtext">${genre}${
+                    genre && subgenre ? " · " : ""
+                  }${subgenre || ""}</span>`
+                : ""}
+            </p>
+          </div>
+        </div>
+
+        <div class="result-section result-section-remix">
+          <div class="result-label">If You Want to Push Further</div>
+          <p class="result-body">
+            ${
+              remix ||
+              "Remix mode hums in the background. Set an OpenAI key on the host to let FRAMED dream new variations out loud."
+            }
+          </p>
+        </div>
+      </div>
+    `;
+
+    switchTab("resultsTab");
+
+    if (mood) {
+      applyMoodAudio(mood);
+    }
+  } catch (err) {
+    console.error("Analysis failed:", err);
+    document.getElementById("results").innerHTML = `
+      <div class="result-shell result-shell-error fade-in">
+        <div class="result-section result-section-error">
+          <div class="result-label">The server lost its light for a moment</div>
+          <p class="result-body">Please try again with the same image, or return with a new frame when you are ready.</p>
+        </div>
+      </div>
+    `;
+    switchTab("resultsTab");
+  }
 }
-  
+
 
 // === Ask ECHO Question ===
 async function askEchoQuestion() {
@@ -102,7 +212,8 @@ async function askEchoQuestion() {
       body: JSON.stringify({ question: question }),
     });
 
-    const { response: text } = await response.json();
+    const payload = await response.json();
+    const text = payload.answer || payload.response || "ECHO is quiet, but your question is still echoing in the darkroom.";
     resultBox.innerHTML = `<div class="echo-output">${text}</div>`;
   } catch (err) {
     console.error("ECHO failed:", err);

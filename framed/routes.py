@@ -18,6 +18,44 @@ ALLOWED_EXTENSIONS = {"png","jpg","jpeg","webp","bmp","tiff"}
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
+
+def clean_result_for_ui(result: dict) -> dict:
+    """
+    STEP 1 — Presentation-only sanitizer.
+
+    Builds a gentle, UI-focused view of the analysis result without
+    mutating or removing any data from the core analysis output.
+
+    - Never modifies `result` in-place
+    - Omits internal error/debug structures
+    - Collapses nested fields into human-readable slices
+    """
+    if not isinstance(result, dict):
+        return {}
+
+    clip = result.get("clip_description", {}) or {}
+    summary = result.get("summary", {}) or {}
+
+    ui_view = {
+        "caption": clip.get("caption"),
+        "tags": clip.get("tags"),
+        "genre": result.get("genre") or summary.get("genre"),
+        "subgenre": result.get("subgenre") or summary.get("subgenre"),
+        "emotional_mood": result.get("emotional_mood") or summary.get("emotional_mood"),
+        "poetic_mood": summary.get("poetic_mood"),
+        "color_mood": result.get("color_mood"),
+        "lighting_direction": result.get("lighting_direction"),
+        "subject": summary.get("subject"),
+        "critique": result.get("critique"),
+        "remix_prompt": result.get("remix_prompt"),
+    }
+
+    # Softly drop internal error metadata from the presentation layer
+    if "errors" in ui_view:
+        ui_view.pop("errors", None)
+
+    return {k: v for k, v in ui_view.items() if v}
+
 main = Blueprint(
     "main",
     __name__,
@@ -45,9 +83,9 @@ def analyze():
 
     if not file or file.filename == "":
         current_app.logger.warning(f"No file uploaded. Available keys: {list(request.files.keys())}")
-        return jsonify({"error":"No file uploaded"}), 400
+        return jsonify({"error": "No file was received. Try choosing an image and letting FRAMED breathe with it again."}), 400
     if not allowed_file(file.filename):
-        return jsonify({"error":"Unsupported file type"}), 400
+        return jsonify({"error": "FRAMED can only read common image formats (JPEG, PNG, WEBP, TIFF, BMP)."}), 400
 
     # ✅ Use centralized runtime directory from vision.py
     from framed.analysis.vision import UPLOAD_DIR
@@ -61,11 +99,18 @@ def analyze():
     try:
         file.save(image_path)
         analysis_result = run_full_analysis(image_path)
+
+        # Build a presentation-friendly view without mutating the core result
+        ui_view = clean_result_for_ui(analysis_result)
+        response_payload = dict(analysis_result)
+        if ui_view:
+            response_payload["_ui"] = ui_view
+
         # Re-generate critique only if the mentor mode is non-default
         if mentor_mode and mentor_mode != "Balanced Mentor":
-            analysis_result["critique"] = generate_merged_critique(analysis_result, mentor_mode)
+            response_payload["critique"] = generate_merged_critique(analysis_result, mentor_mode)
         update_echo_memory(analysis_result)  # keep the last 10
-        return jsonify(analysis_result)
+        return jsonify(response_payload)
     except Exception as e:
         current_app.logger.exception("Analysis failed")
         return jsonify({"error": f"Internal error: {e}"}), 500

@@ -1,40 +1,45 @@
 body {
     margin: 0;
     padding: 0;
-    font-family: 'Helvetica Neue', sans-serif;
-    background: linear-gradient(to right, #0f0f0f, #1a1a1a);
-    color: #f0f0f0;
+    font-family: 'Cormorant Garamond', 'Georgia', serif;
+    background: radial-gradient(circle at top, #fbe4cf 0%, #f0b7a4 40%, #c47e6b 80%, #4a2b33 100%);
+    color: #fdf5ef;
     display: flex;
     justify-content: center;
     align-items: flex-start;
     min-height: 100vh;
     padding: 40px;
+    letter-spacing: 0.02em;
 }
 
 .container {
-    max-width: 800px;
+    max-width: 900px;
     width: 100%;
-    background: rgba(255, 255, 255, 0.02);
-    padding: 30px 40px;
-    border-radius: 12px;
-    box-shadow: 0 0 25px rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(12px);
+    background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0.02));
+    padding: 40px 48px 36px;
+    border-radius: 28px;
+    box-shadow: 0 32px 80px rgba(66, 36, 32, 0.65);
+    backdrop-filter: blur(26px);
+    border: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 h1 {
-    font-size: 3rem;
+    font-size: 3.3rem;
     text-align: center;
     margin-bottom: 0.2em;
-    background: linear-gradient(to right, #ffffff, #bbbbbb);
+    background: linear-gradient(to right, #fff9f4, #f6d2b2);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
 }
 
 .subtitle {
     text-align: center;
     font-style: italic;
-    color: #aaa;
-    margin-bottom: 2rem;
+    color: rgba(255, 244, 232, 0.85);
+    margin-bottom: 2.4rem;
+    font-size: 1.1rem;
 }
 
 form {
@@ -46,46 +51,50 @@ form {
 
 input[type="file"],
 input[type="text"] {
-    padding: 12px;
-    border: none;
-    border-radius: 6px;
-    background-color: #222;
-    color: #fff;
-    font-size: 1rem;
+    padding: 12px 16px;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #fdf5ef;
+    font-size: 0.95rem;
 }
 
 button {
-    padding: 12px;
+    padding: 12px 26px;
     font-size: 1rem;
     border: none;
-    border-radius: 6px;
-    background: linear-gradient(to right, #007bff, #00b3ff);
-    color: white;
+    border-radius: 999px;
+    background: linear-gradient(to right, #f6d2b2, #f0b7a4);
+    color: #5a372f;
     cursor: pointer;
-    transition: 0.2s ease;
+    transition: background 0.4s ease, box-shadow 0.4s ease, transform 0.4s ease;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
 }
 
 button:hover {
-    background: linear-gradient(to right, #0056b3, #009cd9);
+    background: linear-gradient(to right, #ffe2c7, #f9c1aa);
+    box-shadow: 0 12px 35px rgba(90, 55, 47, 0.55);
+    transform: translateY(-1px);
 }
 
 .results,
 .echo {
     margin-top: 2rem;
-    background-color: rgba(255, 255, 255, 0.04);
-    padding: 20px;
-    border-radius: 8px;
-    line-height: 1.6;
+    background-color: rgba(29, 17, 22, 0.22);
+    padding: 24px;
+    border-radius: 18px;
+    line-height: 1.7;
     font-size: 1rem;
-    color: #ddd;
+    color: #fbeee5;
 }
 
 .preview {
     width: 100%;
     max-height: 400px;
     object-fit: contain;
-    border-radius: 10px;
-    box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+    border-radius: 18px;
+    box-shadow: 0 26px 70px rgba(71, 42, 38, 0.85);
     margin-top: 20px;
 }
   .hidden {
@@ -122,24 +131,28 @@ button:hover {
 }
   
 .tab {
-    padding: 10px 20px;
+    padding: 10px 26px;
     border: none;
-    border-radius: 6px;
-    background: #222;
-    color: #aaa;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 244, 232, 0.8);
     font-size: 1rem;
     cursor: pointer;
-    transition: 0.2s ease;
+    transition: background 0.4s ease, color 0.4s ease, box-shadow 0.4s ease, transform 0.4s ease;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
 }
   
 .tab:hover {
-    background: #333;
-    color: #fff;
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff7f2;
+    transform: translateY(-1px);
 }
   
 .tab.active {
-    background: linear-gradient(to right, #57e389, #00c2ff);
-    color: #000;
+    background: radial-gradient(circle at top, #ffe2c7, #f0b7a4);
+    color: #5a372f;
+    box-shadow: 0 10px 28px rgba(107, 65, 56, 0.6);
 }
 
 .tab-panel {
@@ -175,11 +188,11 @@ button:hover {
   
   
 .text-column .section {
-    background: #1a1a1a;
-    padding: 20px;
-    border-left: 4px solid #8ce99a;
-    border-radius: 10px;
+    background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.10), rgba(17, 9, 12, 0.9));
+    padding: 22px 22px 20px;
+    border-radius: 18px;
     margin-bottom: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
   
 .text-column pre {
@@ -272,7 +285,7 @@ button:hover {
     left: 0;
     width: 100%;
     height: 100%;
-    background: linear-gradient(to right, #0a0a0a, #1c1c1c);
+    background: radial-gradient(circle at top, #fbe4cf 0%, #f0b7a4 40%, #c47e6b 80%, #4a2b33 100%);
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -284,7 +297,7 @@ button:hover {
 .preloader .logo {
     font-size: 3.5rem;
     font-weight: bold;
-    background: linear-gradient(to right, #ffffff, #79f0a4);
+    background: linear-gradient(to right, #fff9f4, #f6d2b2);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     animation: glow 1.2s ease-in-out infinite alternate;
@@ -296,7 +309,7 @@ button:hover {
   
 .preloader .tagline {
     margin-top: 10px;
-    color: #888;
+    color: rgba(255, 244, 232, 0.9);
     font-style: italic;
     font-size: 1.2rem;
 }
