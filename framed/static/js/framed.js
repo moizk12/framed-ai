@@ -30,6 +30,123 @@ function showLoading(id, message = "Analyzing your image...") {
   `;
 }
 
+// === Helper: Render Soft Error ===
+function renderSoftError(message) {
+  const resultsEl = document.getElementById("results");
+  if (!resultsEl) return;
+  
+  resultsEl.innerHTML = `
+    <div class="result-shell result-shell-error fade-in">
+      <div class="result-section result-section-error">
+        <div class="result-label">Something went quiet</div>
+        <p class="result-body">${message}</p>
+      </div>
+    </div>
+  `;
+}
+
+// === Helper: Render UI Result (ONLY from _ui) ===
+function renderUIResult(view) {
+  if (!view || typeof view !== "object") {
+    renderSoftError("The frame spoke, but its voice was unclear. Try again.");
+    return;
+  }
+
+  const caption = view.caption || "";
+  const critique = view.critique || "";
+  const remix = view.remix_prompt || "";
+  const mood = view.emotional_mood || "";
+  const poeticMood = view.poetic_mood || "";
+  const genre =
+    (typeof view.genre === "string" && view.genre) ||
+    (view.genre && view.genre.genre) ||
+    "";
+  const subgenre = view.subgenre || "";
+  const colorMood = view.color_mood || "";
+  const lighting = view.lighting_direction || "";
+
+  const mentorModeSelect = document.getElementById("mentorMode");
+  const mentorTone = mentorModeSelect ? mentorModeSelect.value : "Balanced Mentor";
+
+  const resultsEl = document.getElementById("results");
+  if (!resultsEl) return;
+
+  const renderedContent = `
+    <div class="result-shell fade-in">
+      <div class="result-header">
+        <div class="result-title">A Quiet Reading of Your Frame</div>
+        <div class="result-mentor">Mentor Tone · ${mentorTone}</div>
+      </div>
+
+      <div class="result-section result-section-core">
+        <div class="result-label">Core Critique</div>
+        <p class="result-body">${critique ||
+          "The image has been read, but FRAMED is choosing silence over empty words."}</p>
+      </div>
+
+      <div class="result-section-grid">
+        <div class="result-section">
+          <div class="result-label">Visual Mood</div>
+          <p class="result-body">
+            ${poeticMood ||
+              mood ||
+              "A mood still forming — soft, undecided, almost on the verge of speaking."}
+          </p>
+        </div>
+        <div class="result-section">
+          <div class="result-label">Color &amp; Light</div>
+          <p class="result-body">
+            ${colorMood || lighting
+              ? [colorMood, lighting].filter(Boolean).join(" · ")
+              : "Light and color sit quietly here, more whisper than announcement."}
+          </p>
+        </div>
+        <div class="result-section">
+          <div class="result-label">Subject &amp; Genre</div>
+          <p class="result-body">
+            ${caption
+              ? `"${caption}"`
+              : "The subject stays unnamed, but the frame still remembers being seen."}
+            ${genre || subgenre
+              ? `<br/><span class="result-subtext">${genre}${
+                  genre && subgenre ? " · " : ""
+                }${subgenre || ""}</span>`
+              : ""}
+          </p>
+        </div>
+      </div>
+
+      <div class="result-section result-section-remix">
+        <div class="result-label">If You Want to Push Further</div>
+        <p class="result-body">
+          ${
+            remix ||
+            "Remix mode hums in the background. Set an OpenAI key on the host to let FRAMED dream new variations out loud."
+          }
+        </p>
+      </div>
+    </div>
+  `;
+
+  // STEP 5: One-time debug assertion
+  const text = renderedContent || "";
+  if (text.includes("{") && text.includes("}") && (text.includes("brightness") || text.includes("contrast") || text.includes("errors"))) {
+    console.error("❌ RAW JSON LEAKED INTO UI");
+  }
+
+  resultsEl.innerHTML = renderedContent;
+
+  // Verify no raw JSON in DOM
+  const domText = resultsEl.textContent || "";
+  if (domText.includes('"') && (domText.includes("brightness") || domText.includes("contrast") || domText.includes("errors"))) {
+    console.error("❌ Raw JSON detected in DOM output");
+  }
+
+  if (mood) {
+    applyMoodAudio(mood);
+  }
+}
+
 // === Tab Switching ===
 function switchTab(tabId) {
     const tabs = document.querySelectorAll(".tab");
@@ -46,6 +163,11 @@ function switchTab(tabId) {
     const targetPanel = document.getElementById(`${tabId}Panel`);
     targetPanel.classList.remove("hidden");
     targetPanel.classList.add("fade-in");
+
+    // STEP 3: Results tab must NOT re-render raw state
+    if (tabId === "resultsTab" && window.lastUIResult) {
+      renderUIResult(window.lastUIResult);
+    }
 }
   
 
@@ -76,140 +198,30 @@ async function submitImage(event) {
       const message =
         (data && data.error) ||
         "FRAMED fell silent for a moment. Try another image, or breathe and try again.";
-      document.getElementById("results").innerHTML = `
-        <div class="result-shell result-shell-error fade-in">
-          <div class="result-section result-section-error">
-            <div class="result-label">Something went quiet</div>
-            <p class="result-body">${message}</p>
-          </div>
-        </div>
-      `;
+      renderSoftError(message);
       switchTab("resultsTab");
       return;
     }
 
-    // STEP 2: Enforce _ui as the ONLY render source
-    // If _ui does NOT exist, render a gentle error message
-    // DO NOT render data directly
-    if (!data._ui) {
-      document.getElementById("results").innerHTML = `
-        <div class="result-shell result-shell-error fade-in">
-          <div class="result-section result-section-error">
-            <div class="result-label">The reading is incomplete</div>
-            <p class="result-body">FRAMED received the image but could not prepare a quiet reading. Please try again, or return with another frame.</p>
-          </div>
-        </div>
-      `;
+    // STEP 2: Force _ui or nothing (exact logic as specified)
+    if (!data || !data._ui) {
+      renderSoftError(
+        "The frame spoke, but its voice was unclear. Try again."
+      );
       switchTab("resultsTab");
       return;
     }
 
-    // Use ONLY _ui - no fallbacks to raw data
-    const view = data._ui;
+    // Store UI result for tab switching
+    window.lastUIResult = data._ui;
 
-    // Extract fields from _ui (flat structure, not nested)
-    const caption = view.caption || "";
-    const critique = view.critique || "";
-    const remix = view.remix_prompt || "";
-    const mood = view.emotional_mood || "";
-    const poeticMood = view.poetic_mood || "";
-    const genre =
-      (typeof view.genre === "string" && view.genre) ||
-      (view.genre && view.genre.genre) ||
-      "";
-    const subgenre = view.subgenre || "";
-    const colorMood = view.color_mood || "";
-    const lighting = view.lighting_direction || "";
-
-    const mentorModeSelect = document.getElementById("mentorMode");
-    const mentorTone = mentorModeSelect ? mentorModeSelect.value : "Balanced Mentor";
-
-    const resultsEl = document.getElementById("results");
-    const renderedContent = `
-      <div class="result-shell fade-in">
-        <div class="result-header">
-          <div class="result-title">A Quiet Reading of Your Frame</div>
-          <div class="result-mentor">Mentor Tone · ${mentorTone}</div>
-        </div>
-
-        <div class="result-section result-section-core">
-          <div class="result-label">Core Critique</div>
-          <p class="result-body">${critique ||
-            "The image has been read, but FRAMED is choosing silence over empty words."}</p>
-        </div>
-
-        <div class="result-section-grid">
-          <div class="result-section">
-            <div class="result-label">Visual Mood</div>
-            <p class="result-body">
-              ${poeticMood ||
-                mood ||
-                "A mood still forming — soft, undecided, almost on the verge of speaking."}
-            </p>
-          </div>
-          <div class="result-section">
-            <div class="result-label">Color &amp; Light</div>
-            <p class="result-body">
-              ${colorMood || lighting
-                ? [colorMood, lighting].filter(Boolean).join(" · ")
-                : "Light and color sit quietly here, more whisper than announcement."}
-            </p>
-          </div>
-          <div class="result-section">
-            <div class="result-label">Subject &amp; Genre</div>
-            <p class="result-body">
-              ${caption
-                ? `“${caption}”`
-                : "The subject stays unnamed, but the frame still remembers being seen."}
-              ${genre || subgenre
-                ? `<br/><span class="result-subtext">${genre}${
-                    genre && subgenre ? " · " : ""
-                  }${subgenre || ""}</span>`
-                : ""}
-            </p>
-          </div>
-        </div>
-
-        <div class="result-section result-section-remix">
-          <div class="result-label">If You Want to Push Further</div>
-          <p class="result-body">
-            ${
-              remix ||
-              "Remix mode hums in the background. Set an OpenAI key on the host to let FRAMED dream new variations out loud."
-            }
-          </p>
-        </div>
-      </div>
-    `;
-
-    // STEP 4: Temporary DOM-level verification
-    if (typeof renderedContent === "string" && renderedContent.includes("{")) {
-      console.error("❌ Raw JSON detected in UI rendering path");
-    }
-
-    resultsEl.innerHTML = renderedContent;
-
-    // Verify no raw JSON in DOM
-    const domText = resultsEl.textContent || "";
-    if (domText.includes('"') && (domText.includes("brightness") || domText.includes("contrast") || domText.includes("errors"))) {
-      console.error("❌ Raw JSON detected in DOM output");
-    }
-
+    // Render ONLY from _ui
+    renderUIResult(data._ui);
     switchTab("resultsTab");
 
-    if (mood) {
-      applyMoodAudio(mood);
-    }
   } catch (err) {
     console.error("Analysis failed:", err);
-    document.getElementById("results").innerHTML = `
-      <div class="result-shell result-shell-error fade-in">
-        <div class="result-section result-section-error">
-          <div class="result-label">The server lost its light for a moment</div>
-          <p class="result-body">Please try again with the same image, or return with a new frame when you are ready.</p>
-        </div>
-      </div>
-    `;
+    renderSoftError("Please try again with the same image, or return with a new frame when you are ready.");
     switchTab("resultsTab");
   }
 }
