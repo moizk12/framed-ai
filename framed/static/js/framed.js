@@ -88,30 +88,36 @@ async function submitImage(event) {
       return;
     }
 
-    const view = data._ui || data;
+    // STEP 2: Enforce _ui as the ONLY render source
+    // If _ui does NOT exist, render a gentle error message
+    // DO NOT render data directly
+    if (!data._ui) {
+      document.getElementById("results").innerHTML = `
+        <div class="result-shell result-shell-error fade-in">
+          <div class="result-section result-section-error">
+            <div class="result-label">The reading is incomplete</div>
+            <p class="result-body">FRAMED received the image but could not prepare a quiet reading. Please try again, or return with another frame.</p>
+          </div>
+        </div>
+      `;
+      switchTab("resultsTab");
+      return;
+    }
 
-    const caption =
-      (view.clip_description && view.clip_description.caption) ||
-      view.caption ||
-      "";
-    const critique = view.critique || data.critique || "";
-    const remix = view.remix_prompt || data.remix_prompt || "";
-    const mood =
-      view.emotional_mood ||
-      (view.summary && view.summary.emotional_mood) ||
-      "";
-    const poeticMood =
-      view.poetic_mood ||
-      (view.summary && view.summary.poetic_mood) ||
-      "";
+    // Use ONLY _ui - no fallbacks to raw data
+    const view = data._ui;
+
+    // Extract fields from _ui (flat structure, not nested)
+    const caption = view.caption || "";
+    const critique = view.critique || "";
+    const remix = view.remix_prompt || "";
+    const mood = view.emotional_mood || "";
+    const poeticMood = view.poetic_mood || "";
     const genre =
       (typeof view.genre === "string" && view.genre) ||
       (view.genre && view.genre.genre) ||
       "";
-    const subgenre =
-      view.subgenre ||
-      (view.genre && view.genre.subgenre) ||
-      "";
+    const subgenre = view.subgenre || "";
     const colorMood = view.color_mood || "";
     const lighting = view.lighting_direction || "";
 
@@ -119,7 +125,7 @@ async function submitImage(event) {
     const mentorTone = mentorModeSelect ? mentorModeSelect.value : "Balanced Mentor";
 
     const resultsEl = document.getElementById("results");
-    resultsEl.innerHTML = `
+    const renderedContent = `
       <div class="result-shell fade-in">
         <div class="result-header">
           <div class="result-title">A Quiet Reading of Your Frame</div>
@@ -175,6 +181,19 @@ async function submitImage(event) {
         </div>
       </div>
     `;
+
+    // STEP 4: Temporary DOM-level verification
+    if (typeof renderedContent === "string" && renderedContent.includes("{")) {
+      console.error("❌ Raw JSON detected in UI rendering path");
+    }
+
+    resultsEl.innerHTML = renderedContent;
+
+    // Verify no raw JSON in DOM
+    const domText = resultsEl.textContent || "";
+    if (domText.includes('"') && (domText.includes("brightness") || domText.includes("contrast") || domText.includes("errors"))) {
+      console.error("❌ Raw JSON detected in DOM output");
+    }
 
     switchTab("resultsTab");
 

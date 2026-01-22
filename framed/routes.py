@@ -103,12 +103,17 @@ def analyze():
         # Build a presentation-friendly view without mutating the core result
         ui_view = clean_result_for_ui(analysis_result)
         response_payload = dict(analysis_result)
-        if ui_view:
-            response_payload["_ui"] = ui_view
-
+        
         # Re-generate critique only if the mentor mode is non-default
         if mentor_mode and mentor_mode != "Balanced Mentor":
             response_payload["critique"] = generate_merged_critique(analysis_result, mentor_mode)
+            # Update _ui with the regenerated critique for presentation layer
+            if ui_view:
+                ui_view["critique"] = response_payload["critique"]
+        
+        if ui_view:
+            response_payload["_ui"] = ui_view
+        
         update_echo_memory(analysis_result)  # keep the last 10
         return jsonify(response_payload)
     except Exception as e:
