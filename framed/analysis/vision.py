@@ -395,6 +395,202 @@ def get_clip_description(image_path):
     }
 
 
+def get_clip_inventory(image_path):
+    """
+    Generate a descriptive inventory of visible elements using CLIP model.
+    
+    Uses inventory-style prompt to produce nouns and attributes, not storytelling.
+    This is used for semantic anchor generation (multi-signal consensus).
+    
+    Returns:
+        List of strings (nouns/attributes describing visible elements)
+    """
+    # Load image
+    image = Image.open(image_path).convert("RGB")
+    
+    # Inventory-style candidate descriptions (nouns, attributes, no inference)
+    inventory_candidates = [
+        # Architecture types
+        "religious architecture", "mosque", "cathedral", "temple", "church",
+        "building", "structure", "tower", "dome", "minaret", "spire",
+        "architectural facade", "interior space", "staircase", "archway",
+        
+        # Time of day / lighting conditions
+        "daytime", "night", "dawn", "dusk", "sunset", "sunrise",
+        "artificial lighting", "natural light", "neon lights", "street lights",
+        
+        # Atmospheric conditions
+        "fog", "mist", "haze", "rain", "snow", "clear sky", "cloudy",
+        "smoke", "dust", "atmospheric",
+        
+        # Structural elements
+        "wall", "door", "window", "roof", "column", "arch", "balcony",
+        "fence", "gate", "bridge", "pathway",
+        
+        # Human presence
+        "person", "people", "crowd", "human figure", "silhouette",
+        "no people", "empty", "unoccupied",
+        
+        # Scale indicators
+        "large structure", "monumental", "tall building", "small building",
+        "intimate space", "vast landscape", "close-up", "wide view",
+        
+        # Natural elements
+        "tree", "palm tree", "grass", "water", "lake", "mountain", "sky",
+        "cloud", "sun", "moon", "star",
+        
+        # Urban elements
+        "street", "road", "vehicle", "car", "sign", "billboard", "neon sign"
+    ]
+    
+    # CLIP process - lazy load models
+    clip_model, clip_processor, device = get_clip_model()
+    inputs = clip_processor(text=inventory_candidates, images=image, return_tensors="pt", padding=True).to(device)
+    outputs = clip_model(**inputs)
+    logits_per_image = outputs.logits_per_image
+    probs = logits_per_image.softmax(dim=1)
+    
+    # Get top 10 most relevant inventory items (not just the best one)
+    top_k = 10
+    top_indices = probs.topk(top_k).indices[0].cpu().tolist()
+    inventory_items = [inventory_candidates[idx] for idx in top_indices if probs[0][idx].item() > 0.05]  # Threshold: 5% confidence
+    
+    return inventory_items
+
+
+def generate_semantic_anchors(clip_inventory, clip_tags, clip_caption, yolo_objects, composition_data):
+    """
+    Generate semantic anchors from multiple signals using consensus logic.
+    
+    Semantic Anchors are high-confidence, low-risk labels derived from multiple signals.
+    They are not facts — they are permissions. Only keys that pass thresholds are included.
+    
+    Args:
+        clip_inventory: List of strings from get_clip_inventory()
+        clip_tags: List of strings from get_clip_description() tags
+        clip_caption: String from get_clip_description() caption
+        yolo_objects: List of strings from YOLO object detection
+        composition_data: Dict with symmetry, subject_size, etc.
+    
+    Returns:
+        Dict with sparse semantic anchors (only keys that meet thresholds)
+        Missing key = not permitted, present key = safe to reference
+    """
+    anchors = {}
+    
+    # Normalize inputs to lowercase for matching
+    inventory_lower = [item.lower() for item in (clip_inventory or [])]
+    tags_lower = [tag.lower() for tag in (clip_tags or [])]
+    caption_lower = (clip_caption or "").lower()
+    yolo_lower = [obj.lower() for obj in (yolo_objects or [])]
+    
+    all_text = " ".join(inventory_lower + tags_lower + [caption_lower] + yolo_lower).lower()
+    
+    # Keyword sets for matching
+    ARCHITECTURE_TERMS = ["mosque", "cathedral", "temple", "church", "religious architecture", 
+                          "building", "structure", "tower", "dome", "minaret", "spire",
+                          "architectural facade", "interior space"]
+    STRUCTURE_TERMS = ["dome", "minaret", "tower", "spire", "arch", "column", "wall", 
+                      "building", "structure", "facade"]
+    TIME_TERMS = ["night", "daytime", "dawn", "dusk", "sunset", "sunrise"]
+    ATMOSPHERE_TERMS = ["fog", "mist", "haze", "rain", "snow", "atmospheric", "smoke"]
+    LIGHTING_TERMS = ["artificial lighting", "neon lights", "street lights", "illuminated"]
+    HUMAN_TERMS = ["person", "people", "crowd", "human figure", "silhouette"]
+    NO_HUMAN_TERMS = ["no people", "empty", "unoccupied"]
+    SCALE_TERMS = ["monumental", "large structure", "tall building", "vast"]
+    INTIMATE_TERMS = ["intimate space", "small building", "close-up"]
+    
+    # === SCENE_TYPE ===
+    # Requires: 2+ signals (CLIP inventory + CLIP tags, or CLIP + composition)
+    architecture_signals = sum(1 for term in ARCHITECTURE_TERMS if term in all_text)
+    time_signals = sum(1 for term in TIME_TERMS if term in all_text)
+    
+    if architecture_signals >= 1 and time_signals >= 1:
+        # Build scene type string (canonicalized)
+        arch_type = None
+        for term in ["mosque", "cathedral", "temple", "church"]:
+            if term in all_text:
+                arch_type = term
+                break
+        if not arch_type:
+            arch_type = "religious architecture" if any(t in all_text for t in ["religious", "mosque", "cathedral", "temple", "church"]) else "architecture"
+        
+        time_type = None
+        for term in TIME_TERMS:
+            if term in all_text:
+                time_type = term
+                break
+        
+        if arch_type and time_type:
+            anchors["scene_type"] = f"{arch_type} at {time_type}"
+        elif arch_type:
+            anchors["scene_type"] = arch_type
+    elif architecture_signals >= 2:  # Architecture mentioned multiple times
+        for term in ["mosque", "cathedral", "temple", "church"]:
+            if term in all_text:
+                anchors["scene_type"] = term
+                break
+        if "scene_type" not in anchors:
+            anchors["scene_type"] = "architecture"
+    
+    # === STRUCTURE_ELEMENTS ===
+    # Requires: 1+ signal (CLIP tags or CLIP inventory)
+    structure_found = []
+    for term in STRUCTURE_TERMS:
+        if term in all_text:
+            structure_found.append(term)
+    
+    if structure_found:
+        # Canonicalize: remove duplicates, sort
+        structure_found = sorted(list(set(structure_found)))
+        anchors["structure_elements"] = structure_found[:5]  # Limit to top 5
+    
+    # === HUMAN_PRESENCE ===
+    # Requires: 1 signal (YOLO or CLIP)
+    human_detected = any(term in all_text for term in HUMAN_TERMS)
+    no_human_detected = any(term in all_text for term in NO_HUMAN_TERMS)
+    
+    if human_detected:
+        anchors["human_presence"] = "present"
+    elif no_human_detected or (not human_detected and len(yolo_lower) > 0 and "person" not in " ".join(yolo_lower)):
+        anchors["human_presence"] = "none detected"
+    
+    # === ATMOSPHERE ===
+    # Requires: 1+ signal (CLIP tags or technical analysis)
+    atmosphere_found = []
+    for term in ATMOSPHERE_TERMS:
+        if term in all_text:
+            atmosphere_found.append(term)
+    
+    lighting_found = []
+    for term in LIGHTING_TERMS:
+        if term in all_text:
+            lighting_found.append(term)
+    
+    if atmosphere_found or lighting_found:
+        combined = atmosphere_found + lighting_found
+        anchors["atmosphere"] = sorted(list(set(combined)))[:4]  # Limit to top 4
+    
+    # === SCALE ===
+    # Requires: 1 signal (composition analysis or YOLO "tower"/"building")
+    scale_signals = sum(1 for term in SCALE_TERMS if term in all_text)
+    intimate_signals = sum(1 for term in INTIMATE_TERMS if term in all_text)
+    
+    # Also check composition data
+    subject_size = composition_data.get("subject_size", "") if composition_data else ""
+    subject_size_lower = subject_size.lower() if subject_size else ""
+    
+    if scale_signals >= 1 or "large" in subject_size_lower or "extreme" in subject_size_lower:
+        anchors["scale"] = "monumental"
+    elif intimate_signals >= 1 or "small" in subject_size_lower or "tiny" in subject_size_lower:
+        anchors["scale"] = "intimate"
+    elif any(term in yolo_lower for term in ["tower", "building", "structure"]) and len(yolo_lower) > 0:
+        # YOLO detected large structures
+        anchors["scale"] = "monumental"
+    
+    return anchors
+
+
 def analyze_color(image_path):
     image = cv2.imread(image_path)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -1193,6 +1389,10 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
             result["perception"]["semantics"]["genre_hint"] = clip_data.get("genre_hint")
             result["confidence"]["clip"] = True
         
+        # CLIP inventory analysis (for semantic anchors)
+        clip_inventory = safe_analyze(get_clip_inventory, path, error_key="clip_inventory",
+                                     default=[])
+        
         # NIMA aesthetic analysis
         nima_model = None
         try:
@@ -1311,6 +1511,27 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
             result["derived"]["genre"]["genre"] = genre_info.get("genre")
             result["derived"]["genre"]["subgenre"] = genre_info.get("subgenre")
         
+        # === SEMANTIC ANCHORS GENERATION ===
+        # Generate semantic anchors from multiple signals (sparse, only high-confidence)
+        try:
+            composition_for_anchors = {
+                "symmetry": result["perception"]["composition"].get("symmetry"),
+                "subject_size": result["perception"]["composition"].get("subject_framing", {}).get("size")
+            }
+            semantic_anchors = generate_semantic_anchors(
+                clip_inventory=clip_inventory if isinstance(clip_inventory, list) else [],
+                clip_tags=clip_data.get("tags", []),
+                clip_caption=clip_data.get("caption"),
+                yolo_objects=object_data.get("objects", []),
+                composition_data=composition_for_anchors
+            )
+            # Only add anchors if any were generated (sparse by default)
+            if semantic_anchors:
+                result["semantic_anchors"] = semantic_anchors
+        except Exception as e:
+            logger.warning(f"Semantic anchor generation failed (non-fatal): {e}")
+            # Don't add error - anchors are optional
+        
         # Cache the result
         if file_hash:
             save_cached_analysis(file_hash, result)
@@ -1424,6 +1645,7 @@ def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
     The prompt receives ONLY observed facts. Interpretation happens inside the prompt voice.
     """
     # Ensure logger is available (safeguard for edge cases)
+    # Fix: Prevent NameError if logger is not in scope
     try:
         _logger = logger
     except NameError:
@@ -1467,6 +1689,9 @@ def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
         subgenre_name = genre.get("subgenre")
         
         emotional_mood = derived.get("emotional_mood")
+        
+        # Extract semantic anchors (if present)
+        semantic_anchors = photo_data.get("semantic_anchors", {})
     else:
         # Legacy format fallback (for backward compatibility)
         technical = photo_data
@@ -1494,6 +1719,9 @@ def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
         genre_name = genre.get("genre") if isinstance(genre, dict) else genre
         subgenre_name = genre.get("subgenre") if isinstance(genre, dict) else photo_data.get("subgenre")
         emotional_mood = photo_data.get("emotional_mood")
+        
+        # Extract semantic anchors (if present) - legacy format may not have them
+        semantic_anchors = photo_data.get("semantic_anchors", {})
 
     # Mentor persona modes (preserved exactly)
     modes = {
@@ -1590,7 +1818,50 @@ EMOTIONAL SIGNAL
 - Inferred Emotional Mood: {emotional_mood if emotional_mood else "Not inferred"}
 
 ---
+"""
+    
+    # Add semantic anchors section if present (high-confidence labels)
+    anchors_section = ""
+    if semantic_anchors:
+        anchors_lines = []
+        if "scene_type" in semantic_anchors:
+            anchors_lines.append(f"- Scene: {semantic_anchors['scene_type']}")
+        if "structure_elements" in semantic_anchors:
+            elements_str = ", ".join(semantic_anchors["structure_elements"])
+            anchors_lines.append(f"- Structures: {elements_str}")
+        if "human_presence" in semantic_anchors:
+            anchors_lines.append(f"- Human presence: {semantic_anchors['human_presence']}")
+        if "atmosphere" in semantic_anchors:
+            atmosphere_str = ", ".join(semantic_anchors["atmosphere"])
+            anchors_lines.append(f"- Atmosphere: {atmosphere_str}")
+        if "scale" in semantic_anchors:
+            anchors_lines.append(f"- Scale: {semantic_anchors['scale']}")
+        
+        if anchors_lines:
+            anchors_section = f"""
+SEMANTIC ANCHORS (high confidence):
+{chr(10).join(anchors_lines)}
 
+These anchors are safe to reference explicitly.
+Do not invent elements beyond these anchors.
+"""
+    
+    # Add contract rules about anchors
+    contract_rules = ""
+    if semantic_anchors:
+        contract_rules = """
+- If semantic anchors are present, you must name the structures and environment explicitly.
+- Do not invent elements beyond these anchors.
+- Stop at functional/cultural level (e.g., "mosque", "religious architecture").
+- Do not make historical claims, architectural style claims, or location claims.
+"""
+    else:
+        contract_rules = """
+- Do not speak in generalities without grounding.
+- Reference technical measurements and visible elements.
+"""
+    
+    prompt += anchors_section + f"""
 Your task:
 
 1. Interpret what these choices reveal about the photographer's intent.
@@ -1604,6 +1875,8 @@ Rules:
 - Do NOT list tips.
 - Do NOT sound instructional.
 - Do NOT flatter.
+{contract_rules}
+- Every interpretive claim must reference a visible element, anchor, or measured value.
 
 Your critique should read like a quiet but demanding conversation
 between a mentor and an artist.

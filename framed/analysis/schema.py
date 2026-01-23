@@ -91,7 +91,11 @@ def create_empty_analysis_result() -> Dict[str, Any]:
             "nima": False,
             "deepface": False
         },
-        "errors": {}
+        "errors": {},
+        # Semantic Anchors: High-confidence, low-risk labels derived from multiple signals
+        # Only keys that pass confidence thresholds are included (sparse by default)
+        # Missing key = not permitted, present key = safe to reference
+        "semantic_anchors": {}
     }
 
 
@@ -99,6 +103,8 @@ def validate_schema(result: Dict[str, Any]) -> bool:
     """
     Validates that a result conforms to the canonical schema structure.
     Returns True if valid, False otherwise.
+    
+    Note: semantic_anchors is optional (for backward compatibility).
     """
     required_keys = ["metadata", "perception", "derived", "confidence", "errors"]
     

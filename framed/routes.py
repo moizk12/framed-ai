@@ -37,6 +37,9 @@ def clean_result_for_ui(result: dict) -> dict:
     # Check if this is canonical schema or legacy format
     is_canonical = "perception" in result and "metadata" in result
     
+    # Extract semantic anchors (if present) - handle missing gracefully
+    semantic_anchors = result.get("semantic_anchors", {}) if is_canonical else {}
+    
     if is_canonical:
         # Read from canonical schema
         perception = result.get("perception", {})
