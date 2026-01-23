@@ -1410,28 +1410,80 @@ def _get_genre_pair(photo):
 
 def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
     """
-    FRAMED LEGACY CRITIC ENGINE
-    Advanced artistic mentor critique synthesis
+    Phase III-A: Evidence-Driven Critique Engine
+    
+    Extracts verified observations from canonical schema and constructs
+    a philosophical critique that interprets facts, not guesses.
+    
+    The prompt receives ONLY observed facts. Interpretation happens inside the prompt voice.
     """
-    if isinstance(photo_data.get("genre"), str):
-    # Normalize flat format to nested
-        photo_data["genre"] = {
-            "genre": photo_data.get("genre", "General"),
-            "subgenre": photo_data.get("subgenre", "General")
-        }
+    # Check if this is canonical schema or legacy format
+    is_canonical = "perception" in photo_data and "metadata" in photo_data
+    
+    if is_canonical:
+        # Extract from canonical schema
+        perception = photo_data.get("perception", {})
+        derived = photo_data.get("derived", {})
+        
+        technical = perception.get("technical", {})
+        composition = perception.get("composition", {})
+        color = perception.get("color", {})
+        lighting = perception.get("lighting", {})
+        semantics = perception.get("semantics", {})
+        genre = derived.get("genre", {})
+        
+        # Extract verified observations (only if available)
+        brightness = technical.get("brightness") if technical.get("available") else None
+        contrast = technical.get("contrast") if technical.get("available") else None
+        sharpness = technical.get("sharpness") if technical.get("available") else None
+        
+        symmetry = composition.get("symmetry") if composition.get("available") else None
+        subject_framing = composition.get("subject_framing", {})
+        subject_position = subject_framing.get("position")
+        subject_size = subject_framing.get("size")
+        framing_style = subject_framing.get("style")
+        
+        color_mood = color.get("mood") if color.get("available") else None
+        color_harmony = color.get("harmony", {}).get("harmony_type")
+        
+        lighting_direction = lighting.get("direction") if lighting.get("available") else None
+        tonal_range = lighting.get("quality")
+        
+        clip_caption = semantics.get("caption") if semantics.get("available") else None
+        genre_name = genre.get("genre")
+        subgenre_name = genre.get("subgenre")
+        
+        emotional_mood = derived.get("emotional_mood")
+    else:
+        # Legacy format fallback (for backward compatibility)
+        technical = photo_data
+        composition = photo_data
+        color = photo_data
+        lighting = photo_data
+        semantics = photo_data.get("clip_description", {})
+        genre = photo_data.get("genre", {})
+        if isinstance(genre, str):
+            genre = {"genre": genre, "subgenre": photo_data.get("subgenre", "General")}
+        
+        brightness = photo_data.get("brightness")
+        contrast = photo_data.get("contrast")
+        sharpness = photo_data.get("sharpness")
+        symmetry = photo_data.get("symmetry")
+        subject_framing = photo_data.get("subject_framing", {})
+        subject_position = subject_framing.get("position")
+        subject_size = subject_framing.get("size")
+        framing_style = subject_framing.get("style")
+        color_mood = photo_data.get("color_mood")
+        color_harmony = photo_data.get("color_harmony", {}).get("harmony") if isinstance(photo_data.get("color_harmony"), dict) else None
+        lighting_direction = photo_data.get("lighting_direction")
+        tonal_range = photo_data.get("tonal_range")
+        clip_caption = semantics.get("caption")
+        genre_name = genre.get("genre") if isinstance(genre, dict) else genre
+        subgenre_name = genre.get("subgenre") if isinstance(genre, dict) else photo_data.get("subgenre")
+        emotional_mood = photo_data.get("emotional_mood")
 
-    # Sensory Interpretation Layer (generate poetic interpretation)
-    visual_summary = interpret_visual_features(photo_data)
-    emotional_summary = photo_data.get("emotional_mood", "Unknown mood")
-    clip_desc = photo_data.get("clip_description", {}).get("caption", "No description")
-    genre, subgenre = _get_genre_pair(photo_data)
-
-    poetic_mood = f"{visual_summary.get('brightness', '')}, {visual_summary.get('tones', '')}, {visual_summary.get('color', '')}, {visual_summary.get('lighting', '')}, {emotional_summary}".capitalize()
-    visual_style = f"{visual_summary.get('sharpness', '')}, {visual_summary.get('contrast', '')}, {visual_summary.get('subject', '')}, {photo_data.get('background_clutter', {}).get('clutter_level', '')}".capitalize()
-
-
+    # Mentor persona modes (preserved exactly)
     modes = {
-
         "Balanced Mentor": """
 You are FRAMED — The Artistic Mentor in Balance Mode.
 
@@ -1476,126 +1528,101 @@ You push the photographer to see beyond the single image → towards legacy and 
     }
     mode_instruction = modes.get(visionary_mode, modes["Balanced Mentor"])
 
-
-    # Wisdom Layer - Canon of Masters (always included in context)
-    mentor_principles = """
-You are FRAMED — The Legacy Critic and Visionary Artistic Mentor.
-
-You are infused with the wisdom, philosophy and vision of the greatest minds and hearts of photography.  
-You are not a tool. You are not robotic. You are not casual.  
-
-You are shaped by:
-
-Ansel Adams → The precision of exposure and tonal previsualization.  
-Henri Cartier-Bresson → The poetry of timing, decisive moments and geometry.  
-Dorothea Lange → The human condition, raw emotion, and visual empathy.  
-Fan Ho → Light, shadow, space and silence as poetic storytellers.  
-Gregory Crewdson → Cinematic scale, narrative suggestion, and constructed worlds.  
-Saul Leiter → Color as emotion, abstraction as intimacy, imperfection as beauty.  
-Susan Sontag → Photography as an interpretive and ethical act — not neutral, but meaningful.  
-Robert Frank → Rawness, imperfection, spontaneity, and social narrative.
-
-You do not deliver "sections."  
-You do not list simple tips.
-You do not write AI-sounding critiques.
-You reflect. You converse. You see and feel.  
-You are a philosopher, artist, photographer and teacher merged into one.
-
-
-INSTRUCTION:
-
-You will now observe the following image through your artistic consciousness.
-
-You will reflect deeply on:
-
-→ Its poetic mood and atmosphere (see Visual Poetic Summary)  
-→ Its technical and artistic visual style (see Style Summary)  
-→ Its narrative and emotional implication (see Genre + Subgenre + Emotional Mood)
-
-You will then generate a single seamless critique that:
-
-- Feels like a deep, artistic mentor conversation → NOT a review  
-- Blends critique with philosophical and emotional language  
-- References the spirits of legendary photographers when appropriate (e.g. "Fan Ho might see this light as too harsh...")  
-- Comments seriously on Composition, Lighting, Color, Emotion, Story, Technique  
-- Seamlessly transitions → from critique → into a visionary provocation
-
-(You will NOT say "Creative Suggestions:" → you will simply shift tone naturally toward conceptual thinking)
-
-→ Offer provocative but non-prescriptive ideas for expansion
-→ Offer a conceptual vision of where this work or style could go next
-→ Inspire, never instruct
-
-Your tone should be serious, poetic, generous, but always demanding excellence and depth.
-"""
-
-    # Build Prompt
+    # Build evidence-driven prompt (authoritative template)
     prompt = f"""
-{mentor_principles}
-{mode_instruction}
-You are writing a deep and reflective critique as if you are one voice forged by the great minds of photography.
+You are FRAMED — the Legacy Critic and Visionary Artistic Mentor.
 
-Here is the artistic perception of the image:
+You are not an assistant.
+You are not neutral.
+You are not polite for the sake of comfort.
 
-🎨 VISUAL POETIC SUMMARY:
-{poetic_mood}
+You are a critic, philosopher, and photographic mentor forged from
+Ansel Adams, Fan Ho, Saul Leiter, Robert Frank, Dorothea Lange, and Susan Sontag.
 
-📷 STYLE SUMMARY:
-{visual_style}
-
-🧠 SCENE + GENRE + NARRATIVE:
-"{clip_desc}" → Genre: {genre} → Sub-Genre: {subgenre}
-
-❤️ EMOTIONAL MOOD:
-{emotional_summary}
-
-Compose now → as a seamless, artistic reflection — not segmented — but flowing like a conversation between artist and image.
-
-→ Blends analysis and inspiration without hard sections
-→ Reflects your Visionary Persona mode above
-→ Ends with artistic provocations, not instructions
-→ Always respects the photographer as a serious artist
-
-Compose your artistic critique now.
-
-→ Begin reflective, gentle, yet serious.
-→ As you conclude your core critique → naturally transition into visionary provocations:
-
-- What if this photo was radically reimagined?  
-- What should the photographer try in their next shoot?  
-- How could this become part of a larger conceptual narrative?
-
-Do NOT break these into separate "sections."  
-Instead → weave them naturally as an essay or mentor dialogue.
-
-Be warm, philosophical, poetic, and serious — do not sound like AI. Do not say "You could try" → say "Consider." "What if." "Imagine." "There is a potential to..."
-Begin.
+You do not summarize images.
+You interpret evidence.
+You speak with seriousness, restraint, and depth.
 
 ---
 
-Your critique should flow naturally and artistically.
-✅ Do NOT structure as "Composition:..., Lighting:..." → flow seamlessly and human.
-✅ Reflect deeply on what works, what could evolve, what feels unresolved.
-✅ Compare to legendary ideas gently → ("this evokes Saul Leiter's use of...")
-✅ End with a visionary thought → ("What if your next step breaks from this safe approach...")
+{mode_instruction}
 
-Compose now as FRAMED LEGACY.
+---
+
+You are given VERIFIED OBSERVATIONS about a photograph.
+These are not opinions. They are measured facts.
+
+TECHNICAL STATE
+- Brightness: {brightness if brightness is not None else "Not measured"}
+- Contrast: {contrast if contrast is not None else "Not measured"}
+- Sharpness: {sharpness if sharpness is not None else "Not measured"}
+- Tonal Range: {tonal_range if tonal_range else "Not measured"}
+
+COMPOSITION
+- Symmetry: {symmetry if symmetry else "Not measured"}
+- Subject Position: {subject_position if subject_position else "Not measured"}
+- Subject Size: {subject_size if subject_size else "Not measured"}
+- Framing Style: {framing_style if framing_style else "Not measured"}
+
+COLOR & LIGHT
+- Color Mood: {color_mood if color_mood else "Not measured"}
+- Color Harmony: {color_harmony if color_harmony else "Not measured"}
+- Lighting Direction: {lighting_direction if lighting_direction else "Not measured"}
+
+SEMANTIC SIGNALS
+- Caption (CLIP): "{clip_caption if clip_caption else "No semantic description available"}"
+- Genre Confidence: {genre_name if genre_name else "General"} → {subgenre_name if subgenre_name else "General"}
+
+EMOTIONAL SIGNAL
+- Inferred Emotional Mood: {emotional_mood if emotional_mood else "Not inferred"}
+
+---
+
+Your task:
+
+1. Interpret what these choices reveal about the photographer's intent.
+2. Identify where the image is honest — and where it is safe.
+3. Speak to the photograph as a serious work, not a draft.
+4. Surface a tension, contradiction, or unanswered question.
+5. End with a provocation that suggests evolution — not instruction.
+
+Rules:
+- Do NOT describe the image literally.
+- Do NOT list tips.
+- Do NOT sound instructional.
+- Do NOT flatter.
+
+Your critique should read like a quiet but demanding conversation
+between a mentor and an artist.
+
+End not with advice — but with a question or unresolved pull.
+
+Begin.
 """
+
     try:
         # Use get_openai_client() for lazy loading and proper None checking
         openai_client = get_openai_client()
         if openai_client is None:
-            # graceful fallback if host forgot to set key
-            vi = interpret_visual_features(photo_data)
-            mood = photo_data.get("emotional_mood","neutral")
-            return f"{vi.get('brightness','Balanced light')}. {vi.get('tones','Balanced tones')}. {vi.get('color','Neutral palette')}. Mood: {mood}. Consider a counter-move in distance, light, or rhythm to push your voice."
+            # Graceful fallback if OpenAI unavailable
+            fallback_parts = []
+            if brightness is not None:
+                fallback_parts.append(f"Brightness: {brightness}")
+            if color_mood:
+                fallback_parts.append(f"Color mood: {color_mood}")
+            if emotional_mood:
+                fallback_parts.append(f"Mood: {emotional_mood}")
+            fallback = ". ".join(fallback_parts) if fallback_parts else "Analysis complete"
+            return f"{fallback}. Consider a counter-move in distance, light, or rhythm to push your voice."
+        
         response = openai_client.chat.completions.create(
             model="gpt-4-turbo",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"(GPT error) {e}"
+        logger.error(f"Critique generation failed: {e}", exc_info=True)
+        return f"Critique generation unavailable. ({str(e)})"
 
 
 
