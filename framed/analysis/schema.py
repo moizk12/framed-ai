@@ -95,7 +95,12 @@ def create_empty_analysis_result() -> Dict[str, Any]:
         # Semantic Anchors: High-confidence, low-risk labels derived from multiple signals
         # Only keys that pass confidence thresholds are included (sparse by default)
         # Missing key = not permitted, present key = safe to reference
-        "semantic_anchors": {}
+        "semantic_anchors": {},
+        # Scene Understanding: Synthesized contextual understanding of "what is happening here"
+        # Optional, sparse, confidence-gated
+        # Answers: material condition, temporal context, organic interaction, emotional substrate, relationships
+        # Never shown to user - feeds critique engine only
+        "scene_understanding": {}
     }
 
 

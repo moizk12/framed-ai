@@ -591,6 +591,272 @@ def generate_semantic_anchors(clip_inventory, clip_tags, clip_caption, yolo_obje
     return anchors
 
 
+def synthesize_scene_understanding(analysis_result):
+    """
+    Synthesize contextual understanding of "what is happening here" from perception signals.
+    
+    This is a cognitive layer that answers material condition, temporal context, organic interaction,
+    emotional substrate, and contextual relationships - universal to any image type.
+    
+    Args:
+        analysis_result: Canonical schema analysis result (must have perception layer)
+    
+    Returns:
+        Dict with sparse scene_understanding (only high-confidence elements)
+        Missing key = ambiguous, present key = confident understanding
+    """
+    # Feature flag check
+    scene_understanding_enabled = os.getenv("SCENE_UNDERSTANDING_ENABLE", "true").lower() == "true"
+    if not scene_understanding_enabled:
+        return {}
+    
+    understanding = {}
+    
+    # Extract perception signals
+    perception = analysis_result.get("perception", {})
+    technical = perception.get("technical", {})
+    composition = perception.get("composition", {})
+    color = perception.get("color", {})
+    lighting = perception.get("lighting", {})
+    semantics = perception.get("semantics", {})
+    emotion = perception.get("emotion", {})
+    derived = analysis_result.get("derived", {})
+    
+    # Collect all text signals for keyword matching
+    clip_caption = (semantics.get("caption") or "").lower() if semantics.get("available") else ""
+    clip_tags = [tag.lower() for tag in (semantics.get("tags", []) or [])]
+    clip_inventory = analysis_result.get("_clip_inventory", [])  # May be stored temporarily
+    all_text = " ".join([clip_caption] + clip_tags + [str(item).lower() for item in (clip_inventory or [])]).lower()
+    
+    # Technical measurements
+    brightness = technical.get("brightness") if technical.get("available") else None
+    contrast = technical.get("contrast") if technical.get("available") else None
+    sharpness = technical.get("sharpness") if technical.get("available") else None
+    color_mood = color.get("mood") if color.get("available") else None
+    lighting_direction = lighting.get("direction") if lighting.get("available") else None
+    
+    # === MATERIAL CONDITION ===
+    material_condition = {}
+    
+    # Surface state: infer from sharpness, contrast, and organic growth signals
+    organic_growth_terms = ["ivy", "moss", "vegetation", "growth", "overgrown", "reclaimed", "patina", "weathering", "eroded", "aged"]
+    organic_signals = sum(1 for term in organic_growth_terms if term in all_text)
+    
+    if organic_signals >= 2:
+        material_condition["organic_growth"] = "extensive"
+        material_condition["surface_state"] = "weathered"
+        growth_types = [term for term in ["ivy", "moss", "patina", "weathering"] if term in all_text]
+        if growth_types:
+            material_condition["growth_types"] = growth_types[:3]  # Limit to top 3
+        material_condition["erosion_level"] = "moderate" if organic_signals >= 3 else "light"
+    elif organic_signals >= 1:
+        material_condition["organic_growth"] = "moderate"
+        material_condition["surface_state"] = "weathered"
+        material_condition["erosion_level"] = "light"
+    elif sharpness and sharpness > 100:
+        material_condition["surface_state"] = "pristine"
+        material_condition["organic_growth"] = "none"
+    elif sharpness and sharpness < 30:
+        material_condition["surface_state"] = "degraded"
+    
+    # Age indicators
+    age_terms = ["old", "aged", "ancient", "historical", "vintage", "weathered", "patina", "eroded", "time", "endurance"]
+    age_signals = [term for term in age_terms if term in all_text]
+    if age_signals:
+        material_condition["age_indicators"] = age_signals[:4]
+    
+    # Maintenance state
+    if "abandoned" in all_text or "neglected" in all_text:
+        material_condition["maintenance_state"] = "neglected"
+    elif "well maintained" in all_text or "pristine" in all_text or (sharpness and sharpness > 100):
+        material_condition["maintenance_state"] = "well_maintained"
+    elif organic_signals >= 1:
+        material_condition["maintenance_state"] = "in_use"
+    
+    if material_condition:
+        understanding["material_condition"] = material_condition
+    
+    # === TEMPORAL CONTEXT ===
+    temporal_context = {}
+    
+    # Time scale inference
+    historical_terms = ["historical", "ancient", "old", "vintage", "cathedral", "temple", "monument", "heritage"]
+    historical_signals = sum(1 for term in historical_terms if term in all_text)
+    
+    if historical_signals >= 2:
+        temporal_context["time_scale"] = "historical"
+    elif "contemporary" in all_text or "modern" in all_text or "new" in all_text:
+        temporal_context["time_scale"] = "contemporary"
+    elif "moment" in all_text or "decisive" in all_text:
+        temporal_context["time_scale"] = "momentary"
+    else:
+        temporal_context["time_scale"] = "timeless"
+    
+    # Pace inference
+    motion_terms = ["motion", "movement", "dynamic", "action", "busy", "chaotic", "energetic"]
+    stillness_terms = ["still", "static", "quiet", "calm", "peaceful", "serene", "enduring", "patient"]
+    
+    motion_signals = sum(1 for term in motion_terms if term in all_text)
+    stillness_signals = sum(1 for term in stillness_terms if term in all_text)
+    
+    if motion_signals >= 2:
+        temporal_context["pace"] = "fast"
+        temporal_context["moment_type"] = "decisive"
+    elif stillness_signals >= 2:
+        temporal_context["pace"] = "slow"
+        temporal_context["moment_type"] = "still"
+    elif organic_signals >= 1:  # Organic growth suggests slow time
+        temporal_context["pace"] = "slow"
+        temporal_context["moment_type"] = "eternal"
+    else:
+        temporal_context["pace"] = "static"
+        temporal_context["moment_type"] = "in_between"
+    
+    # Endurance
+    if organic_signals >= 1 and historical_signals >= 1:
+        temporal_context["endurance"] = "enduring"
+        temporal_context["change_indicators"] = ["vegetation growth", "weathering"]
+    elif historical_signals >= 1:
+        temporal_context["endurance"] = "enduring"
+    elif "decay" in all_text or "falling" in all_text:
+        temporal_context["endurance"] = "decaying"
+    elif "growth" in all_text or "new" in all_text:
+        temporal_context["endurance"] = "growing"
+    else:
+        temporal_context["endurance"] = "transient"
+    
+    if temporal_context:
+        understanding["temporal_context"] = temporal_context
+    
+    # === ORGANIC INTERACTION ===
+    organic_interaction = {}
+    
+    # Relationship inference
+    if organic_signals >= 2:
+        organic_interaction["relationship"] = "reclamation"
+        organic_interaction["integration_level"] = "high"
+        organic_interaction["dominance"] = "balanced"
+        organic_interaction["specific_indicators"] = [term for term in ["ivy", "moss", "vegetation"] if term in all_text][:3]
+    elif organic_signals >= 1:
+        organic_interaction["relationship"] = "coexistence"
+        organic_interaction["integration_level"] = "moderate"
+        organic_interaction["dominance"] = "balanced"
+    elif "nature" in all_text and ("building" in all_text or "structure" in all_text):
+        organic_interaction["relationship"] = "harmony"
+        organic_interaction["integration_level"] = "moderate"
+        organic_interaction["dominance"] = "balanced"
+    else:
+        organic_interaction["relationship"] = "none"
+        organic_interaction["integration_level"] = "none"
+    
+    if organic_interaction.get("relationship") != "none":
+        understanding["organic_interaction"] = organic_interaction
+    
+    # === EMOTIONAL SUBSTRATE ===
+    emotional_substrate = {}
+    
+    # Temperature inference (with corrective signals)
+    if organic_signals >= 2 and historical_signals >= 1:
+        # Organic growth + historical = warmth of time, not cold
+        emotional_substrate["temperature"] = "warm_patience"
+        if color_mood == "cool":
+            emotional_substrate["corrective_signals"] = {
+                "temperature_override": {
+                    "from": "cold",
+                    "to": "warm_patience",
+                    "reason": "organic growth and weathering indicate warmth of time, not coldness"
+                }
+            }
+    elif color_mood == "warm":
+        emotional_substrate["temperature"] = "warm"
+    elif color_mood == "cool" and organic_signals == 0:
+        emotional_substrate["temperature"] = "cold"
+    else:
+        emotional_substrate["temperature"] = "neutral"
+    
+    # Pace
+    if temporal_context.get("pace") == "slow":
+        emotional_substrate["pace"] = "slow_contemplative"
+    elif temporal_context.get("pace") == "fast":
+        emotional_substrate["pace"] = "fast_energetic"
+    else:
+        emotional_substrate["pace"] = "static_eternal"
+    
+    # Presence
+    if organic_signals >= 1:
+        emotional_substrate["presence"] = "grounded"
+        if color_mood == "cool":
+            if "corrective_signals" not in emotional_substrate:
+                emotional_substrate["corrective_signals"] = {}
+            emotional_substrate["corrective_signals"]["presence_override"] = {
+                "from": "distant",
+                "to": "grounded",
+                "reason": "nature integration suggests grounded, lived-in presence, not distance"
+            }
+    elif "distant" in all_text or "isolated" in all_text:
+        emotional_substrate["presence"] = "distant"
+    else:
+        emotional_substrate["presence"] = "grounded"
+    
+    # Quality
+    if organic_signals >= 2 and stillness_signals >= 1:
+        emotional_substrate["quality"] = "enduring_calm"
+    elif organic_signals >= 1:
+        emotional_substrate["quality"] = "organic"
+    elif sharpness and sharpness > 150:
+        emotional_substrate["quality"] = "clinical"
+    elif motion_signals >= 2:
+        emotional_substrate["quality"] = "energetic"
+    else:
+        emotional_substrate["quality"] = "calm"
+    
+    if emotional_substrate:
+        understanding["emotional_substrate"] = emotional_substrate
+    
+    # === CONTEXTUAL RELATIONSHIPS ===
+    contextual_relationships = {}
+    
+    # Subject vs environment
+    if organic_signals >= 1:
+        contextual_relationships["subject_vs_environment"] = "in_dialogue"
+    elif "isolated" in all_text:
+        contextual_relationships["subject_vs_environment"] = "isolated"
+    else:
+        contextual_relationships["subject_vs_environment"] = "integrated"
+    
+    # Time vs subject
+    if temporal_context.get("endurance") == "enduring":
+        contextual_relationships["time_vs_subject"] = "enduring"
+    elif temporal_context.get("endurance") == "decaying":
+        contextual_relationships["time_vs_subject"] = "decaying"
+    else:
+        contextual_relationships["time_vs_subject"] = "fleeting"
+    
+    # Human vs space
+    human_presence = emotion.get("subject_type") == "human subject" if emotion.get("available") else False
+    if not human_presence and organic_signals >= 1:
+        contextual_relationships["human_vs_space"] = "intentional_stillness"
+    elif not human_presence:
+        contextual_relationships["human_vs_space"] = "alienation"
+    else:
+        contextual_relationships["human_vs_space"] = "active_occupation"
+    
+    # Organic vs inorganic
+    if organic_interaction.get("relationship") == "reclamation":
+        contextual_relationships["organic_vs_inorganic"] = "reclamation"
+    elif organic_interaction.get("relationship") == "harmony":
+        contextual_relationships["organic_vs_inorganic"] = "harmony"
+    elif organic_interaction.get("relationship") == "coexistence":
+        contextual_relationships["organic_vs_inorganic"] = "coexistence"
+    else:
+        contextual_relationships["organic_vs_inorganic"] = "none"
+    
+    if contextual_relationships:
+        understanding["contextual_relationships"] = contextual_relationships
+    
+    return understanding
+
+
 def analyze_color(image_path):
     image = cv2.imread(image_path)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -1511,6 +1777,23 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
             result["derived"]["genre"]["genre"] = genre_info.get("genre")
             result["derived"]["genre"]["subgenre"] = genre_info.get("subgenre")
         
+        # === SCENE UNDERSTANDING SYNTHESIS ===
+        # Synthesize contextual understanding of "what is happening here"
+        # Called after all perception, before semantic anchors
+        # Temporarily store clip_inventory for Scene Understanding access
+        result["_clip_inventory"] = clip_inventory if isinstance(clip_inventory, list) else []
+        try:
+            scene_understanding = synthesize_scene_understanding(result)
+            # Only add understanding if any elements were synthesized (sparse by default)
+            if scene_understanding:
+                result["scene_understanding"] = scene_understanding
+            # Clean up temporary storage
+            result.pop("_clip_inventory", None)
+        except Exception as e:
+            logger.warning(f"Scene understanding synthesis failed (non-fatal): {e}")
+            result.pop("_clip_inventory", None)
+            # Don't add error - understanding is optional
+        
         # === SEMANTIC ANCHORS GENERATION ===
         # Generate semantic anchors from multiple signals (sparse, only high-confidence)
         try:
@@ -1692,6 +1975,9 @@ def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
         
         # Extract semantic anchors (if present)
         semantic_anchors = photo_data.get("semantic_anchors", {})
+        
+        # Extract scene understanding (if present)
+        scene_understanding = photo_data.get("scene_understanding", {})
     else:
         # Legacy format fallback (for backward compatibility)
         technical = photo_data
@@ -1722,6 +2008,9 @@ def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
         
         # Extract semantic anchors (if present) - legacy format may not have them
         semantic_anchors = photo_data.get("semantic_anchors", {})
+        
+        # Extract scene understanding (if present) - legacy format may not have it
+        scene_understanding = photo_data.get("scene_understanding", {})
 
     # Mentor persona modes (preserved exactly)
     modes = {
@@ -1820,6 +2109,97 @@ EMOTIONAL SIGNAL
 ---
 """
     
+    # Add scene understanding section if present (synthesized contextual understanding)
+    scene_understanding_section = ""
+    if scene_understanding:
+        understanding_lines = []
+        
+        # Material condition
+        material = scene_understanding.get("material_condition", {})
+        if material:
+            material_parts = []
+            if "surface_state" in material:
+                material_parts.append(f"Surface: {material['surface_state']}")
+            if "organic_growth" in material and material["organic_growth"] != "none":
+                material_parts.append(f"Organic growth: {material['organic_growth']}")
+            if "growth_types" in material:
+                material_parts.append(f"Growth types: {', '.join(material['growth_types'])}")
+            if "erosion_level" in material:
+                material_parts.append(f"Erosion: {material['erosion_level']}")
+            if material_parts:
+                understanding_lines.append(f"Material Condition: {', '.join(material_parts)}")
+        
+        # Temporal context
+        temporal = scene_understanding.get("temporal_context", {})
+        if temporal:
+            temporal_parts = []
+            if "time_scale" in temporal:
+                temporal_parts.append(f"Time scale: {temporal['time_scale']}")
+            if "pace" in temporal:
+                temporal_parts.append(f"Pace: {temporal['pace']}")
+            if "endurance" in temporal:
+                temporal_parts.append(f"Endurance: {temporal['endurance']}")
+            if temporal_parts:
+                understanding_lines.append(f"Temporal Context: {', '.join(temporal_parts)}")
+        
+        # Organic interaction
+        organic = scene_understanding.get("organic_interaction", {})
+        if organic:
+            organic_parts = []
+            if "relationship" in organic and organic["relationship"] != "none":
+                organic_parts.append(f"Relationship: {organic['relationship']}")
+            if "integration_level" in organic and organic["integration_level"] != "none":
+                organic_parts.append(f"Integration: {organic['integration_level']}")
+            if organic_parts:
+                understanding_lines.append(f"Organic Interaction: {', '.join(organic_parts)}")
+        
+        # Emotional substrate
+        emotional_sub = scene_understanding.get("emotional_substrate", {})
+        if emotional_sub:
+            emotional_parts = []
+            if "temperature" in emotional_sub:
+                emotional_parts.append(f"Temperature: {emotional_sub['temperature']}")
+            if "pace" in emotional_sub:
+                emotional_parts.append(f"Pace: {emotional_sub['pace']}")
+            if "presence" in emotional_sub:
+                emotional_parts.append(f"Presence: {emotional_sub['presence']}")
+            if "quality" in emotional_sub:
+                emotional_parts.append(f"Quality: {emotional_sub['quality']}")
+            if emotional_parts:
+                understanding_lines.append(f"Emotional Substrate: {', '.join(emotional_parts)}")
+            
+            # Corrective signals
+            corrective = emotional_sub.get("corrective_signals", {})
+            if corrective:
+                corrective_lines = []
+                for key, override in corrective.items():
+                    if isinstance(override, dict) and "from" in override and "to" in override:
+                        corrective_lines.append(f"{override['from']} → {override['to']}: {override.get('reason', '')}")
+                if corrective_lines:
+                    understanding_lines.append(f"Corrective Signals: {'; '.join(corrective_lines)}")
+        
+        # Contextual relationships
+        relationships = scene_understanding.get("contextual_relationships", {})
+        if relationships:
+            rel_parts = []
+            if "subject_vs_environment" in relationships:
+                rel_parts.append(f"Subject-Environment: {relationships['subject_vs_environment']}")
+            if "time_vs_subject" in relationships:
+                rel_parts.append(f"Time-Subject: {relationships['time_vs_subject']}")
+            if "human_vs_space" in relationships:
+                rel_parts.append(f"Human-Space: {relationships['human_vs_space']}")
+            if rel_parts:
+                understanding_lines.append(f"Contextual Relationships: {', '.join(rel_parts)}")
+        
+        if understanding_lines:
+            scene_understanding_section = f"""
+SCENE UNDERSTANDING (SYNTHESIZED CONTEXT):
+{chr(10).join(understanding_lines)}
+
+This understanding synthesizes material condition, temporal context, organic interaction, and emotional substrate.
+Use this to ground your critique in what is actually happening in the image, not just what is detected.
+"""
+    
     # Add semantic anchors section if present (high-confidence labels)
     anchors_section = ""
     if semantic_anchors:
@@ -1861,7 +2241,7 @@ Do not invent elements beyond these anchors.
 - Reference technical measurements and visible elements.
 """
     
-    prompt += anchors_section + f"""
+    prompt += scene_understanding_section + anchors_section + f"""
 Your task:
 
 1. Interpret what these choices reveal about the photographer's intent.
