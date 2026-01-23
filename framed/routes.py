@@ -135,17 +135,12 @@ def analyze():
         ui_view = clean_result_for_ui(analysis_result)
         response_payload = dict(analysis_result)
         
-        # Re-generate critique only if the mentor mode is non-default
-        # Note: generate_merged_critique needs to be updated to read from canonical schema
-        if mentor_mode and mentor_mode != "Balanced Mentor":
-            response_payload["critique"] = generate_merged_critique(analysis_result, mentor_mode)
-            # Update _ui with the regenerated critique for presentation layer
-            if ui_view:
-                ui_view["critique"] = response_payload["critique"]
-        else:
-            # Ensure critique exists in response (may be None if OpenAI unavailable)
-            if "critique" not in response_payload:
-                response_payload["critique"] = None
+        # Always generate critique using selected mentor mode
+        # Phase III-A: Evidence-driven critique generation for all mentor modes
+        critique = generate_merged_critique(analysis_result, mentor_mode)
+        response_payload["critique"] = critique
+        if ui_view:
+            ui_view["critique"] = critique
         
         if ui_view:
             response_payload["_ui"] = ui_view
