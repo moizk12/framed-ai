@@ -397,65 +397,98 @@ def get_clip_description(image_path):
 
 def get_clip_inventory(image_path):
     """
-    Generate a descriptive inventory of visible elements using CLIP model.
+    Generate enhanced multi-prompt inventory of visible elements using CLIP model.
     
-    Uses inventory-style prompt to produce nouns and attributes, not storytelling.
-    This is used for semantic anchor generation (multi-signal consensus).
+    Uses three targeted inventories:
+    A. Structural inventory (structures and architectural elements)
+    B. Material & condition inventory (aging, weathering, vegetation, erosion, patina, wear, growth)
+    C. Atmosphere & environment inventory (light, sky, vegetation, time of day)
+    
+    All three are merged and deduplicated. This enables Scene Understanding to detect
+    material condition, organic growth, and temporal signals that single-prompt CLIP misses.
     
     Returns:
-        List of strings (nouns/attributes describing visible elements)
+        List of strings (nouns/attributes describing visible elements, deduplicated)
     """
     # Load image
     image = Image.open(image_path).convert("RGB")
     
-    # Inventory-style candidate descriptions (nouns, attributes, no inference)
-    inventory_candidates = [
+    # CLIP process - lazy load models
+    clip_model, clip_processor, device = get_clip_model()
+    
+    # === A. STRUCTURAL INVENTORY ===
+    structural_candidates = [
         # Architecture types
         "religious architecture", "mosque", "cathedral", "temple", "church",
         "building", "structure", "tower", "dome", "minaret", "spire",
         "architectural facade", "interior space", "staircase", "archway",
+        "wall", "door", "window", "roof", "column", "arch", "balcony",
+        "fence", "gate", "bridge", "pathway",
+        "monument", "statue", "sculpture", "ornamentation"
+    ]
+    
+    # === B. MATERIAL & CONDITION INVENTORY (NEW - CRITICAL) ===
+    material_condition_candidates = [
+        # Aging and weathering
+        "weathered stone", "aged surface", "eroded facade", "patina", "weathering",
+        "worn surface", "aged architecture", "historic building", "ancient structure",
+        "timeworn", "weathered", "eroded", "aged", "patinated",
         
+        # Vegetation and organic growth
+        "ivy", "moss", "vegetation", "greenery", "plant growth", "overgrown",
+        "nature reclaiming", "organic growth", "vegetation on surface",
+        "ivy covered", "moss covered", "green growth", "climbing plants",
+        
+        # Surface qualities
+        "rough texture", "smooth surface", "textured", "degraded surface",
+        "cracked", "chipped", "faded", "discolored", "stained",
+        
+        # Maintenance state
+        "well maintained", "neglected", "abandoned", "in use", "restored",
+        "pristine", "lived in", "worn", "deteriorated"
+    ]
+    
+    # === C. ATMOSPHERE & ENVIRONMENT INVENTORY ===
+    atmosphere_candidates = [
         # Time of day / lighting conditions
         "daytime", "night", "dawn", "dusk", "sunset", "sunrise",
         "artificial lighting", "natural light", "neon lights", "street lights",
+        "overcast sky", "clear sky", "cloudy", "diffused light",
         
         # Atmospheric conditions
-        "fog", "mist", "haze", "rain", "snow", "clear sky", "cloudy",
-        "smoke", "dust", "atmospheric",
-        
-        # Structural elements
-        "wall", "door", "window", "roof", "column", "arch", "balcony",
-        "fence", "gate", "bridge", "pathway",
-        
-        # Human presence
-        "person", "people", "crowd", "human figure", "silhouette",
-        "no people", "empty", "unoccupied",
-        
-        # Scale indicators
-        "large structure", "monumental", "tall building", "small building",
-        "intimate space", "vast landscape", "close-up", "wide view",
+        "fog", "mist", "haze", "rain", "snow", "smoke", "dust", "atmospheric",
         
         # Natural elements
         "tree", "palm tree", "grass", "water", "lake", "mountain", "sky",
-        "cloud", "sun", "moon", "star",
+        "cloud", "sun", "moon", "star", "foliage", "greenery",
         
-        # Urban elements
-        "street", "road", "vehicle", "car", "sign", "billboard", "neon sign"
+        # Environmental qualities
+        "stillness", "quiet", "serene", "peaceful", "calm", "tranquil",
+        "empty", "unoccupied", "solitary", "isolated"
     ]
     
-    # CLIP process - lazy load models
-    clip_model, clip_processor, device = get_clip_model()
-    inputs = clip_processor(text=inventory_candidates, images=image, return_tensors="pt", padding=True).to(device)
+    # Process all three inventories
+    all_candidates = structural_candidates + material_condition_candidates + atmosphere_candidates
+    inputs = clip_processor(text=all_candidates, images=image, return_tensors="pt", padding=True).to(device)
     outputs = clip_model(**inputs)
     logits_per_image = outputs.logits_per_image
     probs = logits_per_image.softmax(dim=1)
     
-    # Get top 10 most relevant inventory items (not just the best one)
-    top_k = 10
+    # Get top 15 most relevant items (increased from 10 to capture more material condition signals)
+    top_k = 15
     top_indices = probs.topk(top_k).indices[0].cpu().tolist()
-    inventory_items = [inventory_candidates[idx] for idx in top_indices if probs[0][idx].item() > 0.05]  # Threshold: 5% confidence
+    inventory_items = [all_candidates[idx] for idx in top_indices if probs[0][idx].item() > 0.05]  # Threshold: 5% confidence
     
-    return inventory_items
+    # Deduplicate (keep order, preserve first occurrence)
+    seen = set()
+    deduplicated = []
+    for item in inventory_items:
+        item_lower = item.lower()
+        if item_lower not in seen:
+            seen.add(item_lower)
+            deduplicated.append(item)
+    
+    return deduplicated
 
 
 def generate_semantic_anchors(clip_inventory, clip_tags, clip_caption, yolo_objects, composition_data):
@@ -639,7 +672,13 @@ def synthesize_scene_understanding(analysis_result):
     material_condition = {}
     
     # Surface state: infer from sharpness, contrast, and organic growth signals
-    organic_growth_terms = ["ivy", "moss", "vegetation", "growth", "overgrown", "reclaimed", "patina", "weathering", "eroded", "aged"]
+    # Enhanced with material condition inventory terms
+    organic_growth_terms = [
+        "ivy", "moss", "vegetation", "growth", "overgrown", "reclaimed", "patina", "weathering", 
+        "eroded", "aged", "weathered stone", "aged surface", "eroded facade", "patinated",
+        "ivy covered", "moss covered", "green growth", "climbing plants", "plant growth",
+        "nature reclaiming", "organic growth", "vegetation on surface", "greenery"
+    ]
     organic_signals = sum(1 for term in organic_growth_terms if term in all_text)
     
     if organic_signals >= 2:
@@ -659,11 +698,23 @@ def synthesize_scene_understanding(analysis_result):
     elif sharpness and sharpness < 30:
         material_condition["surface_state"] = "degraded"
     
-    # Age indicators
-    age_terms = ["old", "aged", "ancient", "historical", "vintage", "weathered", "patina", "eroded", "time", "endurance"]
+    # Age indicators (enhanced with material condition inventory)
+    age_terms = [
+        "old", "aged", "ancient", "historical", "vintage", "weathered", "patina", "eroded", 
+        "time", "endurance", "weathered stone", "aged surface", "eroded facade", "patinated",
+        "timeworn", "historic building", "ancient structure", "aged architecture"
+    ]
     age_signals = [term for term in age_terms if term in all_text]
     if age_signals:
-        material_condition["age_indicators"] = age_signals[:4]
+        # Deduplicate and prioritize specific terms
+        unique_signals = []
+        seen = set()
+        for term in age_signals:
+            term_lower = term.lower()
+            if term_lower not in seen:
+                seen.add(term_lower)
+                unique_signals.append(term)
+        material_condition["age_indicators"] = unique_signals[:4]
     
     # Maintenance state
     if "abandoned" in all_text or "neglected" in all_text:
@@ -2059,6 +2110,7 @@ You push the photographer to see beyond the single image → towards legacy and 
     mode_instruction = modes.get(visionary_mode, modes["Balanced Mentor"])
 
     # Build evidence-driven prompt (authoritative template)
+    # NEW ORDER: Scene Understanding (AUTHORITATIVE) → Corrective Signals (MANDATORY) → Anchors → Observations → Task
     prompt = f"""
 You are FRAMED — the Legacy Critic and Visionary Artistic Mentor.
 
@@ -2079,36 +2131,13 @@ You speak with seriousness, restraint, and depth.
 
 ---
 
-You are given VERIFIED OBSERVATIONS about a photograph.
-These are not opinions. They are measured facts.
-
-TECHNICAL STATE
-- Brightness: {brightness if brightness is not None else "Not measured"}
-- Contrast: {contrast if contrast is not None else "Not measured"}
-- Sharpness: {sharpness if sharpness is not None else "Not measured"}
-- Tonal Range: {tonal_range if tonal_range else "Not measured"}
-
-COMPOSITION
-- Symmetry: {symmetry if symmetry else "Not measured"}
-- Subject Position: {subject_position if subject_position else "Not measured"}
-- Subject Size: {subject_size if subject_size else "Not measured"}
-- Framing Style: {framing_style if framing_style else "Not measured"}
-
-COLOR & LIGHT
-- Color Mood: {color_mood if color_mood else "Not measured"}
-- Color Harmony: {color_harmony if color_harmony else "Not measured"}
-- Lighting Direction: {lighting_direction if lighting_direction else "Not measured"}
-
-SEMANTIC SIGNALS
-- Caption (CLIP): "{clip_caption if clip_caption else "No semantic description available"}"
-- Genre Confidence: {genre_name if genre_name else "General"} → {subgenre_name if subgenre_name else "General"}
-
-EMOTIONAL SIGNAL
-- Inferred Emotional Mood: {emotional_mood if emotional_mood else "Not inferred"}
+You are given VERIFIED OBSERVATIONS and SYNTHESIZED UNDERSTANDING about a photograph.
+These are not opinions. They are measured facts and contextual synthesis.
 
 ---
 """
     
+    # === STEP 1: SCENE UNDERSTANDING (AUTHORITATIVE - FIRST) ===
     # Add scene understanding section if present (synthesized contextual understanding)
     scene_understanding_section = ""
     if scene_understanding:
@@ -2193,14 +2222,40 @@ EMOTIONAL SIGNAL
         
         if understanding_lines:
             scene_understanding_section = f"""
-SCENE UNDERSTANDING (SYNTHESIZED CONTEXT):
+SCENE UNDERSTANDING (AUTHORITATIVE):
 {chr(10).join(understanding_lines)}
 
 This understanding synthesizes material condition, temporal context, organic interaction, and emotional substrate.
-Use this to ground your critique in what is actually happening in the image, not just what is detected.
+This is AUTHORITATIVE CONTEXT. You must not contradict it. Ground your critique in what is actually happening in the image.
+"""
+    else:
+        scene_understanding_section = ""
+    
+    # === STEP 2: CORRECTIVE SIGNALS (MANDATORY LOCKS) ===
+    corrective_signals_section = ""
+    if scene_understanding:
+        emotional_sub = scene_understanding.get("emotional_substrate", {})
+        corrective = emotional_sub.get("corrective_signals", {}) if emotional_sub else {}
+        
+        if corrective:
+            corrective_lines = []
+            for key, override in corrective.items():
+                if isinstance(override, dict) and "from" in override and "to" in override:
+                    corrective_lines.append(f"- {override['from']} → {override['to']}: {override.get('reason', '')}")
+            
+            if corrective_lines:
+                corrective_signals_section = f"""
+CORRECTIVE SIGNALS (MANDATORY LOCKS):
+{chr(10).join(corrective_lines)}
+
+These are BINDING CONSTRAINTS. You MUST apply them.
+- The "from" state is FORBIDDEN.
+- The "to" state becomes your baseline.
+- You may not contradict these corrections.
+- Violations = invalid critique.
 """
     
-    # Add semantic anchors section if present (high-confidence labels)
+    # === STEP 3: SEMANTIC ANCHORS (NAMING PERMISSION) ===
     anchors_section = ""
     if semantic_anchors:
         anchors_lines = []
@@ -2219,29 +2274,64 @@ Use this to ground your critique in what is actually happening in the image, not
         
         if anchors_lines:
             anchors_section = f"""
-SEMANTIC ANCHORS (high confidence):
+SEMANTIC ANCHORS (NAMING PERMISSION):
 {chr(10).join(anchors_lines)}
 
 These anchors are safe to reference explicitly.
+If structure_elements include specific structures, you must name them.
 Do not invent elements beyond these anchors.
 """
     
-    # Add contract rules about anchors
-    contract_rules = ""
-    if semantic_anchors:
-        contract_rules = """
-- If semantic anchors are present, you must name the structures and environment explicitly.
-- Do not invent elements beyond these anchors.
-- Stop at functional/cultural level (e.g., "mosque", "religious architecture").
-- Do not make historical claims, architectural style claims, or location claims.
-"""
-    else:
-        contract_rules = """
-- Do not speak in generalities without grounding.
-- Reference technical measurements and visible elements.
+    # === STEP 4: VERIFIED OBSERVATIONS (TECHNICAL) ===
+    observations_section = f"""
+VERIFIED OBSERVATIONS (TECHNICAL):
+TECHNICAL STATE
+- Brightness: {brightness if brightness is not None else "Not measured"}
+- Contrast: {contrast if contrast is not None else "Not measured"}
+- Sharpness: {sharpness if sharpness is not None else "Not measured"}
+- Tonal Range: {tonal_range if tonal_range else "Not measured"}
+
+COMPOSITION
+- Symmetry: {symmetry if symmetry else "Not measured"}
+- Subject Position: {subject_position if subject_position else "Not measured"}
+- Subject Size: {subject_size if subject_size else "Not measured"}
+- Framing Style: {framing_style if framing_style else "Not measured"}
+
+COLOR & LIGHT
+- Color Mood: {color_mood if color_mood else "Not measured"}
+- Color Harmony: {color_harmony if color_harmony else "Not measured"}
+- Lighting Direction: {lighting_direction if lighting_direction else "Not measured"}
+
+SEMANTIC SIGNALS
+- Caption (CLIP): "{clip_caption if clip_caption else "No semantic description available"}"
+- Genre Confidence: {genre_name if genre_name else "General"} → {subgenre_name if subgenre_name else "General"}
+
+EMOTIONAL SIGNAL
+- Inferred Emotional Mood: {emotional_mood if emotional_mood else "Not inferred"}
+
+---
 """
     
-    prompt += scene_understanding_section + anchors_section + f"""
+    # === STEP 5: HARD GOVERNANCE RULES ===
+    governance_rules = """
+RULES (NON-NEGOTIABLE):
+- You must not contradict Scene Understanding.
+- You must apply all Corrective Signals (they are mandatory locks, not suggestions).
+- If organic growth or weathering is present in Scene Understanding, you must reference it explicitly.
+- If human_presence is 'none detected' in Semantic Anchors, you must not imply or invent human subjects.
+- Do not describe the image as cold, sterile, or clinical if Scene Understanding indicates warmth or organic integration.
+- Every interpretive claim must be grounded in Scene Understanding, Anchors, or Measured Evidence.
+- If semantic anchors are present, you must name the structures and environment explicitly.
+- Stop at functional/cultural level (e.g., "mosque", "religious architecture").
+- Do not make historical claims, architectural style claims, or location claims.
+- Do NOT describe the image literally.
+- Do NOT list tips.
+- Do NOT sound instructional.
+- Do NOT flatter.
+"""
+    
+    # Assemble prompt in correct order: Scene Understanding → Corrective Signals → Anchors → Observations → Task
+    prompt += scene_understanding_section + corrective_signals_section + anchors_section + observations_section + f"""
 Your task:
 
 1. Interpret what these choices reveal about the photographer's intent.
@@ -2250,13 +2340,7 @@ Your task:
 4. Surface a tension, contradiction, or unanswered question.
 5. End with a provocation that suggests evolution — not instruction.
 
-Rules:
-- Do NOT describe the image literally.
-- Do NOT list tips.
-- Do NOT sound instructional.
-- Do NOT flatter.
-{contract_rules}
-- Every interpretive claim must reference a visible element, anchor, or measured value.
+{governance_rules}
 
 Your critique should read like a quiet but demanding conversation
 between a mentor and an artist.
