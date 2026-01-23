@@ -1423,6 +1423,13 @@ def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
     
     The prompt receives ONLY observed facts. Interpretation happens inside the prompt voice.
     """
+    # Ensure logger is available (safeguard for edge cases)
+    try:
+        _logger = logger
+    except NameError:
+        import logging
+        _logger = logging.getLogger(__name__)
+    
     # Check if this is canonical schema or legacy format
     is_canonical = "perception" in photo_data and "metadata" in photo_data
     
@@ -1610,7 +1617,7 @@ Begin.
         # Fix #2: Add logging you cannot miss
         openai_client = get_openai_client()
         if openai_client is None:
-            logger.warning("PHASE III-A: OpenAI unavailable — using fallback")
+            _logger.warning("PHASE III-A: OpenAI unavailable — using fallback")
             # Graceful fallback if OpenAI unavailable
             fallback_parts = []
             if brightness is not None:
@@ -1622,15 +1629,15 @@ Begin.
             fallback = ". ".join(fallback_parts) if fallback_parts else "Analysis complete"
             return f"{fallback}. Consider a counter-move in distance, light, or rhythm to push your voice."
         
-        logger.info("PHASE III-A: Sending critique prompt to OpenAI")
+        _logger.info("PHASE III-A: Sending critique prompt to OpenAI")
         response = openai_client.chat.completions.create(
             model="gpt-4-turbo",
             messages=[{"role": "user", "content": prompt}]
         )
-        logger.info("PHASE III-A: Received critique response from OpenAI")
+        _logger.info("PHASE III-A: Received critique response from OpenAI")
         return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.error(f"PHASE III-A: Critique generation failed: {e}", exc_info=True)
+        _logger.error(f"PHASE III-A: Critique generation failed: {e}", exc_info=True)
         return f"Critique generation unavailable. ({str(e)})"
 
 
