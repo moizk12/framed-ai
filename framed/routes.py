@@ -21,34 +21,62 @@ def allowed_file(filename: str) -> bool:
 
 def clean_result_for_ui(result: dict) -> dict:
     """
-    STEP 1 — Presentation-only sanitizer.
-
-    Builds a gentle, UI-focused view of the analysis result without
-    mutating or removing any data from the core analysis output.
+    Phase II: Reads from canonical schema structure.
+    
+    Presentation-only sanitizer that builds a gentle, UI-focused view
+    from the canonical schema without mutating the core analysis output.
 
     - Never modifies `result` in-place
     - Omits internal error/debug structures
-    - Collapses nested fields into human-readable slices
+    - Reads from canonical schema structure
     """
     if not isinstance(result, dict):
         return {}
 
-    clip = result.get("clip_description", {}) or {}
-    summary = result.get("summary", {}) or {}
+    # Check if this is canonical schema or legacy format
+    is_canonical = "perception" in result and "metadata" in result
+    
+    if is_canonical:
+        # Read from canonical schema
+        perception = result.get("perception", {})
+        derived = result.get("derived", {})
+        
+        semantics = perception.get("semantics", {})
+        color = perception.get("color", {})
+        lighting = perception.get("lighting", {})
+        genre = derived.get("genre", {})
+        
+        ui_view = {
+            "caption": semantics.get("caption") if semantics.get("available") else None,
+            "tags": semantics.get("tags", []) if semantics.get("available") else [],
+            "genre": genre.get("genre"),
+            "subgenre": genre.get("subgenre"),
+            "emotional_mood": derived.get("emotional_mood"),
+            "poetic_mood": None,  # Not in canonical schema yet
+            "color_mood": color.get("mood") if color.get("available") else None,
+            "lighting_direction": lighting.get("direction") if lighting.get("available") else None,
+            "subject": None,  # Not in canonical schema yet
+            "critique": result.get("critique"),  # Still added by downstream functions
+            "remix_prompt": result.get("remix_prompt"),  # Still added by downstream functions
+        }
+    else:
+        # Legacy format fallback (for backward compatibility during migration)
+        clip = result.get("clip_description", {}) or {}
+        summary = result.get("summary", {}) or {}
 
-    ui_view = {
-        "caption": clip.get("caption"),
-        "tags": clip.get("tags"),
-        "genre": result.get("genre") or summary.get("genre"),
-        "subgenre": result.get("subgenre") or summary.get("subgenre"),
-        "emotional_mood": result.get("emotional_mood") or summary.get("emotional_mood"),
-        "poetic_mood": summary.get("poetic_mood"),
-        "color_mood": result.get("color_mood"),
-        "lighting_direction": result.get("lighting_direction"),
-        "subject": summary.get("subject"),
-        "critique": result.get("critique"),
-        "remix_prompt": result.get("remix_prompt"),
-    }
+        ui_view = {
+            "caption": clip.get("caption"),
+            "tags": clip.get("tags"),
+            "genre": result.get("genre") or summary.get("genre"),
+            "subgenre": result.get("subgenre") or summary.get("subgenre"),
+            "emotional_mood": result.get("emotional_mood") or summary.get("emotional_mood"),
+            "poetic_mood": summary.get("poetic_mood"),
+            "color_mood": result.get("color_mood"),
+            "lighting_direction": result.get("lighting_direction"),
+            "subject": summary.get("subject"),
+            "critique": result.get("critique"),
+            "remix_prompt": result.get("remix_prompt"),
+        }
 
     # Softly drop internal error metadata from the presentation layer
     if "errors" in ui_view:
@@ -98,23 +126,31 @@ def analyze():
 
     try:
         file.save(image_path)
-        analysis_result = run_full_analysis(image_path)
+        
+        # Generate photo_id and pass filename for canonical schema
+        photo_id = str(uuid.uuid4())
+        analysis_result = run_full_analysis(image_path, photo_id=photo_id, filename=safe_name)
 
         # Build a presentation-friendly view without mutating the core result
         ui_view = clean_result_for_ui(analysis_result)
         response_payload = dict(analysis_result)
         
         # Re-generate critique only if the mentor mode is non-default
+        # Note: generate_merged_critique needs to be updated to read from canonical schema
         if mentor_mode and mentor_mode != "Balanced Mentor":
             response_payload["critique"] = generate_merged_critique(analysis_result, mentor_mode)
             # Update _ui with the regenerated critique for presentation layer
             if ui_view:
                 ui_view["critique"] = response_payload["critique"]
+        else:
+            # Ensure critique exists in response (may be None if OpenAI unavailable)
+            if "critique" not in response_payload:
+                response_payload["critique"] = None
         
         if ui_view:
             response_payload["_ui"] = ui_view
         
-        update_echo_memory(analysis_result)  # keep the last 10
+        # Note: update_echo_memory is now called inside run_full_analysis
         return jsonify(response_payload)
     except Exception as e:
         current_app.logger.exception("Analysis failed")

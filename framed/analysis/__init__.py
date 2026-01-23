@@ -16,6 +16,11 @@ from .vision import (
     generate_remix_prompt,
     ensure_directories
 )
+from .schema import (
+    create_empty_analysis_result,
+    validate_schema,
+    normalize_to_schema
+)
 
 __all__ = [
     'analyze_image',

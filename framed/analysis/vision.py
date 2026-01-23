@@ -1,9 +1,12 @@
 import os, uuid, json
 import logging
+import hashlib
+from typing import Dict, Any, Optional
 import cv2
 import numpy as np
 from PIL import Image
 from openai import OpenAI
+from .schema import create_empty_analysis_result, normalize_to_schema, validate_schema
 
 # Configure logging for production
 logger = logging.getLogger(__name__)
@@ -22,6 +25,7 @@ BASE_DATA_DIR = os.getenv("FRAMED_DATA_DIR", "/tmp/framed")
 MODEL_DIR = os.path.join(BASE_DATA_DIR, "models")
 UPLOAD_DIR = os.path.join(BASE_DATA_DIR, "uploads")
 CACHE_DIR = os.path.join(BASE_DATA_DIR, "cache")
+ANALYSIS_CACHE_DIR = os.path.join(BASE_DATA_DIR, "analysis_cache")
 
 # Legacy compatibility (for backward compatibility)
 DATA_ROOT = BASE_DATA_DIR
@@ -48,6 +52,7 @@ def ensure_directories():
         MODEL_DIR,
         UPLOAD_DIR,
         CACHE_DIR,
+        ANALYSIS_CACHE_DIR,
         RESULTS_FOLDER,
         TMP_FOLDER,
         YOLO_CONFIG_DIR
@@ -417,23 +422,100 @@ def predict_nima_score(model, img_path):
         return {"mean_score": None, "distribution": {}}
     
 
+# ========================================================
+# FILE HASH CACHING (Canonical Schema Phase II)
+# ========================================================
+
+def compute_file_hash(file_path: str) -> str:
+    """
+    Computes SHA-256 hash of a file for caching purposes.
+    Returns hex digest string.
+    """
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except Exception as e:
+        logger.error(f"Failed to compute file hash: {e}", exc_info=True)
+        return ""
+
+
+def get_cached_analysis(file_hash: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieves cached analysis result for a given file hash.
+    Returns None if cache miss or error.
+    """
+    if not file_hash:
+        return None
+    
+    cache_path = os.path.join(ANALYSIS_CACHE_DIR, f"{file_hash}.json")
+    
+    if not os.path.exists(cache_path):
+        return None
+    
+    try:
+        with open(cache_path, 'r') as f:
+            cached_result = json.load(f)
+        
+        # Validate schema before returning
+        if validate_schema(cached_result):
+            logger.info(f"Cache hit for hash: {file_hash[:8]}...")
+            return cached_result
+        else:
+            logger.warning(f"Cached result for {file_hash[:8]}... failed schema validation, ignoring")
+            return None
+    except Exception as e:
+        logger.error(f"Failed to read cache for {file_hash[:8]}...: {e}", exc_info=True)
+        return None
+
+
+def save_cached_analysis(file_hash: str, result: Dict[str, Any]) -> bool:
+    """
+    Saves analysis result to cache using file hash as key.
+    Returns True on success, False on error.
+    """
+    if not file_hash:
+        return False
+    
+    cache_path = os.path.join(ANALYSIS_CACHE_DIR, f"{file_hash}.json")
+    
+    try:
+        ensure_directories()
+        with open(cache_path, 'w') as f:
+            json.dump(result, f, indent=2, default=str)
+        logger.info(f"Cached analysis for hash: {file_hash[:8]}...")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save cache for {file_hash[:8]}...: {e}", exc_info=True)
+        return False
+
+
 # framed/analysis/vision.py
 
-def run_full_analysis(image_path):
+def run_full_analysis(image_path, photo_id: str = "", filename: str = ""):
     """
     Orchestrates the full analysis pipeline.
+    Phase II: Returns canonical schema result.
     STEP 4.6: Graceful degradation - partial results returned even if some steps fail.
     """
     try:
         # Ensure directories exist before starting analysis
         ensure_directories()
         
-        # Use the comprehensive analyze_image function
-        # analyze_image() wraps all steps with safe_analyze() and tracks errors
-        analysis_result = analyze_image(image_path)
+        # Use the comprehensive analyze_image function (now returns canonical schema)
+        analysis_result = analyze_image(image_path, photo_id=photo_id, filename=filename)
+        
+        # Validate schema before proceeding
+        if not validate_schema(analysis_result):
+            logger.error("Analysis result failed schema validation")
+            analysis_result["errors"]["schema_validation"] = "Result does not conform to canonical schema"
         
         # Update echo memory only if we have valid results (even with partial errors)
-        if analysis_result and "error" not in analysis_result:
+        # Check for critical errors, not just "error" key
+        critical_errors = analysis_result.get("errors", {}).get("critical") or analysis_result.get("errors", {}).get("image_load")
+        if not critical_errors:
             # Update echo memory with the new analysis
             # Note: analysis_result may contain errors dict for partial failures
             update_echo_memory(analysis_result)
@@ -441,10 +523,10 @@ def run_full_analysis(image_path):
         return analysis_result
     except Exception as e:
         logger.error(f"Fatal error in full analysis pipeline: {e}", exc_info=True)
-        return {
-            "error": str(e),
-            "errors": {"pipeline": str(e)}
-        }
+        # Return canonical schema with error
+        result = create_empty_analysis_result()
+        result["errors"]["pipeline"] = str(e)
+        return result
 
 
 def analyze_lines_and_symmetry(image_path):
@@ -1015,32 +1097,76 @@ def detect_genre(photo_data):
 
 
 
-def analyze_image(path):
+def analyze_image(path, photo_id: str = "", filename: str = ""):
+    """
+    Analyzes an image and returns results in the canonical schema format.
+    
+    Phase II: Canonical Schema - This function now returns a deterministic,
+    structured result conforming to the schema defined in schema.py.
+    
+    Args:
+        path: Path to the image file
+        photo_id: Optional unique identifier for the photo
+        filename: Optional original filename
+        
+    Returns:
+        Dict conforming to canonical AnalysisResult schema
+    """
     ensure_directories()
-    print("Analyzing image:", path)
+    logger.info(f"Analyzing image: {path}")
+    
+    # Compute file hash for caching
+    file_hash = compute_file_hash(path)
+    if not photo_id:
+        photo_id = file_hash[:16] if file_hash else str(uuid.uuid4())
+    
+    # Check cache first
+    cached_result = get_cached_analysis(file_hash)
+    if cached_result:
+        # Update metadata with current request info
+        cached_result["metadata"]["photo_id"] = photo_id
+        cached_result["metadata"]["filename"] = filename
+        return cached_result
+    
+    # Initialize canonical schema
+    result = create_empty_analysis_result()
+    
+    # Set metadata
+    from datetime import datetime
+    result["metadata"] = {
+        "photo_id": photo_id,
+        "filename": filename or os.path.basename(path),
+        "file_hash": file_hash,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
+    
     try:
         # Load Image + Convert to Gray
         img = cv2.imread(path)
         if img is None:
-            return {"error": "Could not load image"}
+            result["errors"]["image_load"] = "Could not load image"
+            return result
             
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         # === TECHNICAL ANALYSIS ===
-        brightness = round(np.mean(gray), 2)
-        contrast = round(gray.std(), 2)
-        sharpness = round(cv2.Laplacian(gray, cv2.CV_64F).var(), 2)
+        try:
+            brightness = round(np.mean(gray), 2)
+            contrast = round(gray.std(), 2)
+            sharpness = round(cv2.Laplacian(gray, cv2.CV_64F).var(), 2)
+            
+            result["perception"]["technical"]["available"] = True
+            result["perception"]["technical"]["brightness"] = brightness
+            result["perception"]["technical"]["contrast"] = contrast
+            result["perception"]["technical"]["sharpness"] = sharpness
+        except Exception as e:
+            logger.warning(f"Technical analysis failed: {e}")
+            result["errors"]["technical"] = str(e)
 
         # === AI + SEMANTIC ANALYSIS ===
-        # Initialize error tracking dictionary
-        errors = {}
-        
-        # Wrap each analysis in try-except to prevent one failure from breaking the entire analysis
+        # Wrap each analysis to prevent one failure from breaking the entire analysis
         def safe_analyze(func, *args, error_key=None, default=None, **kwargs):
-            """
-            Safely run an analysis function, returning default on error.
-            Tracks errors in the errors dictionary for production monitoring.
-            """
+            """Safely run an analysis function, returning default on error."""
             try:
                 return func(*args, **kwargs)
             except Exception as e:
@@ -1048,102 +1174,147 @@ def analyze_image(path):
                 func_name = func.__name__ if hasattr(func, '__name__') else str(func)
                 logger.warning(f"Analysis step '{func_name}' failed: {error_msg}")
                 if error_key:
-                    errors[error_key] = error_msg
+                    result["errors"][error_key] = error_msg
                 return default if default is not None else {}
         
-        # Each analysis step is wrapped with error tracking
-        # One failing model does not block others - graceful degradation
-        clip_data = safe_analyze(get_clip_description, path, error_key="clip", default={"caption": "Analysis unavailable", "tags": [], "genre_hint": "General"})
+        # CLIP semantic analysis
+        clip_data = safe_analyze(get_clip_description, path, error_key="clip", 
+                                 default={"caption": None, "tags": [], "genre_hint": None})
+        if clip_data.get("caption"):
+            result["perception"]["semantics"]["available"] = True
+            result["perception"]["semantics"]["caption"] = clip_data.get("caption")
+            result["perception"]["semantics"]["tags"] = clip_data.get("tags", [])
+            result["perception"]["semantics"]["genre_hint"] = clip_data.get("genre_hint")
+            result["confidence"]["clip"] = True
         
-        # NIMA - optional, failure doesn't block other analysis
+        # NIMA aesthetic analysis
         nima_model = None
         try:
-            nima_model = get_nima_model()  # Lazy load
+            nima_model = get_nima_model()
         except Exception as e:
             logger.warning(f"NIMA model load failed (non-fatal): {e}")
-            errors["nima_load"] = str(e)
-        nima_result = safe_analyze(predict_nima_score, nima_model, path, error_key="nima", default={"mean_score": None, "distribution": {}})
+            result["errors"]["nima_load"] = str(e)
         
-        # Color analysis - lightweight, rarely fails
-        color_analysis = safe_analyze(analyze_color, path, error_key="color", default={"palette": ["#000000"], "mood": "neutral"})
-        color_harmony = safe_analyze(analyze_color_harmony, path, error_key="color_harmony", default={"dominant_color": "#000000", "harmony": "Unknown"})
+        nima_result = safe_analyze(predict_nima_score, nima_model, path, error_key="nima",
+                                  default={"mean_score": None, "distribution": {}})
+        if nima_result.get("mean_score") is not None:
+            result["perception"]["aesthetics"]["available"] = True
+            result["perception"]["aesthetics"]["mean_score"] = nima_result.get("mean_score")
+            result["perception"]["aesthetics"]["distribution"] = nima_result.get("distribution", {})
+            result["confidence"]["nima"] = True
         
-        # YOLO-based analysis - failure doesn't block color/CLIP/NIMA
-        object_data = safe_analyze(detect_objects_and_framing, path, error_key="objects", default={"objects": ["Unknown"], "object_narrative": "Analysis unavailable", "subject_position": "Unknown", "subject_size": "Unknown", "framing_description": "Unknown", "spatial_interpretation": "Unknown"})
-        background_clutter = safe_analyze(analyze_background_clutter, path, error_key="clutter", default={"num_objects": 0, "clutter_level": "Unknown", "impact": "Unknown", "narrative": "Unknown"})
+        # Color analysis
+        color_analysis = safe_analyze(analyze_color, path, error_key="color",
+                                     default={"palette": [], "mood": None})
+        if color_analysis.get("palette"):
+            result["perception"]["color"]["available"] = True
+            result["perception"]["color"]["palette"] = color_analysis.get("palette", [])
+            result["perception"]["color"]["mood"] = color_analysis.get("mood")
         
-        # OpenCV-based analysis - lightweight
-        lines_symmetry = safe_analyze(analyze_lines_and_symmetry, path, error_key="lines_symmetry", default={"line_pattern": "Unknown", "line_style": "Unknown", "symmetry": "Unknown"})
-        lighting_direction = safe_analyze(analyze_lighting_direction, path, error_key="lighting", default={"direction": "Unknown"})
-        tonal_range = safe_analyze(analyze_tonal_range, path, error_key="tonal_range", default={"tonal_range": "Unknown"})
-        subject_emotion = safe_analyze(analyze_subject_emotion, path, error_key="emotion", default={"subject_type": "Unknown", "emotion": "Unknown"})
+        color_harmony = safe_analyze(analyze_color_harmony, path, error_key="color_harmony",
+                                     default={"dominant_color": None, "harmony": None})
+        if color_harmony.get("dominant_color"):
+            result["perception"]["color"]["harmony"]["dominant_color"] = color_harmony.get("dominant_color")
+            result["perception"]["color"]["harmony"]["harmony_type"] = color_harmony.get("harmony")
         
-        # === BUILD RESULT ===
-        result = {
-            # Technical
-            "brightness": brightness,
-            "contrast": contrast,
-            "sharpness": sharpness,
-
-            # AI Semantic
-            "clip_description": clip_data,
-            "nima": nima_result,
-            "color_palette": color_analysis["palette"],
-            "color_mood": color_analysis["mood"],
-            "color_harmony": color_harmony,
-            "background_clutter": background_clutter,
-
-            # Lines/Symmetry
-            "line_pattern": lines_symmetry.get("line_pattern", "undefined"),
-            "line_style": lines_symmetry.get("line_style", "unknown"),
-            "symmetry": lines_symmetry.get("symmetry", "unknown"),
-
-            # Light/Tone
-            "lighting_direction": lighting_direction["direction"],
-            "tonal_range": tonal_range["tonal_range"],
-
-            # Subject & objects
-            "objects": object_data["objects"],
-            "object_narrative": object_data["object_narrative"],
-            "subject_framing": {
-                "position": object_data["subject_position"],
-                "size": object_data["subject_size"],
-                "style": object_data["framing_description"],
-                "interpretation": object_data["spatial_interpretation"]
-            },
-
-            # Subject emotion
-            "subject_emotion": subject_emotion,
-            "subject_type": subject_emotion.get("subject_type", "unknown")
-        }
-
+        # YOLO object detection
+        object_data = safe_analyze(detect_objects_and_framing, path, error_key="objects",
+                                   default={"objects": [], "object_narrative": None, 
+                                           "subject_position": None, "subject_size": None,
+                                           "framing_description": None, "spatial_interpretation": None})
+        if object_data.get("objects"):
+            result["perception"]["composition"]["available"] = True
+            result["perception"]["composition"]["subject_framing"] = {
+                "position": object_data.get("subject_position"),
+                "size": object_data.get("subject_size"),
+                "style": object_data.get("framing_description"),
+                "interpretation": object_data.get("spatial_interpretation")
+            }
+            result["confidence"]["yolo"] = True
+        
+        # Lines and symmetry
+        lines_symmetry = safe_analyze(analyze_lines_and_symmetry, path, error_key="lines_symmetry",
+                                     default={"line_pattern": None, "line_style": None, "symmetry": None})
+        if lines_symmetry.get("line_pattern"):
+            result["perception"]["composition"]["line_pattern"] = lines_symmetry.get("line_pattern")
+            result["perception"]["composition"]["line_style"] = lines_symmetry.get("line_style")
+            result["perception"]["composition"]["symmetry"] = lines_symmetry.get("symmetry")
+        
+        # Lighting
+        lighting_direction = safe_analyze(analyze_lighting_direction, path, error_key="lighting",
+                                         default={"direction": None})
+        if lighting_direction.get("direction"):
+            result["perception"]["lighting"]["available"] = True
+            result["perception"]["lighting"]["direction"] = lighting_direction.get("direction")
+        
+        # Tonal range
+        tonal_range = safe_analyze(analyze_tonal_range, path, error_key="tonal_range",
+                                   default={"tonal_range": None})
+        if tonal_range.get("tonal_range"):
+            result["perception"]["lighting"]["quality"] = tonal_range.get("tonal_range")
+        
+        # Subject emotion
+        subject_emotion = safe_analyze(analyze_subject_emotion, path, error_key="emotion",
+                                      default={"subject_type": None, "emotion": None})
+        if subject_emotion.get("subject_type"):
+            result["perception"]["emotion"]["available"] = True
+            result["perception"]["emotion"]["subject_type"] = subject_emotion.get("subject_type")
+            result["perception"]["emotion"]["emotion"] = subject_emotion.get("emotion")
+        
+        # DeepFace (optional, toggleable)
+        # Note: DeepFace is disabled by default, can be enabled via DEEPFACE_ENABLE env var
+        # This is a placeholder for future implementation
+        result["confidence"]["deepface"] = False
+        
         # === DERIVED FIELDS ===
-        result["visual_interpretation"] = safe_analyze(interpret_visual_features, result, error_key="visual_interpretation", default={})
-        emotion_result = safe_analyze(infer_emotion, result, error_key="emotion_inference", default={"emotional_mood": "neutral"})
-        result["emotional_mood"] = emotion_result.get("emotional_mood", "neutral")
-
-        genre_info = safe_analyze(detect_genre, result, error_key="genre_detection", default={"genre": "General", "subgenre": "General"})
-        result["genre"] = genre_info.get("genre", "General")
-        result["subgenre"] = genre_info.get("subgenre", "General")
-
-        # Generate critique and remix (these can fail if OpenAI is unavailable, but should not crash)
-        result["critique"] = safe_analyze(generate_merged_critique, result, error_key="critique", default="Analysis complete, but critique generation unavailable.")
-        result["remix_prompt"] = safe_analyze(generate_remix_prompt, result, error_key="remix", default="Remix suggestions unavailable.")
-
-        # Add error metadata to result for production monitoring
-        if errors:
-            result["errors"] = errors
-            logger.info(f"Analysis completed with {len(errors)} error(s): {list(errors.keys())}")
-        else:
-            result["errors"] = {}
-
+        # Build legacy-style dict for derived field functions (temporary compatibility)
+        legacy_dict = {
+            "brightness": result["perception"]["technical"].get("brightness"),
+            "contrast": result["perception"]["technical"].get("contrast"),
+            "sharpness": result["perception"]["technical"].get("sharpness"),
+            "clip_description": clip_data,
+            "color_palette": result["perception"]["color"].get("palette", []),
+            "color_mood": result["perception"]["color"].get("mood"),
+            "lighting_direction": result["perception"]["lighting"].get("direction"),
+            "tonal_range": result["perception"]["lighting"].get("quality"),
+            "subject_emotion": subject_emotion,
+            "line_pattern": result["perception"]["composition"].get("line_pattern"),
+            "line_style": result["perception"]["composition"].get("line_style"),
+            "symmetry": result["perception"]["composition"].get("symmetry"),
+            "objects": object_data.get("objects", []),
+            "subject_framing": result["perception"]["composition"].get("subject_framing", {}),
+            "background_clutter": safe_analyze(analyze_background_clutter, path, error_key="clutter",
+                                               default={"clutter_level": None})
+        }
+        
+        # Visual interpretation
+        visual_interp = safe_analyze(interpret_visual_features, legacy_dict, error_key="visual_interpretation", default={})
+        if visual_interp:
+            result["derived"]["visual_interpretation"] = visual_interp
+        
+        # Emotional mood inference
+        emotion_result = safe_analyze(infer_emotion, legacy_dict, error_key="emotion_inference",
+                                     default={"emotional_mood": None})
+        if emotion_result.get("emotional_mood"):
+            result["derived"]["emotional_mood"] = emotion_result.get("emotional_mood")
+        
+        # Genre detection
+        genre_info = safe_analyze(detect_genre, legacy_dict, error_key="genre_detection",
+                                 default={"genre": None, "subgenre": None})
+        if genre_info.get("genre"):
+            result["derived"]["genre"]["genre"] = genre_info.get("genre")
+            result["derived"]["genre"]["subgenre"] = genre_info.get("subgenre")
+        
+        # Cache the result
+        if file_hash:
+            save_cached_analysis(file_hash, result)
+        
         return result
         
     except Exception as e:
-        import traceback
-        print("Analysis error:", e)
-        traceback.print_exc()
-        return {"error": str(e)}
+        logger.error(f"Critical error in analyze_image: {e}", exc_info=True)
+        result["errors"]["critical"] = str(e)
+        return result
 
 
 # ========================================================
