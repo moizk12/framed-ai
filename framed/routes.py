@@ -29,6 +29,7 @@ def clean_result_for_ui(result: dict) -> dict:
     - Never modifies `result` in-place
     - Omits internal error/debug structures
     - Reads from canonical schema structure
+    - Provides evidence annotations (measured values) instead of interpretations
     """
     if not isinstance(result, dict):
         return {}
@@ -41,16 +42,46 @@ def clean_result_for_ui(result: dict) -> dict:
         perception = result.get("perception", {})
         derived = result.get("derived", {})
         
+        technical = perception.get("technical", {})
+        composition = perception.get("composition", {})
         semantics = perception.get("semantics", {})
         color = perception.get("color", {})
         lighting = perception.get("lighting", {})
         genre = derived.get("genre", {})
         
+        # Extract evidence values (measured facts, not interpretations)
+        subject_framing = composition.get("subject_framing", {})
+        
         ui_view = {
+            # Semantic evidence
             "caption": semantics.get("caption") if semantics.get("available") else None,
             "tags": semantics.get("tags", []) if semantics.get("available") else [],
             "genre": genre.get("genre"),
             "subgenre": genre.get("subgenre"),
+            
+            # Evidence annotations (measured values)
+            "evidence": {
+                "technical": {
+                    "brightness": technical.get("brightness") if technical.get("available") else None,
+                    "contrast": technical.get("contrast") if technical.get("available") else None,
+                    "sharpness": technical.get("sharpness") if technical.get("available") else None,
+                },
+                "composition": {
+                    "symmetry": composition.get("symmetry") if composition.get("available") else None,
+                    "subject_position": subject_framing.get("position") if composition.get("available") else None,
+                    "subject_size": subject_framing.get("size") if composition.get("available") else None,
+                },
+                "color": {
+                    "mood": color.get("mood") if color.get("available") else None,
+                    "harmony_type": color.get("harmony", {}).get("harmony_type") if color.get("available") else None,
+                },
+                "lighting": {
+                    "direction": lighting.get("direction") if lighting.get("available") else None,
+                    "quality": lighting.get("quality") if lighting.get("available") else None,
+                },
+            },
+            
+            # Legacy fields (kept for backward compatibility, but deprecated)
             "emotional_mood": derived.get("emotional_mood"),
             "poetic_mood": None,  # Not in canonical schema yet
             "color_mood": color.get("mood") if color.get("available") else None,
@@ -76,6 +107,8 @@ def clean_result_for_ui(result: dict) -> dict:
             "subject": summary.get("subject"),
             "critique": result.get("critique"),
             "remix_prompt": result.get("remix_prompt"),
+            # Legacy format doesn't have structured evidence
+            "evidence": None,
         }
 
     # Softly drop internal error metadata from the presentation layer

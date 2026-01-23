@@ -56,20 +56,56 @@ function renderUIResult(view) {
   const critique = view.critique || "";
   const remix = view.remix_prompt || "";
   const mood = view.emotional_mood || "";
-  const poeticMood = view.poetic_mood || "";
   const genre =
     (typeof view.genre === "string" && view.genre) ||
     (view.genre && view.genre.genre) ||
     "";
   const subgenre = view.subgenre || "";
-  const colorMood = view.color_mood || "";
-  const lighting = view.lighting_direction || "";
+  
+  // Extract evidence annotations (measured values, not interpretations)
+  const evidence = view.evidence || {};
+  const technical = evidence.technical || {};
+  const composition = evidence.composition || {};
+  const color = evidence.color || {};
+  const lighting = evidence.lighting || {};
 
   const mentorModeSelect = document.getElementById("mentorMode");
   const mentorTone = mentorModeSelect ? mentorModeSelect.value : "Balanced Mentor";
 
   const resultsEl = document.getElementById("results");
   if (!resultsEl) return;
+
+  // Build evidence annotations string
+  const evidenceParts = [];
+  
+  // Technical evidence
+  if (technical.brightness !== null && technical.brightness !== undefined) {
+    evidenceParts.push(`Brightness: ${technical.brightness.toFixed(1)}`);
+  }
+  if (technical.contrast !== null && technical.contrast !== undefined) {
+    evidenceParts.push(`Contrast: ${technical.contrast.toFixed(2)}`);
+  }
+  if (composition.symmetry !== null && composition.symmetry !== undefined) {
+    evidenceParts.push(`Symmetry: ${composition.symmetry}`);
+  }
+  if (composition.subject_position) {
+    evidenceParts.push(`Subject: ${composition.subject_position}`);
+  }
+  if (lighting.direction) {
+    evidenceParts.push(`Light: ${lighting.direction}`);
+  }
+  
+  const evidenceText = evidenceParts.length > 0 ? evidenceParts.join(" · ") : null;
+  
+  // Build semantic evidence
+  const semanticParts = [];
+  if (caption) {
+    semanticParts.push(`"${caption}"`);
+  }
+  if (genre || subgenre) {
+    semanticParts.push(`${genre}${genre && subgenre ? " → " : ""}${subgenre || ""}`);
+  }
+  const semanticText = semanticParts.length > 0 ? semanticParts.join(" | ") : null;
 
   const renderedContent = `
     <div class="result-shell fade-in">
@@ -84,35 +120,29 @@ function renderUIResult(view) {
           "The image has been read, but FRAMED is choosing silence over empty words."}</p>
       </div>
 
-      <div class="result-section-grid">
-        <div class="result-section">
-          <div class="result-label">Visual Mood</div>
-          <p class="result-body">
-            ${poeticMood ||
-              mood ||
-              "A mood still forming — soft, undecided, almost on the verge of speaking."}
-          </p>
-        </div>
-        <div class="result-section">
-          <div class="result-label">Color &amp; Light</div>
-          <p class="result-body">
-            ${colorMood || lighting
-              ? [colorMood, lighting].filter(Boolean).join(" · ")
-              : "Light and color sit quietly here, more whisper than announcement."}
-          </p>
-        </div>
-        <div class="result-section">
-          <div class="result-label">Subject &amp; Genre</div>
-          <p class="result-body">
-            ${caption
-              ? `"${caption}"`
-              : "The subject stays unnamed, but the frame still remembers being seen."}
-            ${genre || subgenre
-              ? `<br/><span class="result-subtext">${genre}${
-                  genre && subgenre ? " · " : ""
-                }${subgenre || ""}</span>`
-              : ""}
-          </p>
+      <div class="result-section result-section-evidence">
+        <button class="evidence-toggle" onclick="toggleEvidence(this)">
+          <span class="evidence-toggle-text">Observed Evidence</span>
+          <span class="evidence-toggle-icon">▼</span>
+        </button>
+        <div class="evidence-content" style="display: none;">
+          ${evidenceText
+            ? `<div class="evidence-item">
+                <span class="evidence-label">Technical & Composition</span>
+                <span class="evidence-value">${evidenceText}</span>
+              </div>`
+            : ""}
+          ${semanticText
+            ? `<div class="evidence-item">
+                <span class="evidence-label">Semantic Reading</span>
+                <span class="evidence-value">${semanticText}</span>
+              </div>`
+            : ""}
+          ${!evidenceText && !semanticText
+            ? `<div class="evidence-item">
+                <span class="evidence-value">Evidence still forming — the frame speaks quietly.</span>
+              </div>`
+            : ""}
         </div>
       </div>
 
@@ -146,6 +176,25 @@ function renderUIResult(view) {
     applyMoodAudio(mood);
   }
 }
+
+// === Helper: Toggle Evidence Section ===
+function toggleEvidence(button) {
+  const content = button.nextElementSibling;
+  const icon = button.querySelector(".evidence-toggle-icon");
+  
+  if (content.style.display === "none") {
+    content.style.display = "block";
+    icon.textContent = "▲";
+    button.classList.add("active");
+  } else {
+    content.style.display = "none";
+    icon.textContent = "▼";
+    button.classList.remove("active");
+  }
+}
+
+// Make toggleEvidence globally accessible for inline onclick handlers
+window.toggleEvidence = toggleEvidence;
 
 // === Tab Switching ===
 function switchTab(tabId) {
