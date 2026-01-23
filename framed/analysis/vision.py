@@ -199,39 +199,45 @@ def get_nima_model():
 # This ensures /health endpoint and app creation never trigger client creation
 # Version: 2026-01-22 - Fixed import-time client initialization error
 
-_openai_client = None
-
+# Fix #1: NEVER cache a None client - HF Spaces + Gunicorn safe
+# Re-checks env vars every call to handle delayed env var injection
 def get_openai_client():
     """
-    Lazy-load OpenAI client on first use - NEVER called at import time.
-    Handles version compatibility issues gracefully.
-    """
-    global _openai_client
-    if _openai_client is None:
-        if not OPENAI_API_KEY:
-            logger.debug("OpenAI API key not found. Cloud-enhanced features disabled.")
-            return None
-        
-        try:
-            logger.info("Initializing OpenAI client (first use)")
-            # Initialize with API key only to avoid compatibility issues
-            # Let OpenAI library handle defaults for timeout, retries, etc.
-            _openai_client = OpenAI(api_key=OPENAI_API_KEY)
-            logger.info("OpenAI client initialized successfully")
-        except TypeError as e:
-            # Handle version compatibility issues gracefully (e.g., proxies parameter)
-            if "proxies" in str(e) or "unexpected keyword" in str(e):
-                logger.warning(f"OpenAI client initialization issue (version compatibility): {e}")
-                logger.warning("This may be due to httpx/OpenAI version mismatch. Client will be unavailable.")
-                _openai_client = None
-            else:
-                logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
-                _openai_client = None
-        except Exception as e:
-            logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
-            _openai_client = None
+    Get OpenAI client - HF Spaces + Gunicorn safe.
     
-    return _openai_client
+    NEVER caches None. Always re-checks environment variables.
+    This handles the case where env vars are injected after module import.
+    """
+    # Check environment variable directly every time (not module-level constant)
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    
+    if not api_key:
+        # Also check module-level constant as fallback (for local dev)
+        api_key = OPENAI_API_KEY if OPENAI_API_KEY else ""
+        api_key = api_key.strip() if api_key else ""
+    
+    if not api_key:
+        logger.debug("OpenAI API key not found. Cloud-enhanced features disabled.")
+        return None
+    
+    try:
+        # Create new client instance every time (no caching)
+        # This ensures we always use the latest env var value
+        client = OpenAI(api_key=api_key)
+        logger.info("OpenAI client initialized successfully")
+        return client
+    except TypeError as e:
+        # Handle version compatibility issues gracefully (e.g., proxies parameter)
+        if "proxies" in str(e) or "unexpected keyword" in str(e):
+            logger.warning(f"OpenAI client initialization issue (version compatibility): {e}")
+            logger.warning("This may be due to httpx/OpenAI version mismatch. Client will be unavailable.")
+            return None
+        else:
+            logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
+            return None
+    except Exception as e:
+        logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
+        return None
 
 # Legacy export for backward compatibility (but client is now lazy)
 # This allows existing code to import 'client' and use it as before
@@ -1601,9 +1607,10 @@ Begin.
 """
 
     try:
-        # Use get_openai_client() for lazy loading and proper None checking
+        # Fix #2: Add logging you cannot miss
         openai_client = get_openai_client()
         if openai_client is None:
+            logger.warning("PHASE III-A: OpenAI unavailable — using fallback")
             # Graceful fallback if OpenAI unavailable
             fallback_parts = []
             if brightness is not None:
@@ -1615,13 +1622,15 @@ Begin.
             fallback = ". ".join(fallback_parts) if fallback_parts else "Analysis complete"
             return f"{fallback}. Consider a counter-move in distance, light, or rhythm to push your voice."
         
+        logger.info("PHASE III-A: Sending critique prompt to OpenAI")
         response = openai_client.chat.completions.create(
             model="gpt-4-turbo",
             messages=[{"role": "user", "content": prompt}]
         )
+        logger.info("PHASE III-A: Received critique response from OpenAI")
         return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.error(f"Critique generation failed: {e}", exc_info=True)
+        logger.error(f"PHASE III-A: Critique generation failed: {e}", exc_info=True)
         return f"Critique generation unavailable. ({str(e)})"
 
 
