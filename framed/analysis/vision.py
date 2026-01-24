@@ -3147,6 +3147,332 @@ def _get_genre_pair(photo):
     # string + separate subgenre field
     return g or "General", photo.get("subgenre", "General")
 
+def generate_vocabulary_locks(scene_understanding, visual_evidence=None):
+    """
+    Generate universal vocabulary locks based on visual evidence and scene understanding.
+    Works for ANY image type (architecture, nature, portraits, street, interiors).
+    
+    Universal patterns:
+    - High coverage + structural salience → forbid "minimal"
+    - Organic growth + weathering → forbid "cold/sterile"
+    - No humans + organic integration + slow pace → forbid "alienation"
+    
+    Args:
+        scene_understanding: Dict from synthesize_scene_understanding()
+        visual_evidence: Optional dict from extract_visual_features()
+    
+    Returns:
+        Dict with:
+            - forbidden_words: list of words/phrases that must not be used
+            - required_words: list of words/phrases that should be used
+            - vocabulary_rules: list of explainable rules
+    """
+    locks = {
+        "forbidden_words": [],
+        "required_words": [],
+        "vocabulary_rules": []
+    }
+    
+    # Extract visual evidence if not provided
+    if visual_evidence is None:
+        # Try to extract from scene understanding
+        material_condition = scene_understanding.get("material_condition", {})
+        organic_interaction = scene_understanding.get("organic_interaction", {})
+        
+        # Extract from material condition if it has visual source
+        if material_condition.get("source") == "visual_analysis":
+            green_coverage = material_condition.get("organic_growth_coverage", 0.0)
+            salience = material_condition.get("organic_growth_salience", "minimal")
+            condition = material_condition.get("surface_state", "unknown")
+        else:
+            green_coverage = 0.0
+            salience = "minimal"
+            condition = "unknown"
+        
+        relationship = organic_interaction.get("relationship", "none")
+        integration_level = organic_interaction.get("integration_level", "none")
+    else:
+        organic_growth = visual_evidence.get("organic_growth", {})
+        material_condition_vis = visual_evidence.get("material_condition", {})
+        organic_integration_vis = visual_evidence.get("organic_integration", {})
+        
+        green_coverage = organic_growth.get("green_coverage", 0.0)
+        salience = organic_growth.get("salience", "minimal")
+        condition = material_condition_vis.get("condition", "unknown")
+        relationship = organic_integration_vis.get("relationship", "none")
+        integration_level = organic_integration_vis.get("integration_level", "none")
+    
+    # Extract scene understanding components
+    material_condition = scene_understanding.get("material_condition", {})
+    organic_interaction = scene_understanding.get("organic_interaction", {})
+    temporal_context = scene_understanding.get("temporal_context", {})
+    negative_evidence = scene_understanding.get("negative_evidence", {})
+    emotional_substrate = scene_understanding.get("emotional_substrate", {})
+    
+    # === UNIVERSAL PATTERN 1: Coverage + Salience → Vocabulary Lock ===
+    # Works for ANY image with organic growth (ivy, moss, vegetation, plants, etc.)
+    if green_coverage > 0.25 and salience in ["structural", "incidental"]:
+        # High coverage + structural salience → forbid diminutive words
+        locks["forbidden_words"].extend([
+            "minimal", "slight", "incidental", "subtle", "trace", "hint", "faint", "barely"
+        ])
+        locks["vocabulary_rules"].append(
+            f"green_coverage={green_coverage:.3f} AND salience={salience} → FORBIDDEN: minimal/slight/incidental"
+        )
+    
+    if green_coverage > 0.35:
+        # Very high coverage → require strong descriptors
+        locks["required_words"].extend([
+            "extensive", "significant", "substantial", "dominant", "prominent"
+        ])
+        locks["vocabulary_rules"].append(
+            f"green_coverage={green_coverage:.3f} → REQUIRED: extensive/significant/substantial"
+        )
+    
+    if salience == "structural":
+        # Structural salience → require structural descriptors
+        locks["required_words"].extend([
+            "structural", "integrated", "reclaiming", "climbing", "on the structure"
+        ])
+        locks["vocabulary_rules"].append(
+            f"salience=structural → REQUIRED: structural/integrated/reclaiming"
+        )
+    
+    # === UNIVERSAL PATTERN 2: Organic Growth + Weathering → Emotional Lock ===
+    # Works for ANY image showing organic growth and material weathering
+    has_organic = green_coverage > 0.1 or material_condition.get("organic_growth") not in [None, "none"]
+    has_weathering = condition in ["weathered", "degraded"] or material_condition.get("surface_state") in ["weathered", "degraded"]
+    
+    if has_organic and has_weathering:
+        # Organic + weathering → forbid cold/sterile emotional descriptors
+        locks["forbidden_words"].extend([
+            "cold", "sterile", "clinical", "alienating", "distant", "remote", 
+            "unfeeling", "barren", "lifeless", "harsh", "uninviting"
+        ])
+        locks["required_words"].extend([
+            "warm", "patient", "enduring", "reclaimed", "lived-in", "softened"
+        ])
+        locks["vocabulary_rules"].append(
+            "organic_growth + weathering → FORBIDDEN: cold/sterile/clinical, REQUIRED: warm/patient/enduring"
+        )
+    
+    # === UNIVERSAL PATTERN 3: Integration Level → Relationship Lock ===
+    # Works for ANY image showing organic-inorganic interaction
+    if relationship in ["reclamation", "integration"] and integration_level in ["high", "moderate"]:
+        # High integration → forbid separation/alienation descriptors
+        locks["forbidden_words"].extend([
+            "separate", "isolated", "disconnected", "apart", "divorced from"
+        ])
+        locks["required_words"].extend([
+            "integrated", "in dialogue", "intertwined", "unified", "coexisting"
+        ])
+        locks["vocabulary_rules"].append(
+            f"relationship={relationship}, integration={integration_level} → FORBIDDEN: separate/isolated, REQUIRED: integrated/in dialogue"
+        )
+    
+    # === UNIVERSAL PATTERN 4: Negative Evidence + Context → Interpretation Lock ===
+    # Works for ANY image with absence of elements
+    no_humans = negative_evidence.get("no_human_presence", False)
+    temporal_direction = temporal_context.get("temporal_direction", "static")
+    temporal_pace = temporal_context.get("pace", "static")
+    
+    if no_humans and relationship in ["reclamation", "integration"] and temporal_pace in ["slow", "static"]:
+        # No humans + organic integration + slow pace → forbid alienation, require stillness
+        locks["forbidden_words"].extend([
+            "alienation", "isolation", "abandonment", "deserted", "empty", "void",
+            "lonely", "forsaken", "neglected", "uninhabited"
+        ])
+        locks["required_words"].extend([
+            "stillness", "patience", "continuity", "endurance", "intentional absence",
+            "quiet presence", "temporal continuity"
+        ])
+        locks["vocabulary_rules"].append(
+            "no_human_presence + organic_integration + slow_pace → FORBIDDEN: alienation/isolation, REQUIRED: stillness/patience/continuity"
+        )
+    
+    # === UNIVERSAL PATTERN 5: Temporal Direction → Change Vocabulary ===
+    # Works for ANY image showing temporal change
+    if temporal_direction == "accreting":
+        # Accreting (growing) → require growth vocabulary
+        locks["required_words"].extend([
+            "growing", "expanding", "emerging", "developing", "accumulating"
+        ])
+        locks["forbidden_words"].extend([
+            "static", "unchanging", "frozen", "stagnant"
+        ])
+        locks["vocabulary_rules"].append(
+            "temporal_direction=accreting → REQUIRED: growing/expanding, FORBIDDEN: static/unchanging"
+        )
+    elif temporal_direction == "decaying":
+        # Decaying → require decay vocabulary
+        locks["required_words"].extend([
+            "decaying", "eroding", "breaking down", "deteriorating", "fading"
+        ])
+        locks["forbidden_words"].extend([
+            "pristine", "new", "fresh", "untouched"
+        ])
+        locks["vocabulary_rules"].append(
+            "temporal_direction=decaying → REQUIRED: decaying/eroding, FORBIDDEN: pristine/new"
+        )
+    
+    # === UNIVERSAL PATTERN 6: Emotional Substrate Corrective Signals ===
+    # Works for ANY image with emotional corrective signals
+    if emotional_substrate:
+        temperature = emotional_substrate.get("temperature", {})
+        if isinstance(temperature, dict) and temperature.get("contradictions"):
+            forbidden = temperature["contradictions"].get("forbidden", [])
+            if forbidden:
+                locks["forbidden_words"].extend(forbidden)
+                locks["vocabulary_rules"].append(
+                    f"emotional_substrate.temperature → FORBIDDEN: {', '.join(forbidden)}"
+                )
+        
+        presence = emotional_substrate.get("presence", {})
+        if isinstance(presence, dict) and presence.get("contradictions"):
+            forbidden = presence["contradictions"].get("forbidden", [])
+            if forbidden:
+                locks["forbidden_words"].extend(forbidden)
+                locks["vocabulary_rules"].append(
+                    f"emotional_substrate.presence → FORBIDDEN: {', '.join(forbidden)}"
+                )
+    
+    # Deduplicate lists
+    locks["forbidden_words"] = sorted(list(set(locks["forbidden_words"])))
+    locks["required_words"] = sorted(list(set(locks["required_words"])))
+    
+    return locks
+
+
+def generate_resolved_contradictions(scene_understanding, visual_evidence=None):
+    """
+    Generate resolved contradictions based on visual evidence and scene understanding.
+    Universal: works for ANY image type.
+    
+    Once visual evidence resolves a contradiction, it cannot be used as a tension point.
+    
+    Universal patterns:
+    - Organic growth + weathering → warm vs cold is RESOLVED (warm wins)
+    - Organic integration → organic vs sterile is RESOLVED (organic wins)
+    - High integration → integrated vs alienated is RESOLVED (integrated wins)
+    
+    Args:
+        scene_understanding: Dict from synthesize_scene_understanding()
+        visual_evidence: Optional dict from extract_visual_features()
+    
+    Returns:
+        Dict with:
+            - resolved: list of resolved contradictions (cannot be used as tension)
+            - valid_tensions: list of valid tension points (can be used)
+    """
+    resolved = []
+    valid_tensions = []
+    
+    # Extract visual evidence if not provided
+    if visual_evidence is None:
+        material_condition = scene_understanding.get("material_condition", {})
+        organic_interaction = scene_understanding.get("organic_interaction", {})
+        
+        if material_condition.get("source") == "visual_analysis":
+            green_coverage = material_condition.get("organic_growth_coverage", 0.0)
+            condition = material_condition.get("surface_state", "unknown")
+        else:
+            green_coverage = 0.0
+            condition = "unknown"
+        
+        relationship = organic_interaction.get("relationship", "none")
+        integration_level = organic_interaction.get("integration_level", "none")
+    else:
+        organic_growth = visual_evidence.get("organic_growth", {})
+        material_condition_vis = visual_evidence.get("material_condition", {})
+        organic_integration_vis = visual_evidence.get("organic_integration", {})
+        
+        green_coverage = organic_growth.get("green_coverage", 0.0)
+        condition = material_condition_vis.get("condition", "unknown")
+        relationship = organic_integration_vis.get("relationship", "none")
+        integration_level = organic_integration_vis.get("integration_level", "none")
+    
+    # Extract scene understanding components
+    material_condition = scene_understanding.get("material_condition", {})
+    organic_interaction = scene_understanding.get("organic_interaction", {})
+    temporal_context = scene_understanding.get("temporal_context", {})
+    negative_evidence = scene_understanding.get("negative_evidence", {})
+    
+    # === UNIVERSAL PATTERN 1: Organic Growth + Weathering → Warm vs Cold RESOLVED ===
+    # Works for ANY image showing organic growth and weathering
+    has_organic = green_coverage > 0.1 or material_condition.get("organic_growth") not in [None, "none"]
+    has_weathering = condition in ["weathered", "degraded"] or material_condition.get("surface_state") in ["weathered", "degraded"]
+    
+    if has_organic and has_weathering:
+        resolved.append({
+            "contradiction": "warm vs cold",
+            "resolution": "warm (organic growth + weathering = warmth of time)",
+            "reason": "Visual evidence proves organic growth and weathering, which indicates warmth of time, not coldness"
+        })
+        resolved.append({
+            "contradiction": "organic vs sterile",
+            "resolution": "organic (organic growth present = organic)",
+            "reason": "Visual evidence proves organic growth, which resolves organic vs sterile in favor of organic"
+        })
+    
+    # === UNIVERSAL PATTERN 2: Integration Level → Integrated vs Alienated RESOLVED ===
+    # Works for ANY image showing organic-inorganic interaction
+    if relationship in ["reclamation", "integration"] and integration_level in ["high", "moderate"]:
+        resolved.append({
+            "contradiction": "integrated vs alienated",
+            "resolution": "integrated (organic integration present = integrated)",
+            "reason": "Visual evidence proves organic integration, which resolves integrated vs alienated in favor of integrated"
+        })
+    
+    # === UNIVERSAL PATTERN 3: Negative Evidence + Context → Alienation RESOLVED ===
+    # Works for ANY image with absence of elements
+    no_humans = negative_evidence.get("no_human_presence", False)
+    temporal_pace = temporal_context.get("pace", "static")
+    
+    if no_humans and relationship in ["reclamation", "integration"] and temporal_pace in ["slow", "static"]:
+        resolved.append({
+            "contradiction": "stillness vs alienation",
+            "resolution": "stillness (no humans + organic integration + slow pace = intentional stillness, not alienation)",
+            "reason": "Negative evidence (no humans) combined with organic integration and slow temporal pace indicates intentional stillness, patience, and continuity, not alienation"
+        })
+    
+    # === UNIVERSAL PATTERN 4: Temporal Direction → Change State RESOLVED ===
+    # Works for ANY image showing temporal change
+    temporal_direction = temporal_context.get("temporal_direction", "static")
+    
+    if temporal_direction == "accreting":
+        resolved.append({
+            "contradiction": "static vs changing",
+            "resolution": "changing (temporal direction = accreting = growth/change)",
+            "reason": "Visual evidence shows temporal direction is accreting (growing), which resolves static vs changing in favor of changing"
+        })
+    elif temporal_direction == "decaying":
+        resolved.append({
+            "contradiction": "pristine vs aged",
+            "resolution": "aged (temporal direction = decaying = deterioration)",
+            "reason": "Visual evidence shows temporal direction is decaying (deteriorating), which resolves pristine vs aged in favor of aged"
+        })
+    
+    # === VALID TENSION POINTS (Universal) ===
+    # These are always valid, regardless of image type
+    valid_tensions = [
+        "permanence vs change",
+        "endurance vs use",
+        "stillness vs memory",
+        "monumentality vs intimacy",
+        "presence vs absence",
+        "revelation vs concealment",
+        "control vs surrender",
+        "intention vs accident",
+        "precision vs ambiguity",
+        "distance vs proximity"
+    ]
+    
+    return {
+        "resolved": resolved,
+        "valid_tensions": valid_tensions
+    }
+
+
 def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
     """
     Phase III-A: Evidence-Driven Critique Engine
@@ -3465,7 +3791,7 @@ These are BINDING CONSTRAINTS. You MUST apply them.
 - Violations = invalid critique.
 """
     
-    # === STEP 3: SEMANTIC ANCHORS (NAMING PERMISSION) ===
+    # === STEP 4: SEMANTIC ANCHORS (NAMING PERMISSION) ===
     anchors_section = ""
     if semantic_anchors:
         anchors_lines = []
@@ -3492,7 +3818,7 @@ If structure_elements include specific structures, you must name them.
 Do not invent elements beyond these anchors.
 """
     
-    # === STEP 4: VERIFIED OBSERVATIONS (TECHNICAL) ===
+    # === STEP 5: VERIFIED OBSERVATIONS (TECHNICAL) ===
     observations_section = f"""
 VERIFIED OBSERVATIONS (TECHNICAL):
 TECHNICAL STATE
@@ -3522,7 +3848,7 @@ EMOTIONAL SIGNAL
 ---
 """
     
-    # === STEP 5: HARD GOVERNANCE RULES ===
+    # === STEP 6: HARD GOVERNANCE RULES ===
     # Enhanced with visual evidence enforcement
     visual_evidence_present = scene_understanding and any(
         "(visual)" in str(v) or "visual_analysis" in str(v) 
@@ -3546,6 +3872,17 @@ RULES (NON-NEGOTIABLE):
 - Do NOT sound instructional.
 - Do NOT flatter.
 
+VOCABULARY LOCKS ENFORCEMENT (ABSOLUTE):
+- Vocabulary Locks are ABSOLUTE. If a word is FORBIDDEN, you must not use it, even to create "tension."
+- If a word is REQUIRED, you should use it when describing the relevant aspect.
+- These locks are based on visual evidence (ground truth from pixels), not suggestions.
+
+RESOLVED CONTRADICTIONS ENFORCEMENT (ABSOLUTE):
+- Resolved Contradictions cannot be used as tension points. You cannot reintroduce contradictions that visual evidence has already resolved.
+- Once a contradiction is resolved (e.g., warm vs cold → warm wins), you cannot use "cold" as a tension point.
+- You must work with the resolution, not against it.
+- Only use VALID TENSION POINTS listed in the Resolved Contradictions section.
+
 VISUAL EVIDENCE ENFORCEMENT (CRITICAL):
 - Elements marked "(visual)" or sourced from "visual_analysis" are PROVEN FROM PIXELS.
 - These are ground truth measurements, not inferences.
@@ -3553,6 +3890,10 @@ VISUAL EVIDENCE ENFORCEMENT (CRITICAL):
 - If visual evidence forbids certain interpretations (e.g., "cold" when organic warmth is detected), you MUST NOT use those terms.
 - Visual evidence overrides text inference when confidence is high (>0.75).
 - If you see "(visual)" in Scene Understanding, treat it as absolute truth, not suggestion.
+
+NEGATIVE EVIDENCE ENFORCEMENT (BINDING):
+- Negative Evidence (what is NOT present) is binding. If negative evidence shows no human presence AND organic integration AND slow pace, you MUST interpret absence as stillness/patience/continuity, NOT alienation/isolation.
+- The mapping "no humans → alienation" is FORBIDDEN when context indicates intentional stillness.
 """
     else:
         governance_rules = """
@@ -3572,8 +3913,8 @@ RULES (NON-NEGOTIABLE):
 - Do NOT flatter.
 """
     
-    # Assemble prompt in correct order: Scene Understanding → Corrective Signals → Anchors → Observations → Task
-    prompt += scene_understanding_section + corrective_signals_section + anchors_section + observations_section + f"""
+    # Assemble prompt in correct order: Scene Understanding → Vocabulary Locks → Resolved Contradictions → Corrective Signals → Anchors → Observations → Task
+    prompt += scene_understanding_section + vocabulary_locks_section + resolved_contradictions_section + corrective_signals_section + anchors_section + observations_section + f"""
 Your task:
 
 1. Interpret what these choices reveal about the photographer's intent.
