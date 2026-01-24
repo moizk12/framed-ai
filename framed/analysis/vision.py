@@ -624,12 +624,270 @@ def generate_semantic_anchors(clip_inventory, clip_tags, clip_caption, yolo_obje
     return anchors
 
 
+def synthesize_emotional_substrate_constrained(visual_evidence, technical_data, clip_data, scene_context):
+    """
+    Synthesize emotional substrate with full explainability and constraints.
+    Every emotional output must be explainable by upstream signals.
+    
+    Universal: works for any image type.
+    
+    Args:
+        visual_evidence: Dict from extract_visual_features() - ground truth from pixels
+        technical_data: Dict with brightness, contrast, sharpness, color_mood
+        clip_data: Dict with caption, tags, inventory
+        scene_context: Dict with temporal, organic interaction, etc.
+    
+    Returns:
+        Dict with emotional substrate, each field containing:
+            - value: str - the emotional value
+            - evidence: list - explainable evidence
+            - confidence: float - confidence level
+            - contradictions: dict - forbidden states and reasons
+    """
+    emotional_substrate = {}
+    
+    # Extract visual evidence
+    organic_growth = visual_evidence.get("organic_growth", {})
+    material_condition = visual_evidence.get("material_condition", {})
+    organic_integration = visual_evidence.get("organic_integration", {})
+    
+    green_coverage = organic_growth.get("green_coverage", 0.0)
+    condition = material_condition.get("condition", "unknown")
+    surface_roughness = material_condition.get("surface_roughness", 0.0)
+    relationship = organic_integration.get("relationship", "none")
+    integration_level = organic_integration.get("integration_level", "none")
+    
+    # Extract technical data
+    color_mood = technical_data.get("color_mood")
+    brightness = technical_data.get("brightness")
+    sharpness = technical_data.get("sharpness")
+    
+    # Extract scene context
+    temporal_pace = scene_context.get("temporal_context", {}).get("pace", "static")
+    organic_rel = scene_context.get("organic_interaction", {}).get("relationship", "none")
+    
+    # === TEMPERATURE SYNTHESIS (with evidence) ===
+    # Visual evidence has highest priority (ground truth)
+    if green_coverage > 0.35 and condition in ["weathered", "degraded"]:
+        # Organic growth + weathering = warmth of time (proven from pixels)
+        emotional_substrate["temperature"] = {
+            "value": "warm_patience",
+            "evidence": [
+                f"green_coverage={green_coverage:.3f} (visual)",
+                f"condition={condition} (visual)",
+                "organic_growth + weathering = warmth of time"
+            ],
+            "confidence": 0.92,  # High - visual evidence
+            "source": "visual_analysis",
+            "contradictions": {
+                "forbidden": ["cold", "clinical", "sterile"],
+                "reason": "Organic growth and weathering indicate warmth of time, not coldness"
+            }
+        }
+    elif green_coverage > 0.2 and relationship in ["reclamation", "integration"]:
+        # Organic integration = warmth (proven from pixels)
+        emotional_substrate["temperature"] = {
+            "value": "warm",
+            "evidence": [
+                f"green_coverage={green_coverage:.3f} (visual)",
+                f"relationship={relationship} (visual)",
+                "organic integration suggests warmth"
+            ],
+            "confidence": 0.85,
+            "source": "visual_analysis",
+            "contradictions": {
+                "forbidden": ["cold", "clinical"],
+                "reason": "Organic integration contradicts coldness"
+            }
+        }
+    elif condition == "pristine" and green_coverage < 0.1:
+        # Pristine + no organic = cold (proven from pixels)
+        emotional_substrate["temperature"] = {
+            "value": "cold",
+            "evidence": [
+                f"condition={condition} (visual)",
+                f"green_coverage={green_coverage:.3f} (visual)",
+                "pristine + no organic = cold"
+            ],
+            "confidence": 0.80,
+            "source": "visual_analysis"
+        }
+    elif color_mood == "warm" and green_coverage < 0.1:
+        # Color says warm but no organic evidence
+        emotional_substrate["temperature"] = {
+            "value": "warm",
+            "evidence": [
+                f"color_mood={color_mood} (technical)",
+                f"green_coverage={green_coverage:.3f} (visual)"
+            ],
+            "confidence": 0.70,  # Lower - color alone
+            "source": "technical_analysis"
+        }
+    elif color_mood == "cool" and green_coverage < 0.1:
+        emotional_substrate["temperature"] = {
+            "value": "cold",
+            "evidence": [
+                f"color_mood={color_mood} (technical)",
+                f"green_coverage={green_coverage:.3f} (visual)"
+            ],
+            "confidence": 0.70,
+            "source": "technical_analysis"
+        }
+    else:
+        emotional_substrate["temperature"] = {
+            "value": "neutral",
+            "evidence": [
+                f"green_coverage={green_coverage:.3f} (visual)",
+                f"condition={condition} (visual)",
+                "mixed or ambiguous signals"
+            ],
+            "confidence": 0.60,
+            "source": "multi_modal"
+        }
+    
+    # === PRESENCE SYNTHESIS (with evidence) ===
+    if integration_level == "high" or relationship == "reclamation":
+        # High integration = grounded presence (proven from pixels)
+        emotional_substrate["presence"] = {
+            "value": "grounded",
+            "evidence": [
+                f"integration_level={integration_level} (visual)",
+                f"relationship={relationship} (visual)",
+                "nature integration suggests grounded, lived-in presence"
+            ],
+            "confidence": 0.88,
+            "source": "visual_analysis",
+            "contradictions": {
+                "forbidden": ["distant", "alienating"],
+                "reason": "Nature integration contradicts distance"
+            }
+        }
+    elif green_coverage > 0.2:
+        # Organic present = grounded (proven from pixels)
+        emotional_substrate["presence"] = {
+            "value": "grounded",
+            "evidence": [
+                f"green_coverage={green_coverage:.3f} (visual)",
+                "organic elements suggest grounded presence"
+            ],
+            "confidence": 0.75,
+            "source": "visual_analysis"
+        }
+    elif condition == "pristine" and green_coverage < 0.05:
+        # Pristine + no organic = distant (proven from pixels)
+        emotional_substrate["presence"] = {
+            "value": "distant",
+            "evidence": [
+                f"condition={condition} (visual)",
+                f"green_coverage={green_coverage:.3f} (visual)",
+                "pristine + no organic = distant"
+            ],
+            "confidence": 0.75,
+            "source": "visual_analysis"
+        }
+    else:
+        emotional_substrate["presence"] = {
+            "value": "grounded",
+            "evidence": ["default assumption"],
+            "confidence": 0.50,
+            "source": "default"
+        }
+    
+    # === PACE SYNTHESIS (with evidence) ===
+    if temporal_pace == "slow" and green_coverage > 0.2:
+        # Slow pace + organic = contemplative (proven from pixels)
+        emotional_substrate["pace"] = {
+            "value": "slow_contemplative",
+            "evidence": [
+                f"temporal_pace={temporal_pace}",
+                f"green_coverage={green_coverage:.3f} (visual)",
+                "slow pace + organic growth = contemplative"
+            ],
+            "confidence": 0.85,
+            "source": "multi_modal"
+        }
+    elif temporal_pace == "fast":
+        emotional_substrate["pace"] = {
+            "value": "fast_energetic",
+            "evidence": [f"temporal_pace={temporal_pace}"],
+            "confidence": 0.80,
+            "source": "temporal_context"
+        }
+    elif green_coverage > 0.3:
+        # Organic growth = slow (proven from pixels - growth takes time)
+        emotional_substrate["pace"] = {
+            "value": "slow_contemplative",
+            "evidence": [
+                f"green_coverage={green_coverage:.3f} (visual)",
+                "organic growth indicates slow time"
+            ],
+            "confidence": 0.80,
+            "source": "visual_analysis"
+        }
+    else:
+        emotional_substrate["pace"] = {
+            "value": "static_eternal",
+            "evidence": ["default assumption"],
+            "confidence": 0.60,
+            "source": "default"
+        }
+    
+    # === QUALITY SYNTHESIS (with evidence) ===
+    if green_coverage > 0.3 and condition in ["weathered", "degraded"] and temporal_pace == "slow":
+        # Organic + weathered + slow = enduring calm (proven from pixels)
+        emotional_substrate["quality"] = {
+            "value": "enduring_calm",
+            "evidence": [
+                f"green_coverage={green_coverage:.3f} (visual)",
+                f"condition={condition} (visual)",
+                f"temporal_pace={temporal_pace}",
+                "organic + weathered + slow = enduring calm"
+            ],
+            "confidence": 0.90,
+            "source": "multi_modal"
+        }
+    elif green_coverage > 0.2:
+        # Organic present = organic quality (proven from pixels)
+        emotional_substrate["quality"] = {
+            "value": "organic",
+            "evidence": [
+                f"green_coverage={green_coverage:.3f} (visual)",
+                "organic elements suggest organic quality"
+            ],
+            "confidence": 0.80,
+            "source": "visual_analysis"
+        }
+    elif sharpness and sharpness > 150 and green_coverage < 0.1:
+        # High sharpness + no organic = clinical (proven from pixels)
+        emotional_substrate["quality"] = {
+            "value": "clinical",
+            "evidence": [
+                f"sharpness={sharpness} (technical)",
+                f"green_coverage={green_coverage:.3f} (visual)",
+                "high sharpness + no organic = clinical"
+            ],
+            "confidence": 0.75,
+            "source": "multi_modal"
+        }
+    else:
+        emotional_substrate["quality"] = {
+            "value": "calm",
+            "evidence": ["default assumption"],
+            "confidence": 0.60,
+            "source": "default"
+        }
+    
+    return emotional_substrate
+
+
 def synthesize_scene_understanding(analysis_result):
     """
     Synthesize contextual understanding of "what is happening here" from perception signals.
     
     This is a cognitive layer that answers material condition, temporal context, organic interaction,
     emotional substrate, and contextual relationships - universal to any image type.
+    
+    NOW ENHANCED: Uses visual evidence (ground truth from pixels) as primary source.
     
     Args:
         analysis_result: Canonical schema analysis result (must have perception layer)
@@ -645,7 +903,29 @@ def synthesize_scene_understanding(analysis_result):
     
     understanding = {}
     
-    # Extract perception signals
+    # === EXTRACT VISUAL EVIDENCE (GROUND TRUTH) ===
+    # This is the new foundation - visual evidence from pixels
+    image_path = analysis_result.get("_image_path")  # Temporarily stored during analysis
+    visual_evidence = {}
+    if image_path and os.path.exists(image_path):
+        try:
+            visual_evidence = extract_visual_features(image_path)
+        except Exception as e:
+            logger.warning(f"Visual feature extraction failed: {e}")
+            visual_evidence = {}
+    
+    # Extract visual evidence components
+    organic_growth = visual_evidence.get("organic_growth", {})
+    material_condition_vis = visual_evidence.get("material_condition", {})
+    organic_integration_vis = visual_evidence.get("organic_integration", {})
+    
+    green_coverage = organic_growth.get("green_coverage", 0.0)
+    condition_vis = material_condition_vis.get("condition", "unknown")
+    surface_roughness = material_condition_vis.get("surface_roughness", 0.0)
+    relationship_vis = organic_integration_vis.get("relationship", "none")
+    integration_level_vis = organic_integration_vis.get("integration_level", "none")
+    
+    # Extract perception signals (for fallback and fusion)
     perception = analysis_result.get("perception", {})
     technical = perception.get("technical", {})
     composition = perception.get("composition", {})
@@ -655,7 +935,7 @@ def synthesize_scene_understanding(analysis_result):
     emotion = perception.get("emotion", {})
     derived = analysis_result.get("derived", {})
     
-    # Collect all text signals for keyword matching
+    # Collect all text signals for keyword matching (secondary to visual)
     clip_caption = (semantics.get("caption") or "").lower() if semantics.get("available") else ""
     clip_tags = [tag.lower() for tag in (semantics.get("tags", []) or [])]
     clip_inventory = analysis_result.get("_clip_inventory", [])  # May be stored temporarily
@@ -669,66 +949,153 @@ def synthesize_scene_understanding(analysis_result):
     lighting_direction = lighting.get("direction") if lighting.get("available") else None
     
     # === MATERIAL CONDITION ===
+    # PRIORITY: Visual evidence (ground truth) > Text matching (inference)
     material_condition = {}
     
-    # Surface state: infer from sharpness, contrast, and organic growth signals
-    # Enhanced with material condition inventory terms
-    organic_growth_terms = [
-        "ivy", "moss", "vegetation", "growth", "overgrown", "reclaimed", "patina", "weathering", 
-        "eroded", "aged", "weathered stone", "aged surface", "eroded facade", "patinated",
-        "ivy covered", "moss covered", "green growth", "climbing plants", "plant growth",
-        "nature reclaiming", "organic growth", "vegetation on surface", "greenery"
-    ]
-    organic_signals = sum(1 for term in organic_growth_terms if term in all_text)
-    
-    if organic_signals >= 2:
+    # Use visual evidence as primary source (proven from pixels)
+    if green_coverage > 0.35:
+        # Visual evidence: extensive organic growth (proven)
         material_condition["organic_growth"] = "extensive"
-        material_condition["surface_state"] = "weathered"
-        growth_types = [term for term in ["ivy", "moss", "patina", "weathering"] if term in all_text]
-        if growth_types:
-            material_condition["growth_types"] = growth_types[:3]  # Limit to top 3
-        material_condition["erosion_level"] = "moderate" if organic_signals >= 3 else "light"
-    elif organic_signals >= 1:
+        material_condition["organic_growth_coverage"] = green_coverage  # NEW: separate coverage
+        material_condition["organic_growth_salience"] = salience  # NEW: structural | incidental | peripheral
+        material_condition["surface_state"] = condition_vis if condition_vis != "unknown" else "weathered"
+        material_condition["erosion_level"] = "moderate" if surface_roughness > 0.15 else "light"
+        material_condition["evidence"] = [
+            f"green_coverage={green_coverage:.3f} (visual)",
+            f"salience={salience} (visual)",
+            f"surface_roughness={surface_roughness:.3f} (visual)",
+            "proven from pixels"
+        ]
+        material_condition["confidence"] = organic_growth.get("confidence", 0.95)
+        material_condition["source"] = "visual_analysis"
+        
+        # Growth types from visual spatial distribution and salience
+        green_locations = organic_growth.get("green_locations", "")
+        if salience == "structural":
+            material_condition["growth_types"] = ["ivy", "structural vegetation"]  # Ivy on structure
+        elif salience == "incidental":
+            material_condition["growth_types"] = ["foreground vegetation", "greenery"]
+        elif salience == "peripheral":
+            material_condition["growth_types"] = ["background vegetation", "landscape"]
+        elif green_locations == "vertical_surfaces":
+            material_condition["growth_types"] = ["ivy"]  # Likely ivy on walls
+        elif green_locations in ["foreground", "distributed"]:
+            material_condition["growth_types"] = ["vegetation", "greenery"]
+    elif green_coverage > 0.2:
+        # Visual evidence: moderate organic growth (proven)
         material_condition["organic_growth"] = "moderate"
-        material_condition["surface_state"] = "weathered"
+        material_condition["organic_growth_coverage"] = green_coverage  # NEW: separate coverage
+        material_condition["organic_growth_salience"] = salience  # NEW: structural | incidental | peripheral
+        material_condition["surface_state"] = condition_vis if condition_vis != "unknown" else "weathered"
         material_condition["erosion_level"] = "light"
-    elif sharpness and sharpness > 100:
-        material_condition["surface_state"] = "pristine"
-        material_condition["organic_growth"] = "none"
-    elif sharpness and sharpness < 30:
-        material_condition["surface_state"] = "degraded"
+        material_condition["evidence"] = [
+            f"green_coverage={green_coverage:.3f} (visual)",
+            f"salience={salience} (visual)",
+            "proven from pixels"
+        ]
+        material_condition["confidence"] = organic_growth.get("confidence", 0.85)
+        material_condition["source"] = "visual_analysis"
+    elif green_coverage > 0.1:
+        # Visual evidence: minimal organic growth (proven)
+        material_condition["organic_growth"] = "minimal"
+        material_condition["organic_growth_coverage"] = green_coverage  # NEW: separate coverage
+        material_condition["organic_growth_salience"] = salience  # NEW: structural | incidental | peripheral
+        material_condition["surface_state"] = condition_vis if condition_vis != "unknown" else "moderate"
+        material_condition["evidence"] = [
+            f"green_coverage={green_coverage:.3f} (visual)",
+            f"salience={salience} (visual)",
+            "proven from pixels"
+        ]
+        material_condition["confidence"] = organic_growth.get("confidence", 0.70)
+        material_condition["source"] = "visual_analysis"
+    else:
+        # No visual evidence of organic growth - check text as fallback
+        organic_growth_terms = [
+            "ivy", "moss", "vegetation", "growth", "overgrown", "reclaimed", "patina", "weathering", 
+            "eroded", "aged", "weathered stone", "aged surface", "eroded facade", "patinated",
+            "ivy covered", "moss covered", "green growth", "climbing plants", "plant growth",
+            "nature reclaiming", "organic growth", "vegetation on surface", "greenery"
+        ]
+        organic_signals = sum(1 for term in organic_growth_terms if term in all_text)
+        
+        if organic_signals >= 2:
+            material_condition["organic_growth"] = "extensive"
+            material_condition["surface_state"] = "weathered"
+            growth_types = [term for term in ["ivy", "moss", "patina", "weathering"] if term in all_text]
+            if growth_types:
+                material_condition["growth_types"] = growth_types[:3]
+            material_condition["erosion_level"] = "moderate" if organic_signals >= 3 else "light"
+            material_condition["evidence"] = [f"text_signals={organic_signals}"]
+            material_condition["confidence"] = 0.70  # Lower - text inference
+            material_condition["source"] = "clip_inventory"
+        elif organic_signals >= 1:
+            material_condition["organic_growth"] = "moderate"
+            material_condition["surface_state"] = "weathered"
+            material_condition["erosion_level"] = "light"
+            material_condition["evidence"] = [f"text_signals={organic_signals}"]
+            material_condition["confidence"] = 0.65
+            material_condition["source"] = "clip_inventory"
+        else:
+            # Use visual condition if available
+            if condition_vis != "unknown":
+                material_condition["surface_state"] = condition_vis
+                material_condition["evidence"] = [f"condition={condition_vis} (visual)"]
+                material_condition["confidence"] = material_condition_vis.get("confidence", 0.80)
+                material_condition["source"] = "visual_analysis"
+            elif sharpness and sharpness > 100:
+                material_condition["surface_state"] = "pristine"
+                material_condition["organic_growth"] = "none"
+                material_condition["evidence"] = [f"sharpness={sharpness} (technical)"]
+                material_condition["confidence"] = 0.70
+                material_condition["source"] = "technical_analysis"
+            elif sharpness and sharpness < 30:
+                material_condition["surface_state"] = "degraded"
+                material_condition["evidence"] = [f"sharpness={sharpness} (technical)"]
+                material_condition["confidence"] = 0.70
+                material_condition["source"] = "technical_analysis"
     
-    # Age indicators (enhanced with material condition inventory)
+    # Age indicators (combine visual + text)
+    age_indicators = []
+    if surface_roughness > 0.15:
+        age_indicators.append("weathered (visual)")
+    if condition_vis in ["weathered", "degraded"]:
+        age_indicators.append(f"{condition_vis} (visual)")
+    
+    # Add text-based age indicators as secondary
     age_terms = [
         "old", "aged", "ancient", "historical", "vintage", "weathered", "patina", "eroded", 
         "time", "endurance", "weathered stone", "aged surface", "eroded facade", "patinated",
         "timeworn", "historic building", "ancient structure", "aged architecture"
     ]
-    age_signals = [term for term in age_terms if term in all_text]
-    if age_signals:
-        # Deduplicate and prioritize specific terms
-        unique_signals = []
-        seen = set()
-        for term in age_signals:
-            term_lower = term.lower()
-            if term_lower not in seen:
-                seen.add(term_lower)
-                unique_signals.append(term)
-        material_condition["age_indicators"] = unique_signals[:4]
+    age_signals_text = [term for term in age_terms if term in all_text]
+    if age_signals_text:
+        age_indicators.extend(age_signals_text[:3])
     
-    # Maintenance state
+    if age_indicators:
+        material_condition["age_indicators"] = age_indicators[:5]
+    
+    # Maintenance state (combine visual + text)
     if "abandoned" in all_text or "neglected" in all_text:
         material_condition["maintenance_state"] = "neglected"
-    elif "well maintained" in all_text or "pristine" in all_text or (sharpness and sharpness > 100):
+    elif "well maintained" in all_text or "pristine" in all_text:
         material_condition["maintenance_state"] = "well_maintained"
-    elif organic_signals >= 1:
+    elif green_coverage > 0.1 or organic_signals >= 1:
         material_condition["maintenance_state"] = "in_use"
+    elif condition_vis == "pristine" and sharpness and sharpness > 100:
+        material_condition["maintenance_state"] = "well_maintained"
     
     if material_condition:
         understanding["material_condition"] = material_condition
     
     # === TEMPORAL CONTEXT ===
     temporal_context = {}
+    
+    # Extract visual evidence for temporal direction
+    condition_vis = material_condition_vis.get("condition", "unknown")
+    green_coverage = organic_growth.get("green_coverage", 0.0)
+    salience = organic_growth.get("salience", "minimal")
+    surface_roughness = material_condition_vis.get("surface_roughness", 0.0)
+    edge_degradation = material_condition_vis.get("edge_degradation", 0.0)
     
     # Time scale inference
     historical_terms = ["historical", "ancient", "old", "vintage", "cathedral", "temple", "monument", "heritage"]
@@ -763,6 +1130,27 @@ def synthesize_scene_understanding(analysis_result):
         temporal_context["pace"] = "static"
         temporal_context["moment_type"] = "in_between"
     
+    # Temporal direction (NEW): accreting | decaying | static
+    # This distinguishes growth from decay, not just pace
+    if salience == "structural" and green_coverage > 0.2:
+        # Ivy on structure = accreting (nature growing on structure)
+        temporal_context["temporal_direction"] = "accreting"
+    elif condition_vis in ["weathered", "degraded"] and surface_roughness > 0.15:
+        # Weathered/degraded = decaying (structure breaking down)
+        temporal_context["temporal_direction"] = "decaying"
+    elif condition_vis == "pristine" and green_coverage < 0.1:
+        # Pristine + no organic = static (no change)
+        temporal_context["temporal_direction"] = "static"
+    elif green_coverage > 0.2:
+        # Organic growth present = accreting
+        temporal_context["temporal_direction"] = "accreting"
+    elif "decay" in all_text or "falling" in all_text or "crumbling" in all_text:
+        temporal_context["temporal_direction"] = "decaying"
+    elif "growth" in all_text or "new" in all_text or "emerging" in all_text:
+        temporal_context["temporal_direction"] = "accreting"
+    else:
+        temporal_context["temporal_direction"] = "static"
+    
     # Endurance
     if organic_signals >= 1 and historical_signals >= 1:
         temporal_context["endurance"] = "enduring"
@@ -780,95 +1168,157 @@ def synthesize_scene_understanding(analysis_result):
         understanding["temporal_context"] = temporal_context
     
     # === ORGANIC INTERACTION ===
+    # PRIORITY: Visual evidence (ground truth) > Text matching (inference)
     organic_interaction = {}
     
-    # Relationship inference
-    if organic_signals >= 2:
-        organic_interaction["relationship"] = "reclamation"
-        organic_interaction["integration_level"] = "high"
-        organic_interaction["dominance"] = "balanced"
-        organic_interaction["specific_indicators"] = [term for term in ["ivy", "moss", "vegetation"] if term in all_text][:3]
-    elif organic_signals >= 1:
+    # Use visual evidence as primary source (proven from pixels)
+    if relationship_vis != "none" and integration_level_vis != "none":
+        # Visual evidence: proven relationship from pixels
+        organic_interaction["relationship"] = relationship_vis
+        organic_interaction["integration_level"] = integration_level_vis
+        organic_interaction["overlap_ratio"] = organic_integration_vis.get("overlap_ratio", 0.0)
+        organic_interaction["evidence"] = [
+            f"overlap_ratio={organic_interaction['overlap_ratio']:.3f} (visual)",
+            f"relationship={relationship_vis} (visual)",
+            "proven from pixels"
+        ]
+        organic_interaction["confidence"] = organic_integration_vis.get("confidence", 0.90)
+        organic_interaction["source"] = "visual_analysis"
+        
+        # Dominance inference from visual evidence
+        if relationship_vis == "reclamation" and green_coverage > 0.4:
+            organic_interaction["dominance"] = "nature"  # Nature reclaiming structure
+        elif relationship_vis == "reclamation":
+            organic_interaction["dominance"] = "balanced"  # Balanced reclamation
+        elif relationship_vis == "integration":
+            organic_interaction["dominance"] = "balanced"
+        else:
+            organic_interaction["dominance"] = "structure"
+        
+        # Specific indicators from visual spatial distribution
+        green_locations = organic_growth.get("green_locations", "")
+        if green_locations == "vertical_surfaces":
+            organic_interaction["specific_indicators"] = ["ivy on structure"]
+        elif green_locations in ["foreground", "distributed"]:
+            organic_interaction["specific_indicators"] = ["vegetation integrated"]
+    elif green_coverage > 0.2:
+        # Visual evidence: organic present but unclear relationship
         organic_interaction["relationship"] = "coexistence"
         organic_interaction["integration_level"] = "moderate"
-        organic_interaction["dominance"] = "balanced"
-    elif "nature" in all_text and ("building" in all_text or "structure" in all_text):
-        organic_interaction["relationship"] = "harmony"
-        organic_interaction["integration_level"] = "moderate"
+        organic_interaction["evidence"] = [
+            f"green_coverage={green_coverage:.3f} (visual)",
+            "organic present but relationship unclear"
+        ]
+        organic_interaction["confidence"] = 0.75
+        organic_interaction["source"] = "visual_analysis"
         organic_interaction["dominance"] = "balanced"
     else:
-        organic_interaction["relationship"] = "none"
-        organic_interaction["integration_level"] = "none"
+        # Fallback to text matching if no visual evidence
+        organic_growth_terms = [
+            "ivy", "moss", "vegetation", "growth", "overgrown", "reclaimed", "patina", "weathering"
+        ]
+        organic_signals = sum(1 for term in organic_growth_terms if term in all_text)
+        
+        if organic_signals >= 2:
+            organic_interaction["relationship"] = "reclamation"
+            organic_interaction["integration_level"] = "high"
+            organic_interaction["dominance"] = "balanced"
+            organic_interaction["specific_indicators"] = [term for term in ["ivy", "moss", "vegetation"] if term in all_text][:3]
+            organic_interaction["evidence"] = [f"text_signals={organic_signals}"]
+            organic_interaction["confidence"] = 0.70  # Lower - text inference
+            organic_interaction["source"] = "clip_inventory"
+        elif organic_signals >= 1:
+            organic_interaction["relationship"] = "coexistence"
+            organic_interaction["integration_level"] = "moderate"
+            organic_interaction["dominance"] = "balanced"
+            organic_interaction["evidence"] = [f"text_signals={organic_signals}"]
+            organic_interaction["confidence"] = 0.65
+            organic_interaction["source"] = "clip_inventory"
+        elif "nature" in all_text and ("building" in all_text or "structure" in all_text):
+            organic_interaction["relationship"] = "harmony"
+            organic_interaction["integration_level"] = "moderate"
+            organic_interaction["dominance"] = "balanced"
+            organic_interaction["evidence"] = ["text_inference"]
+            organic_interaction["confidence"] = 0.60
+            organic_interaction["source"] = "clip_inventory"
     
     if organic_interaction.get("relationship") != "none":
         understanding["organic_interaction"] = organic_interaction
     
     # === EMOTIONAL SUBSTRATE ===
-    emotional_substrate = {}
+    # Use constrained emotional synthesis with visual evidence as primary source
+    technical_data = {
+        "brightness": brightness,
+        "contrast": contrast,
+        "sharpness": sharpness,
+        "color_mood": color_mood
+    }
     
-    # Temperature inference (with corrective signals)
-    if organic_signals >= 2 and historical_signals >= 1:
-        # Organic growth + historical = warmth of time, not cold
-        emotional_substrate["temperature"] = "warm_patience"
-        if color_mood == "cool":
-            emotional_substrate["corrective_signals"] = {
-                "temperature_override": {
-                    "from": "cold",
-                    "to": "warm_patience",
-                    "reason": "organic growth and weathering indicate warmth of time, not coldness"
-                }
-            }
-    elif color_mood == "warm":
-        emotional_substrate["temperature"] = "warm"
-    elif color_mood == "cool" and organic_signals == 0:
-        emotional_substrate["temperature"] = "cold"
-    else:
-        emotional_substrate["temperature"] = "neutral"
+    clip_data = {
+        "caption": clip_caption,
+        "tags": clip_tags,
+        "inventory": clip_inventory
+    }
     
-    # Pace
-    if temporal_context.get("pace") == "slow":
-        emotional_substrate["pace"] = "slow_contemplative"
-    elif temporal_context.get("pace") == "fast":
-        emotional_substrate["pace"] = "fast_energetic"
-    else:
-        emotional_substrate["pace"] = "static_eternal"
+    scene_context = {
+        "temporal_context": understanding.get("temporal_context", {}),
+        "organic_interaction": understanding.get("organic_interaction", {})
+    }
     
-    # Presence
-    if organic_signals >= 1:
-        emotional_substrate["presence"] = "grounded"
-        if color_mood == "cool":
-            if "corrective_signals" not in emotional_substrate:
-                emotional_substrate["corrective_signals"] = {}
-            emotional_substrate["corrective_signals"]["presence_override"] = {
-                "from": "distant",
-                "to": "grounded",
-                "reason": "nature integration suggests grounded, lived-in presence, not distance"
-            }
-    elif "distant" in all_text or "isolated" in all_text:
-        emotional_substrate["presence"] = "distant"
-    else:
-        emotional_substrate["presence"] = "grounded"
-    
-    # Quality
-    if organic_signals >= 2 and stillness_signals >= 1:
-        emotional_substrate["quality"] = "enduring_calm"
-    elif organic_signals >= 1:
-        emotional_substrate["quality"] = "organic"
-    elif sharpness and sharpness > 150:
-        emotional_substrate["quality"] = "clinical"
-    elif motion_signals >= 2:
-        emotional_substrate["quality"] = "energetic"
-    else:
-        emotional_substrate["quality"] = "calm"
+    # Synthesize emotional substrate with full explainability
+    emotional_substrate = synthesize_emotional_substrate_constrained(
+        visual_evidence, technical_data, clip_data, scene_context
+    )
     
     if emotional_substrate:
         understanding["emotional_substrate"] = emotional_substrate
+    
+    # === NEGATIVE EVIDENCE (NEW) ===
+    # Track what is NOT present to prevent incorrect interpretations
+    # "no people" ≠ alienation, "no people" = stillness / endurance / pause
+    negative_evidence = {}
+    
+    # Check for human presence (from emotion detection or YOLO)
+    human_presence_detected = emotion.get("subject_type") == "human subject" if emotion.get("available") else False
+    yolo_objects = analysis_result.get("perception", {}).get("objects", {}).get("objects", [])
+    yolo_has_people = any(obj.lower() in ["person", "people", "human", "man", "woman", "child"] for obj in yolo_objects)
+    
+    if not human_presence_detected and not yolo_has_people:
+        negative_evidence["no_human_presence"] = True
+        negative_evidence["human_presence_evidence"] = "No humans detected in emotion analysis or object detection"
+    
+    # Check for motion (from temporal context or text)
+    motion_terms = ["motion", "movement", "dynamic", "action", "busy", "chaotic", "energetic"]
+    motion_signals_count = sum(1 for term in motion_terms if term in all_text)
+    motion_detected = motion_signals_count >= 2
+    if not motion_detected:
+        negative_evidence["no_motion_detected"] = True
+        negative_evidence["motion_evidence"] = "No motion signals detected in temporal analysis"
+    
+    # Check for artificial surface uniformity (pristine, clean surfaces)
+    # This distinguishes "no organic" from "artificial uniformity"
+    if condition_vis == "pristine" and green_coverage < 0.05 and surface_roughness < 0.05:
+        negative_evidence["no_artificial_surface_uniformity"] = True
+        negative_evidence["uniformity_evidence"] = "Pristine condition with minimal organic growth suggests artificial uniformity"
+    elif condition_vis != "pristine" or green_coverage > 0.05:
+        negative_evidence["no_artificial_surface_uniformity"] = False
+    
+    if negative_evidence:
+        understanding["negative_evidence"] = negative_evidence
     
     # === CONTEXTUAL RELATIONSHIPS ===
     contextual_relationships = {}
     
     # Subject vs environment
-    if organic_signals >= 1:
+    # Use visual evidence if available, otherwise text signals
+    organic_growth_terms = [
+        "ivy", "moss", "vegetation", "growth", "overgrown", "reclaimed", "patina", "weathering"
+    ]
+    organic_signals_count = sum(1 for term in organic_growth_terms if term in all_text)
+    has_organic_visual = green_coverage > 0.1
+    has_organic_text = organic_signals_count >= 1
+    
+    if has_organic_visual or has_organic_text:
         contextual_relationships["subject_vs_environment"] = "in_dialogue"
     elif "isolated" in all_text:
         contextual_relationships["subject_vs_environment"] = "isolated"
@@ -906,6 +1356,615 @@ def synthesize_scene_understanding(analysis_result):
         understanding["contextual_relationships"] = contextual_relationships
     
     return understanding
+
+
+# ========================================================
+# DETERMINISTIC VISUAL GROUNDING (Computer Vision)
+# ========================================================
+# Lightweight, provable, explainable visual analysis
+# Provides ground truth that text matching cannot
+
+def detect_organic_growth(image_path):
+    """
+    Detect organic growth (vegetation, ivy, moss, plants) using HSV color thresholds.
+    Universal: works for any image type (architecture, nature, street, portraits).
+    
+    Deterministic, provable, explainable.
+    Returns ground truth about green pixel coverage and spatial distribution.
+    
+    Args:
+        image_path: Path to image file
+    
+    Returns:
+        Dict with:
+            - green_coverage: float (0.0-1.0) - percentage of image that is green
+            - green_locations: str - spatial distribution ("vertical_surfaces", "foreground", "background", "distributed")
+            - green_clusters: int - number of distinct green regions
+            - evidence: list of strings - explainable evidence
+            - confidence: float (0.0-1.0) - confidence in detection
+    """
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            return {"green_coverage": 0.0, "green_locations": "none", "green_clusters": 0, 
+                   "evidence": ["image_load_failed"], "confidence": 0.0}
+        
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        h, w = img.shape[:2]
+        total_pixels = h * w
+        
+        # Edge case: Check if image is too dark or too bright (affects color detection)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        mean_brightness = np.mean(gray)
+        is_dark = mean_brightness < 30
+        is_bright = mean_brightness > 225
+        
+        # Adjust HSV thresholds for edge cases
+        if is_dark:
+            # Dark images: lower saturation threshold, allow darker values
+            lower_green = np.array([40, 30, 20])
+            upper_green = np.array([80, 255, 255])
+        elif is_bright:
+            # Bright images: higher saturation threshold to avoid false positives
+            lower_green = np.array([40, 60, 60])
+            upper_green = np.array([80, 255, 255])
+        else:
+            # Normal images: standard thresholds
+            lower_green = np.array([40, 50, 50])
+            upper_green = np.array([80, 255, 255])
+        
+        # HSV green range (covers ivy, moss, grass, leaves, vegetation)
+        # Hue: 40-80 (green range in HSV)
+        # Saturation: 50-255 (avoid grey/desaturated) - adjusted for edge cases
+        # Value: 50-255 (avoid too dark) - adjusted for edge cases
+        green_mask = cv2.inRange(hsv, lower_green, upper_green)
+        
+        # Calculate coverage
+        green_pixels = np.sum(green_mask > 0)
+        green_coverage = green_pixels / total_pixels if total_pixels > 0 else 0.0
+        
+        # Spatial distribution analysis
+        # Divide image into regions and check where green is concentrated
+        h_third = h // 3
+        w_third = w // 3
+        
+        # Check vertical surfaces (left/right edges) - common for ivy on buildings
+        left_region = green_mask[:, :w_third]
+        right_region = green_mask[:, -w_third:]
+        vertical_coverage = (np.sum(left_region > 0) + np.sum(right_region > 0)) / (2 * h * w_third) if w_third > 0 else 0
+        
+        # Check foreground (bottom third)
+        foreground_region = green_mask[-h_third:, :]
+        foreground_coverage = np.sum(foreground_region > 0) / (h_third * w) if h_third > 0 else 0
+        
+        # Check background (top third)
+        background_region = green_mask[:h_third, :]
+        background_coverage = np.sum(background_region > 0) / (h_third * w) if h_third > 0 else 0
+        
+        # Determine spatial distribution
+        if vertical_coverage > 0.3:
+            green_locations = "vertical_surfaces"  # Likely ivy on walls
+        elif foreground_coverage > 0.4:
+            green_locations = "foreground"  # Grass, plants in front
+        elif background_coverage > 0.4:
+            green_locations = "background"  # Trees, landscape behind
+        elif green_coverage > 0.1:
+            green_locations = "distributed"  # Scattered throughout
+        else:
+            green_locations = "minimal"
+        
+        # Count distinct green clusters (connected components)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(green_mask, connectivity=8)
+        # Filter out tiny noise (clusters < 0.1% of image)
+        min_cluster_size = total_pixels * 0.001
+        green_clusters = sum(1 for stat in stats[1:] if stat[cv2.CC_STAT_AREA] >= min_cluster_size)
+        
+        # Evidence list (explainable)
+        evidence = [
+            f"green_coverage={green_coverage:.3f}",
+            f"green_clusters={green_clusters}",
+            f"spatial_distribution={green_locations}"
+        ]
+        
+        # Confidence: high if significant coverage, lower if minimal
+        # Adjust for edge cases (dark/bright images may have lower confidence)
+        base_confidence = 0.95 if green_coverage > 0.3 else (
+            0.85 if green_coverage > 0.1 else (
+            0.70 if green_coverage > 0.05 else 0.50
+            )
+        )
+        
+        # Reduce confidence for edge cases
+        if is_dark:
+            confidence = base_confidence * 0.85  # Dark images: harder to detect colors accurately
+        elif is_bright:
+            confidence = base_confidence * 0.90  # Bright images: slight reduction
+        else:
+            confidence = base_confidence
+        
+        # Determine salience (structural vs incidental vs peripheral)
+        # This distinguishes ivy on facade from grass in foreground
+        if green_locations == "vertical_surfaces" and green_coverage > 0.2:
+            salience = "structural"  # Organic growth on structure (e.g., ivy on walls)
+        elif green_locations == "foreground" and green_coverage > 0.3:
+            salience = "incidental"  # Foreground vegetation (e.g., grass, plants)
+        elif green_locations == "background" and green_coverage > 0.2:
+            salience = "peripheral"  # Background vegetation (e.g., trees, landscape)
+        elif green_coverage > 0.1:
+            salience = "distributed"  # Scattered throughout
+        else:
+            salience = "minimal"  # Minimal or none
+        
+        return {
+            "green_coverage": float(green_coverage),
+            "green_locations": green_locations,
+            "green_clusters": int(green_clusters),
+            "salience": salience,  # NEW: structural | incidental | peripheral | distributed | minimal
+            "evidence": evidence,
+            "confidence": float(confidence)
+        }
+    except Exception as e:
+        logger.warning(f"Organic growth detection failed: {e}")
+        return {"green_coverage": 0.0, "green_locations": "none", "green_clusters": 0,
+               "salience": "minimal", "evidence": [f"error: {str(e)}"], "confidence": 0.0}
+
+
+def detect_material_condition(image_path):
+    """
+    Detect material condition (weathered/smooth/pristine/degraded) using texture variance.
+    Universal: works for any surface type (stone, concrete, wood, fabric, skin).
+    
+    Deterministic, provable, explainable.
+    Returns ground truth about surface roughness and edge quality.
+    
+    Args:
+        image_path: Path to image file
+    
+    Returns:
+        Dict with:
+            - surface_roughness: float - texture variance (high = rough/weathered, low = smooth)
+            - edge_degradation: float - edge quality (high = degraded/aged, low = sharp/new)
+            - condition: str - "weathered" | "pristine" | "moderate" | "degraded"
+            - evidence: list of strings - explainable evidence
+            - confidence: float (0.0-1.0) - confidence in detection
+    """
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            return {"surface_roughness": 0.0, "edge_degradation": 0.0, "condition": "unknown",
+                   "evidence": ["image_load_failed"], "confidence": 0.0}
+        
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        
+        # === TEXTURE VARIANCE (Roughness Detection) ===
+        # Use local variance to detect surface roughness
+        # High variance = rough/weathered, low variance = smooth/pristine
+        
+        # Calculate local variance using a sliding window
+        kernel_size = 15
+        kernel = np.ones((kernel_size, kernel_size), np.float32) / (kernel_size * kernel_size)
+        local_mean = cv2.filter2D(gray.astype(np.float32), -1, kernel)
+        local_variance = cv2.filter2D((gray.astype(np.float32) - local_mean) ** 2, -1, kernel)
+        
+        # Global texture variance (normalized 0-1)
+        mean_variance = np.mean(local_variance)
+        max_possible_variance = 255.0 ** 2  # Maximum variance for 8-bit image
+        normalized_variance = min(mean_variance / max_possible_variance, 1.0)
+        surface_roughness = float(normalized_variance)
+        
+        # === EDGE DEGRADATION (Age Indicators) ===
+        # Sharp edges = new/pristine, degraded edges = aged/weathered
+        
+        # Detect edges using Canny
+        edges = cv2.Canny(gray, 50, 150)
+        
+        # Calculate edge sharpness (how well-defined are the edges?)
+        # Use gradient magnitude as proxy for sharpness
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
+        
+        # Normalize edge sharpness (0-1)
+        max_gradient = np.max(gradient_magnitude) if np.max(gradient_magnitude) > 0 else 1.0
+        mean_gradient = np.mean(gradient_magnitude[edges > 0]) if np.sum(edges > 0) > 0 else 0.0
+        edge_sharpness = float(mean_gradient / max_gradient) if max_gradient > 0 else 0.0
+        
+        # Edge degradation is inverse of sharpness
+        edge_degradation = 1.0 - edge_sharpness
+        
+        # === CONDITION INFERENCE ===
+        # Thresholds are tuned for general images (architecture, nature, portraits, etc.)
+        if surface_roughness > 0.15 and edge_degradation > 0.4:
+            condition = "weathered"  # Rough texture + degraded edges
+        elif surface_roughness < 0.05 and edge_degradation < 0.2:
+            condition = "pristine"  # Smooth texture + sharp edges
+        elif surface_roughness > 0.2 or edge_degradation > 0.6:
+            condition = "degraded"  # Very rough or very degraded
+        else:
+            condition = "moderate"  # In between
+        
+        # Evidence list (explainable)
+        evidence = [
+            f"texture_variance={surface_roughness:.3f}",
+            f"edge_degradation={edge_degradation:.3f}",
+            f"condition={condition}"
+        ]
+        
+        # Edge case: Check if image is too dark or too bright (affects texture analysis)
+        mean_brightness = np.mean(gray)
+        is_dark = mean_brightness < 30
+        is_bright = mean_brightness > 225
+        
+        # Confidence: higher when signals are clear
+        base_confidence = 0.90 if ((surface_roughness > 0.15 and edge_degradation > 0.4) or 
+                                   (surface_roughness < 0.05 and edge_degradation < 0.2)) else (
+            0.80 if (surface_roughness > 0.1 or edge_degradation > 0.3) else 0.65
+        )
+        
+        # Adjust confidence for edge cases
+        if is_dark:
+            confidence = base_confidence * 0.80  # Dark images: texture analysis less reliable
+        elif is_bright:
+            confidence = base_confidence * 0.85  # Bright images: slight reduction
+        else:
+            confidence = base_confidence
+        
+        return {
+            "surface_roughness": surface_roughness,
+            "edge_degradation": edge_degradation,
+            "condition": condition,
+            "evidence": evidence,
+            "confidence": float(confidence)
+        }
+    except Exception as e:
+        logger.warning(f"Material condition detection failed: {e}")
+        return {"surface_roughness": 0.0, "edge_degradation": 0.0, "condition": "unknown",
+               "evidence": [f"error: {str(e)}"], "confidence": 0.0}
+
+
+def detect_organic_integration(image_path, green_mask=None, structure_edges=None):
+    """
+    Detect if organic elements are integrated with structure using morphological operations.
+    Universal: works for any image type (architecture, nature, street, portraits).
+    
+    Determines relationship: reclamation, integration, coexistence, or none.
+    
+    Args:
+        image_path: Path to image file
+        green_mask: Optional pre-computed green mask (if None, computed here)
+        structure_edges: Optional pre-computed structure edges (if None, computed here)
+    
+    Returns:
+        Dict with:
+            - overlap_ratio: float (0.0-1.0) - how much green overlaps structure
+            - relationship: str - "reclamation" | "integration" | "coexistence" | "none"
+            - integration_level: str - "high" | "moderate" | "low" | "none"
+            - evidence: list of strings - explainable evidence
+            - confidence: float (0.0-1.0) - confidence in detection
+    """
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            return {"overlap_ratio": 0.0, "relationship": "none", "integration_level": "none",
+                   "evidence": ["image_load_failed"], "confidence": 0.0}
+        
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        
+        # Compute green mask if not provided
+        if green_mask is None:
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            lower_green = np.array([40, 50, 50])
+            upper_green = np.array([80, 255, 255])
+            green_mask = cv2.inRange(hsv, lower_green, upper_green)
+        
+        # Compute structure edges if not provided
+        # Structure = strong edges (buildings, objects, defined forms)
+        if structure_edges is None:
+            # Use Canny with higher thresholds to detect strong structural edges
+            structure_edges = cv2.Canny(gray, 100, 200)
+            # Dilate edges slightly to capture nearby pixels
+            kernel = np.ones((3, 3), np.uint8)
+            structure_edges = cv2.dilate(structure_edges, kernel, iterations=1)
+        
+        # Calculate overlap using morphological operations
+        # Overlap = green pixels that are near or on structure edges
+        overlap = cv2.bitwise_and(green_mask, structure_edges)
+        
+        green_pixels = np.sum(green_mask > 0)
+        overlap_pixels = np.sum(overlap > 0)
+        
+        if green_pixels > 0:
+            overlap_ratio = overlap_pixels / green_pixels
+        else:
+            overlap_ratio = 0.0
+        
+        # Also check proximity (green near structure, even if not directly overlapping)
+        # Dilate structure edges to create a "nearby" zone
+        dilated_edges = cv2.dilate(structure_edges, np.ones((15, 15), np.uint8), iterations=1)
+        proximity_mask = cv2.bitwise_and(green_mask, dilated_edges)
+        proximity_pixels = np.sum(proximity_mask > 0)
+        proximity_ratio = proximity_pixels / green_pixels if green_pixels > 0 else 0.0
+        
+        # Relationship inference
+        if overlap_ratio > 0.6 or proximity_ratio > 0.8:
+            relationship = "reclamation"  # Organic on/around structure
+            integration_level = "high"
+        elif overlap_ratio > 0.3 or proximity_ratio > 0.5:
+            relationship = "integration"  # Partial integration
+            integration_level = "moderate"
+        elif green_pixels > 0 and (overlap_ratio > 0.1 or proximity_ratio > 0.2):
+            relationship = "coexistence"  # Some interaction
+            integration_level = "low"
+        else:
+            relationship = "none"  # No interaction
+            integration_level = "none"
+        
+        # Evidence list (explainable)
+        evidence = [
+            f"overlap_ratio={overlap_ratio:.3f}",
+            f"proximity_ratio={proximity_ratio:.3f}",
+            f"relationship={relationship}"
+        ]
+        
+        # Confidence: higher when overlap is clear
+        if overlap_ratio > 0.6:
+            confidence = 0.95  # High - clear overlap
+        elif overlap_ratio > 0.3:
+            confidence = 0.85  # Medium-high - moderate overlap
+        elif green_pixels > 0:
+            confidence = 0.70  # Medium - some green but unclear relationship
+        else:
+            confidence = 0.50  # Low - no green detected
+        
+        return {
+            "overlap_ratio": float(overlap_ratio),
+            "proximity_ratio": float(proximity_ratio),
+            "relationship": relationship,
+            "integration_level": integration_level,
+            "evidence": evidence,
+            "confidence": float(confidence)
+        }
+    except Exception as e:
+        logger.warning(f"Organic integration detection failed: {e}")
+        return {"overlap_ratio": 0.0, "relationship": "none", "integration_level": "none",
+               "evidence": [f"error: {str(e)}"], "confidence": 0.0}
+
+
+def validate_visual_evidence(visual_evidence, min_confidence=0.60):
+    """
+    Validate visual evidence quality and detect potential issues.
+    Returns validation results and warnings.
+    
+    Args:
+        visual_evidence: Dict from extract_visual_features()
+        min_confidence: Minimum confidence threshold (default 0.60)
+    
+    Returns:
+        Dict with:
+            - is_valid: bool - whether evidence meets quality thresholds
+            - warnings: list - warnings about evidence quality
+            - issues: list - critical issues that should prevent use
+    """
+    validation = {
+        "is_valid": True,
+        "warnings": [],
+        "issues": []
+    }
+    
+    organic_growth = visual_evidence.get("organic_growth", {})
+    material_condition = visual_evidence.get("material_condition", {})
+    organic_integration = visual_evidence.get("organic_integration", {})
+    overall_confidence = visual_evidence.get("overall_confidence", 0.0)
+    
+    # Check overall confidence
+    if overall_confidence < min_confidence:
+        validation["warnings"].append(f"Overall confidence ({overall_confidence:.2f}) below threshold ({min_confidence})")
+        if overall_confidence < 0.40:
+            validation["issues"].append("Very low overall confidence - visual evidence may be unreliable")
+            validation["is_valid"] = False
+    
+    # Check individual component confidences
+    og_confidence = organic_growth.get("confidence", 0.0)
+    mc_confidence = material_condition.get("confidence", 0.0)
+    oi_confidence = organic_integration.get("confidence", 0.0)
+    
+    if og_confidence < 0.50 and organic_growth.get("green_coverage", 0.0) > 0.1:
+        validation["warnings"].append("Organic growth detected but confidence is low - may be false positive")
+    
+    if mc_confidence < 0.50:
+        validation["warnings"].append("Material condition confidence is low - texture analysis may be unreliable")
+    
+    if oi_confidence < 0.50 and organic_integration.get("relationship") != "none":
+        validation["warnings"].append("Organic integration detected but confidence is low")
+    
+    # Check for contradictions within visual evidence
+    green_coverage = organic_growth.get("green_coverage", 0.0)
+    condition = material_condition.get("condition", "unknown")
+    
+    if green_coverage > 0.3 and condition == "pristine":
+        validation["warnings"].append("Contradiction: High organic growth but pristine condition - may indicate error")
+    
+    if green_coverage < 0.05 and organic_integration.get("relationship") == "reclamation":
+        validation["warnings"].append("Contradiction: Reclamation relationship but minimal green coverage")
+    
+    return validation
+
+
+def detect_contradictions(visual_evidence, text_inference, min_confidence_diff=0.15):
+    """
+    Detect contradictions between visual evidence (ground truth) and text inference.
+    Visual evidence with high confidence should override text inference.
+    
+    Args:
+        visual_evidence: Dict from extract_visual_features()
+        text_inference: Dict with text-based inferences (e.g., from CLIP)
+        min_confidence_diff: Minimum confidence difference to trigger override (default 0.15)
+    
+    Returns:
+        Dict with:
+            - contradictions: list of detected contradictions
+            - overrides: list of text inferences that should be overridden by visual evidence
+            - recommendations: list of recommendations for handling contradictions
+    """
+    contradictions = {
+        "contradictions": [],
+        "overrides": [],
+        "recommendations": []
+    }
+    
+    # Extract visual evidence
+    organic_growth = visual_evidence.get("organic_growth", {})
+    material_condition = visual_evidence.get("material_condition", {})
+    organic_integration = visual_evidence.get("organic_integration", {})
+    
+    green_coverage = organic_growth.get("green_coverage", 0.0)
+    og_confidence = organic_growth.get("confidence", 0.0)
+    condition_vis = material_condition.get("condition", "unknown")
+    mc_confidence = material_condition.get("confidence", 0.0)
+    relationship_vis = organic_integration.get("relationship", "none")
+    oi_confidence = organic_integration.get("confidence", 0.0)
+    
+    # Check text inference (if available)
+    text_has_organic = text_inference.get("has_organic_growth", False)
+    text_condition = text_inference.get("condition", "unknown")
+    text_relationship = text_inference.get("organic_relationship", "none")
+    
+    # Contradiction 1: Organic growth
+    if green_coverage > 0.2 and og_confidence > 0.70 and not text_has_organic:
+        contradictions["contradictions"].append({
+            "type": "organic_growth_mismatch",
+            "visual": f"green_coverage={green_coverage:.3f} (confidence={og_confidence:.2f})",
+            "text": "no organic growth detected",
+            "severity": "high" if og_confidence > 0.85 else "medium"
+        })
+        contradictions["overrides"].append({
+            "field": "has_organic_growth",
+            "from": False,
+            "to": True,
+            "reason": f"Visual evidence proves {green_coverage:.1%} green coverage with {og_confidence:.0%} confidence"
+        })
+        contradictions["recommendations"].append("Trust visual evidence - text inference missed organic growth")
+    
+    # Contradiction 2: Material condition
+    if condition_vis != "unknown" and mc_confidence > 0.75:
+        if text_condition != "unknown" and text_condition != condition_vis:
+            # Check if visual confidence is significantly higher
+            if mc_confidence > 0.80:
+                contradictions["contradictions"].append({
+                    "type": "condition_mismatch",
+                    "visual": f"{condition_vis} (confidence={mc_confidence:.2f})",
+                    "text": text_condition,
+                    "severity": "high"
+                })
+                contradictions["overrides"].append({
+                    "field": "condition",
+                    "from": text_condition,
+                    "to": condition_vis,
+                    "reason": f"Visual texture analysis proves {condition_vis} with {mc_confidence:.0%} confidence"
+                })
+                contradictions["recommendations"].append("Trust visual evidence - texture analysis is ground truth")
+    
+    # Contradiction 3: Organic integration
+    if relationship_vis != "none" and oi_confidence > 0.75:
+        if text_relationship != relationship_vis and text_relationship != "none":
+            contradictions["contradictions"].append({
+                "type": "integration_mismatch",
+                "visual": f"{relationship_vis} (confidence={oi_confidence:.2f})",
+                "text": text_relationship,
+                "severity": "high" if oi_confidence > 0.85 else "medium"
+            })
+            contradictions["overrides"].append({
+                "field": "organic_relationship",
+                "from": text_relationship,
+                "to": relationship_vis,
+                "reason": f"Visual morphological analysis proves {relationship_vis} with {oi_confidence:.0%} confidence"
+            })
+            contradictions["recommendations"].append("Trust visual evidence - morphological operations are ground truth")
+    
+    return contradictions
+
+
+def extract_visual_features(image_path):
+    """
+    Extract all visual features using deterministic computer vision.
+    Universal: works for any image type.
+    
+    This is the main entry point for visual grounding.
+    Returns ground truth that text matching cannot provide.
+    
+    ENHANCED: Now includes validation and edge case handling.
+    
+    Args:
+        image_path: Path to image file
+    
+    Returns:
+        Dict with all visual features:
+            - organic_growth: dict from detect_organic_growth()
+            - material_condition: dict from detect_material_condition()
+            - organic_integration: dict from detect_organic_integration()
+            - overall_confidence: float - overall confidence in visual analysis
+            - validation: dict from validate_visual_evidence()
+    """
+    try:
+        # Extract all visual features
+        organic_growth = detect_organic_growth(image_path)
+        material_condition = detect_material_condition(image_path)
+        
+        # For integration detection, we can reuse the green mask
+        img = cv2.imread(image_path)
+        if img is not None:
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            lower_green = np.array([40, 50, 50])
+            upper_green = np.array([80, 255, 255])
+            green_mask = cv2.inRange(hsv, lower_green, upper_green)
+            
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            structure_edges = cv2.Canny(gray, 100, 200)
+            kernel = np.ones((3, 3), np.uint8)
+            structure_edges = cv2.dilate(structure_edges, kernel, iterations=1)
+            
+            organic_integration = detect_organic_integration(image_path, green_mask, structure_edges)
+        else:
+            organic_integration = {"overlap_ratio": 0.0, "relationship": "none", "integration_level": "none",
+                                  "evidence": ["image_load_failed"], "confidence": 0.0}
+        
+        # Overall confidence (weighted average)
+        confidences = [
+            organic_growth.get("confidence", 0.0),
+            material_condition.get("confidence", 0.0),
+            organic_integration.get("confidence", 0.0)
+        ]
+        overall_confidence = float(np.mean(confidences)) if confidences else 0.0
+        
+        visual_evidence = {
+            "organic_growth": organic_growth,
+            "material_condition": material_condition,
+            "organic_integration": organic_integration,
+            "overall_confidence": overall_confidence
+        }
+        
+        # Validate visual evidence
+        validation = validate_visual_evidence(visual_evidence)
+        visual_evidence["validation"] = validation
+        
+        # Log validation warnings and issues
+        if validation["warnings"]:
+            logger.info(f"Visual evidence validation warnings: {validation['warnings']}")
+        if validation["issues"]:
+            logger.warning(f"Visual evidence validation issues: {validation['issues']}")
+        
+        return visual_evidence
+    except Exception as e:
+        logger.warning(f"Visual feature extraction failed: {e}")
+        return {
+            "organic_growth": {"green_coverage": 0.0, "confidence": 0.0},
+            "material_condition": {"condition": "unknown", "confidence": 0.0},
+            "organic_integration": {"relationship": "none", "confidence": 0.0},
+            "overall_confidence": 0.0,
+            "validation": {"is_valid": False, "warnings": [], "issues": [f"Extraction failed: {str(e)}"]}
+        }
 
 
 def analyze_color(image_path):
@@ -1828,11 +2887,61 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
             result["derived"]["genre"]["genre"] = genre_info.get("genre")
             result["derived"]["genre"]["subgenre"] = genre_info.get("subgenre")
         
+        # === VISUAL EVIDENCE EXTRACTION (GROUND TRUTH) ===
+        # Extract visual features using deterministic computer vision
+        # This provides ground truth that text matching cannot
+        visual_evidence = {}
+        try:
+            visual_evidence = extract_visual_features(path)
+            
+            # Log detailed visual evidence
+            og = visual_evidence.get("organic_growth", {})
+            mc = visual_evidence.get("material_condition", {})
+            oi = visual_evidence.get("organic_integration", {})
+            validation = visual_evidence.get("validation", {})
+            
+            logger.info(f"Visual evidence extracted: "
+                       f"green_coverage={og.get('green_coverage', 0.0):.3f} (conf={og.get('confidence', 0.0):.2f}), "
+                       f"condition={mc.get('condition', 'unknown')} (conf={mc.get('confidence', 0.0):.2f}), "
+                       f"integration={oi.get('relationship', 'none')} (conf={oi.get('confidence', 0.0):.2f}), "
+                       f"overall_conf={visual_evidence.get('overall_confidence', 0.0):.2f}")
+            
+            # Log validation results
+            if validation.get("warnings"):
+                logger.info(f"Visual evidence warnings: {validation['warnings']}")
+            if validation.get("issues"):
+                logger.warning(f"Visual evidence issues: {validation['issues']}")
+            
+            # Detect contradictions with text inference (if available)
+            # This helps enforce visual conscience
+            if clip_data.get("caption") or clip_data.get("tags"):
+                text_inference = {
+                    "has_organic_growth": any(term in (clip_data.get("caption", "") + " " + " ".join(clip_data.get("tags", []))).lower() 
+                                             for term in ["ivy", "moss", "vegetation", "green", "growth"]),
+                    "condition": "unknown",  # Would need to extract from CLIP
+                    "organic_relationship": "none"  # Would need to extract from CLIP
+                }
+                contradictions = detect_contradictions(visual_evidence, text_inference)
+                if contradictions["contradictions"]:
+                    logger.info(f"Detected {len(contradictions['contradictions'])} contradictions between visual and text")
+                    for cont in contradictions["contradictions"]:
+                        logger.info(f"  - {cont['type']}: visual={cont['visual']}, text={cont['text']} (severity={cont['severity']})")
+                    if contradictions["overrides"]:
+                        logger.info(f"Visual evidence will override text inference in {len(contradictions['overrides'])} cases")
+        except Exception as e:
+            logger.warning(f"Visual evidence extraction failed (non-fatal): {e}")
+            visual_evidence = {}
+        
+        # Store visual evidence temporarily for Scene Understanding
+        result["_visual_evidence"] = visual_evidence
+        
         # === SCENE UNDERSTANDING SYNTHESIS ===
         # Synthesize contextual understanding of "what is happening here"
         # Called after all perception, before semantic anchors
-        # Temporarily store clip_inventory for Scene Understanding access
+        # NOW USES VISUAL EVIDENCE as primary source (ground truth from pixels)
+        # Temporarily store clip_inventory and image_path for Scene Understanding access
         result["_clip_inventory"] = clip_inventory if isinstance(clip_inventory, list) else []
+        result["_image_path"] = path  # For visual evidence extraction in Scene Understanding
         try:
             scene_understanding = synthesize_scene_understanding(result)
             # Only add understanding if any elements were synthesized (sparse by default)
@@ -1840,9 +2949,13 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
                 result["scene_understanding"] = scene_understanding
             # Clean up temporary storage
             result.pop("_clip_inventory", None)
+            result.pop("_image_path", None)
+            result.pop("_visual_evidence", None)
         except Exception as e:
             logger.warning(f"Scene understanding synthesis failed (non-fatal): {e}")
             result.pop("_clip_inventory", None)
+            result.pop("_image_path", None)
+            result.pop("_visual_evidence", None)
             # Don't add error - understanding is optional
         
         # === SEMANTIC ANCHORS GENERATION ===
@@ -2221,15 +3334,47 @@ These are not opinions. They are measured facts and contextual synthesis.
                 understanding_lines.append(f"Contextual Relationships: {', '.join(rel_parts)}")
         
         if understanding_lines:
-            scene_understanding_section = f"""
+            # Check if visual evidence was used (ground truth from pixels)
+            # Look for evidence fields that indicate visual analysis
+            visual_evidence_used = False
+            for line in understanding_lines:
+                if "(visual)" in line or "visual_analysis" in line or "proven from pixels" in line:
+                    visual_evidence_used = True
+                    break
+            
+            # Also check material_condition and organic_interaction for visual source
+            if not visual_evidence_used:
+                material = scene_understanding.get("material_condition", {})
+                organic = scene_understanding.get("organic_interaction", {})
+                if material.get("source") == "visual_analysis" or organic.get("source") == "visual_analysis":
+                    visual_evidence_used = True
+            
+            if visual_evidence_used:
+                scene_understanding_section = f"""
+SCENE UNDERSTANDING (AUTHORITATIVE - GROUND TRUTH FROM PIXELS):
+{chr(10).join(understanding_lines)}
+
+This understanding synthesizes material condition, temporal context, organic interaction, and emotional substrate.
+Elements marked "(visual)" or sourced from "visual_analysis" are PROVEN FROM PIXELS using deterministic computer vision.
+These are ground truth measurements, not text inference. Examples:
+- Green pixel coverage (organic growth) is measured from HSV color thresholds
+- Surface roughness (weathering) is measured from texture variance
+- Integration level (organic-structure relationship) is measured from morphological operations
+
+This is AUTHORITATIVE CONTEXT. You must not contradict it. Ground your critique in what is actually happening in the image.
+If visual evidence indicates organic growth, weathering, or integration, you MUST reference it explicitly.
+If visual evidence forbids "cold" or "clinical" (due to organic warmth), you MUST NOT use those terms.
+"""
+            else:
+                scene_understanding_section = f"""
 SCENE UNDERSTANDING (AUTHORITATIVE):
 {chr(10).join(understanding_lines)}
 
 This understanding synthesizes material condition, temporal context, organic interaction, and emotional substrate.
 This is AUTHORITATIVE CONTEXT. You must not contradict it. Ground your critique in what is actually happening in the image.
 """
-    else:
-        scene_understanding_section = ""
+        else:
+            scene_understanding_section = ""
     
     # === STEP 2: CORRECTIVE SIGNALS (MANDATORY LOCKS) ===
     corrective_signals_section = ""
@@ -2313,7 +3458,39 @@ EMOTIONAL SIGNAL
 """
     
     # === STEP 5: HARD GOVERNANCE RULES ===
-    governance_rules = """
+    # Enhanced with visual evidence enforcement
+    visual_evidence_present = scene_understanding and any(
+        "(visual)" in str(v) or "visual_analysis" in str(v) 
+        for v in scene_understanding.values() if isinstance(v, dict)
+    )
+    
+    if visual_evidence_present:
+        governance_rules = """
+RULES (NON-NEGOTIABLE):
+- You must not contradict Scene Understanding.
+- You must apply all Corrective Signals (they are mandatory locks, not suggestions).
+- If organic growth or weathering is present in Scene Understanding, you must reference it explicitly.
+- If human_presence is 'none detected' in Semantic Anchors, you must not imply or invent human subjects.
+- Do not describe the image as cold, sterile, or clinical if Scene Understanding indicates warmth or organic integration.
+- Every interpretive claim must be grounded in Scene Understanding, Anchors, or Measured Evidence.
+- If semantic anchors are present, you must name the structures and environment explicitly.
+- Stop at functional/cultural level (e.g., "mosque", "religious architecture").
+- Do not make historical claims, architectural style claims, or location claims.
+- Do NOT describe the image literally.
+- Do NOT list tips.
+- Do NOT sound instructional.
+- Do NOT flatter.
+
+VISUAL EVIDENCE ENFORCEMENT (CRITICAL):
+- Elements marked "(visual)" or sourced from "visual_analysis" are PROVEN FROM PIXELS.
+- These are ground truth measurements, not inferences.
+- You MUST NOT contradict visual evidence. If visual evidence shows organic growth, you MUST acknowledge it.
+- If visual evidence forbids certain interpretations (e.g., "cold" when organic warmth is detected), you MUST NOT use those terms.
+- Visual evidence overrides text inference when confidence is high (>0.75).
+- If you see "(visual)" in Scene Understanding, treat it as absolute truth, not suggestion.
+"""
+    else:
+        governance_rules = """
 RULES (NON-NEGOTIABLE):
 - You must not contradict Scene Understanding.
 - You must apply all Corrective Signals (they are mandatory locks, not suggestions).
