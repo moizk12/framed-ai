@@ -467,28 +467,54 @@ def get_clip_inventory(image_path):
         "empty", "unoccupied", "solitary", "isolated"
     ]
     
-    # Process all three inventories
+    # Process all three inventories separately to track source
     all_candidates = structural_candidates + material_condition_candidates + atmosphere_candidates
+    
+    # Track which candidates belong to which category
+    structural_start = 0
+    material_start = len(structural_candidates)
+    atmosphere_start = material_start + len(material_condition_candidates)
+    
     inputs = clip_processor(text=all_candidates, images=image, return_tensors="pt", padding=True).to(device)
     outputs = clip_model(**inputs)
     logits_per_image = outputs.logits_per_image
     probs = logits_per_image.softmax(dim=1)
     
-    # Get top 15 most relevant items (increased from 10 to capture more material condition signals)
+    # Get top 15 most relevant items with confidence scores
     top_k = 15
     top_indices = probs.topk(top_k).indices[0].cpu().tolist()
-    inventory_items = [all_candidates[idx] for idx in top_indices if probs[0][idx].item() > 0.05]  # Threshold: 5% confidence
     
-    # Deduplicate (keep order, preserve first occurrence)
-    seen = set()
-    deduplicated = []
-    for item in inventory_items:
-        item_lower = item.lower()
-        if item_lower not in seen:
-            seen.add(item_lower)
-            deduplicated.append(item)
+    # Build inventory with confidence and source
+    inventory_with_metadata = []
+    seen_lower = set()
     
-    return deduplicated
+    for idx in top_indices:
+        confidence = probs[0][idx].item()
+        if confidence > 0.05:  # Threshold: 5% confidence
+            item = all_candidates[idx]
+            item_lower = item.lower()
+            
+            # Skip if already seen (deduplication)
+            if item_lower in seen_lower:
+                continue
+            seen_lower.add(item_lower)
+            
+            # Determine source category
+            if idx < material_start:
+                source = "structural_prompt"
+            elif idx < atmosphere_start:
+                source = "material_condition_prompt"
+            else:
+                source = "atmosphere_prompt"
+            
+            inventory_with_metadata.append({
+                "item": item,
+                "confidence": float(confidence),
+                "source": source
+            })
+    
+    # Return as list of dicts (Phase 2.1: confidence scoring and source attribution)
+    return inventory_with_metadata
 
 
 def generate_semantic_anchors(clip_inventory, clip_tags, clip_caption, yolo_objects, composition_data):
@@ -1405,7 +1431,7 @@ def synthesize_scene_understanding(analysis_result):
     elif not human_presence:
         contextual_relationships["human_vs_space"] = "alienation"
     else:
-        contextual_relationships["human_vs_space"] = "active_occupation"
+        contextual_relationships["human_vs_space"] = "presence" "active_occupation"
     
     # Organic vs inorganic
     if organic_interaction.get("relationship") == "reclamation":
@@ -1675,11 +1701,45 @@ def detect_material_condition(image_path):
         else:
             confidence = base_confidence
         
+        # === COLOR UNIFORMITY (Paint vs Organic) ===
+        # High uniformity = likely paint/manufactured, low uniformity = likely organic/natural
+        # Analyze color variance in the green regions (if any)
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+        
+        # Calculate color uniformity (inverse of variance)
+        # For green regions specifically (if green coverage > 0.1)
+        green_mask_temp = cv2.inRange(hsv, np.array([40, 50, 50]), np.array([80, 255, 255]))
+        green_pixels = np.sum(green_mask_temp > 0)
+        total_pixels = h * w
+        
+        if green_pixels > total_pixels * 0.1:  # If significant green coverage
+            # Calculate hue variance in green regions
+            green_hue = h[green_mask_temp > 0]
+            if len(green_hue) > 0:
+                hue_variance = np.var(green_hue.astype(np.float32))
+                max_hue_variance = 180.0 ** 2  # Max variance for hue (0-180)
+                normalized_hue_variance = min(hue_variance / max_hue_variance, 1.0)
+                color_uniformity = 1.0 - normalized_hue_variance  # Uniformity = inverse of variance
+            else:
+                color_uniformity = 0.5  # Default if no green pixels
+        else:
+            # For non-green regions, calculate overall color uniformity
+            hue_variance = np.var(h.astype(np.float32))
+            max_hue_variance = 180.0 ** 2
+            normalized_hue_variance = min(hue_variance / max_hue_variance, 1.0)
+            color_uniformity = 1.0 - normalized_hue_variance
+        
+        # Also calculate texture variance (already computed above)
+        texture_variance = surface_roughness
+        
         return {
             "surface_roughness": surface_roughness,
             "edge_degradation": edge_degradation,
+            "texture_variance": texture_variance,  # Add explicit texture_variance field
+            "color_uniformity": float(color_uniformity),  # NEW: for paint vs organic detection
             "condition": condition,
-            "evidence": evidence,
+            "evidence": evidence + [f"color_uniformity={color_uniformity:.3f}"],
             "confidence": float(confidence)
         }
     except Exception as e:
@@ -2029,7 +2089,7 @@ def extract_visual_features(image_path):
             "organic_integration": {"relationship": "none", "confidence": 0.0},
             "overall_confidence": 0.0,
             "validation": {"is_valid": False, "warnings": [], "issues": [f"Extraction failed: {str(e)}"]}
-        }
+    }
 
 
 def analyze_color(image_path):
@@ -2133,7 +2193,7 @@ def save_cached_analysis(file_hash: str, result: Dict[str, Any]) -> bool:
     except Exception as e:
         logger.error(f"Failed to save cache for {file_hash[:8]}...: {e}", exc_info=True)
         return False
-
+    
 
 # framed/analysis/vision.py
 
@@ -2899,8 +2959,8 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
                                    default={"tonal_range": None})
         if tonal_range.get("tonal_range"):
             result["perception"]["lighting"]["quality"] = tonal_range.get("tonal_range")
-        
-        # Subject emotion
+
+            # Subject emotion
         subject_emotion = safe_analyze(analyze_subject_emotion, path, error_key="emotion",
                                       default={"subject_type": None, "emotion": None})
         if subject_emotion.get("subject_type"):
@@ -2997,8 +3057,86 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
             logger.warning(f"Visual evidence extraction failed (non-fatal): {e}")
             visual_evidence = {}
         
-        # Store visual evidence temporarily for Scene Understanding
-        result["_visual_evidence"] = visual_evidence
+        # Store visual evidence in result (for interpretive reasoner and scene understanding)
+        if visual_evidence:
+            result["visual_evidence"] = visual_evidence
+        
+        # === NEGATIVE EVIDENCE DETECTION (Phase 1.2) ===
+        try:
+            from .negative_evidence import detect_negative_evidence
+            negative_evidence = detect_negative_evidence(result)
+            if negative_evidence:
+                # Store in visual evidence for use by reasoner
+                if visual_evidence:
+                    visual_evidence["negative_evidence"] = negative_evidence
+                    result["visual_evidence"] = visual_evidence
+                # Also store directly in result
+                if not result.get("visual_evidence"):
+                    result["visual_evidence"] = {}
+                result["visual_evidence"]["negative_evidence"] = negative_evidence
+        except Exception as e:
+            logger.warning(f"Negative evidence detection failed (non-fatal): {e}")
+        
+        # === INTERPRETIVE REASONER (THE BRAIN) ===
+        # Phase 3: Reasoning-first architecture - interpret evidence before critique
+        try:
+            from .interpret_scene import interpret_scene
+            from .interpretive_memory import create_pattern_signature, query_memory_patterns, store_interpretation
+            
+            # Prepare semantic signals
+            # Handle new CLIP inventory format (list of dicts with confidence/source) or legacy format (list of strings)
+            if isinstance(clip_inventory, list) and len(clip_inventory) > 0:
+                if isinstance(clip_inventory[0], dict):
+                    # New format: list of dicts with item, confidence, source
+                    clip_inventory_items = [item["item"] for item in clip_inventory]
+                else:
+                    # Legacy format: list of strings
+                    clip_inventory_items = clip_inventory
+            else:
+                clip_inventory_items = []
+            
+            semantic_signals = {
+                "clip_inventory": clip_inventory_items,  # Use items only for reasoner
+                "clip_inventory_full": clip_inventory if isinstance(clip_inventory, list) and len(clip_inventory) > 0 and isinstance(clip_inventory[0], dict) else [],  # Full metadata for other uses
+                "clip_caption": clip_data.get("caption", ""),
+                "yolo_objects": object_data.get("objects", [])
+            }
+            
+            # Prepare technical stats
+            technical_stats = {
+                "brightness": result["perception"]["technical"].get("brightness"),
+                "contrast": result["perception"]["technical"].get("contrast"),
+                "sharpness": result["perception"]["technical"].get("sharpness"),
+                "color_mood": result["perception"]["color"].get("mood")
+            }
+            
+            # Query interpretive memory for similar patterns
+            pattern_signature = create_pattern_signature(visual_evidence, semantic_signals)
+            memory_patterns = query_memory_patterns(pattern_signature, limit=5)
+            
+            # Call interpretive reasoner
+            interpretive_conclusions = interpret_scene(
+                visual_evidence=visual_evidence,
+                semantic_signals=semantic_signals,
+                technical_stats=technical_stats,
+                interpretive_memory_patterns=memory_patterns
+            )
+            
+            # Store conclusions in result
+            result["interpretive_conclusions"] = interpretive_conclusions
+            
+            # Store interpretation in memory for learning
+            primary = interpretive_conclusions.get("primary_interpretation", {})
+            chosen_interp = primary.get("conclusion", "unclear_interpretation")
+            confidence = primary.get("confidence", 0.5)
+            store_interpretation(pattern_signature, chosen_interp, confidence)
+            
+            logger.info(f"Interpretive reasoner: {chosen_interp} (confidence: {confidence:.2f})")
+            
+        except Exception as e:
+            logger.warning(f"Interpretive reasoner failed (non-fatal): {e}")
+            # Don't add error - reasoner is optional for now (backward compatibility)
+            result["interpretive_conclusions"] = {}
         
         # === SCENE UNDERSTANDING SYNTHESIS ===
         # Synthesize contextual understanding of "what is happening here"
@@ -3047,7 +3185,7 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
         # Cache the result
         if file_hash:
             save_cached_analysis(file_hash, result)
-        
+
         return result
         
     except Exception as e:
@@ -3490,6 +3628,10 @@ def generate_merged_critique(photo_data, visionary_mode="Balanced Mentor"):
         import logging
         _logger = logging.getLogger(__name__)
     
+    # === EXTRACT INTERPRETIVE CONCLUSIONS (PRIMARY SOURCE) ===
+    # Phase 6: Critique receives interpreted conclusions, not raw evidence
+    interpretive_conclusions = photo_data.get("interpretive_conclusions", {})
+    
     # Check if this is canonical schema or legacy format
     is_canonical = "perception" in photo_data and "metadata" in photo_data
     
@@ -3614,7 +3756,7 @@ You push the photographer to see beyond the single image → towards legacy and 
     mode_instruction = modes.get(visionary_mode, modes["Balanced Mentor"])
 
     # Build evidence-driven prompt (authoritative template)
-    # NEW ORDER: Scene Understanding (AUTHORITATIVE) → Corrective Signals (MANDATORY) → Anchors → Observations → Task
+    # Phase 6: NEW ORDER: Interpretive Conclusions (AUTHORITATIVE) → Uncertainty Flags → Scene Understanding (fallback) → Semantic Anchors → Observations → Task → Governance
     prompt = f"""
 You are FRAMED — the Legacy Critic and Visionary Artistic Mentor.
 
@@ -3641,10 +3783,69 @@ These are not opinions. They are measured facts and contextual synthesis.
 ---
 """
     
-    # === STEP 1: SCENE UNDERSTANDING (AUTHORITATIVE - FIRST) ===
-    # Add scene understanding section if present (synthesized contextual understanding)
+    # === STEP 1: INTERPRETIVE CONCLUSIONS (AUTHORITATIVE - PRIMARY) ===
+    # Phase 6: Critique receives interpreted conclusions, not raw evidence
+    interpretive_conclusions_section = ""
+    uncertainty_flags_section = ""
+    
+    if interpretive_conclusions:
+        primary = interpretive_conclusions.get("primary_interpretation", {})
+        alternatives = interpretive_conclusions.get("alternatives", [])
+        uncertainty = interpretive_conclusions.get("uncertainty", {})
+        emotional_reading = interpretive_conclusions.get("emotional_reading", {})
+        
+        # Format primary interpretation
+        conclusion = primary.get("conclusion", "unclear_interpretation")
+        confidence = primary.get("confidence", 0.5)
+        evidence_chain = primary.get("evidence_chain", [])
+        reasoning = primary.get("reasoning", "")
+        
+        interpretive_conclusions_section = f"""
+INTERPRETED SCENE CONCLUSIONS (AUTHORITATIVE):
+Primary Interpretation: {conclusion}
+Confidence: {confidence:.2f}
+Evidence Chain: {', '.join(evidence_chain[:5]) if evidence_chain else 'N/A'}
+Reasoning: {reasoning}
+
+Alternatives Considered:
+"""
+        if alternatives:
+            for alt in alternatives[:3]:  # Top 3 alternatives
+                alt_interp = alt.get("interpretation", "")
+                alt_conf = alt.get("confidence", 0.0)
+                alt_reason = alt.get("reason_rejected", "")
+                interpretive_conclusions_section += f"- {alt_interp} (confidence: {alt_conf:.2f}, rejected: {alt_reason[:100]})\n"
+        else:
+            interpretive_conclusions_section += "- None\n"
+        
+        # Format emotional reading
+        if emotional_reading:
+            primary_emotion = emotional_reading.get("primary", "")
+            secondary_emotion = emotional_reading.get("secondary", "")
+            emotion_reasoning = emotional_reading.get("reasoning", "")
+            interpretive_conclusions_section += f"""
+Emotional Reading: {primary_emotion} (secondary: {secondary_emotion})
+Emotional Reasoning: {emotion_reasoning}
+"""
+        
+        # Format uncertainty flags
+        requires_uncertainty = uncertainty.get("requires_uncertainty_acknowledgment", False)
+        uncertainty_reason = uncertainty.get("reason", "")
+        
+        if requires_uncertainty:
+            uncertainty_flags_section = f"""
+UNCERTAINTY FLAGS (MANDATORY ACKNOWLEDGMENT):
+Confidence is below threshold ({confidence:.2f} < 0.65). You MUST acknowledge ambiguity.
+Reason: {uncertainty_reason}
+
+You must use uncertainty language (e.g., "perhaps", "might", "suggests", "appears", "uncertain").
+Do not speak with false authority when confidence is low.
+"""
+    
+    # === STEP 2: SCENE UNDERSTANDING (FALLBACK/LEGACY) ===
+    # Keep for backward compatibility, but interpretive conclusions take precedence
     scene_understanding_section = ""
-    if scene_understanding:
+    if scene_understanding and not interpretive_conclusions:
         understanding_lines = []
         
         # Material condition
@@ -3767,91 +3968,8 @@ This is AUTHORITATIVE CONTEXT. You must not contradict it. Ground your critique 
         else:
             scene_understanding_section = ""
     
-    # === STEP 2: VOCABULARY LOCKS (ABSOLUTE) ===
-    # Generate universal vocabulary locks based on visual evidence
-    vocabulary_locks_section = ""
-    resolved_contradictions_section = ""
-    
-    # Try to get visual evidence from photo_data (may be stored temporarily)
-    # Also try to extract from scene understanding if visual evidence not directly available
-    visual_evidence = photo_data.get("_visual_evidence", {})
-    if not visual_evidence and scene_understanding:
-        # Try to reconstruct visual evidence from scene understanding
-        # This is a fallback - ideally visual_evidence should be passed directly
-        visual_evidence = {}
-    
-    if scene_understanding:
-        # Generate vocabulary locks (universal, evidence-driven)
-        vocab_locks = generate_vocabulary_locks(scene_understanding, visual_evidence)
-        
-        if vocab_locks["forbidden_words"] or vocab_locks["required_words"]:
-            forbidden_lines = [f"- {word}" for word in vocab_locks["forbidden_words"][:15]]  # Limit to top 15
-            required_lines = [f"- {word}" for word in vocab_locks["required_words"][:15]]  # Limit to top 15
-            
-            vocabulary_locks_section = f"""
-VOCABULARY LOCKS (ABSOLUTE - UNIVERSAL PATTERNS):
-Based on visual evidence and scene understanding, the following vocabulary restrictions apply:
-
-FORBIDDEN WORDS (do not use these, even to create "tension"):
-{chr(10).join(forbidden_lines) if forbidden_lines else "- None"}
-
-REQUIRED WORDS (you should use these when describing relevant aspects):
-{chr(10).join(required_lines) if required_lines else "- None"}
-
-These locks are ABSOLUTE. They are not suggestions. They are based on visual evidence (ground truth from pixels).
-If a word is FORBIDDEN, you must not use it, even if it would sound poetic or create interesting tension.
-If a word is REQUIRED, you should use it when describing the relevant aspect of the image.
-"""
-        
-        # Generate resolved contradictions (universal patterns)
-        resolved_contra = generate_resolved_contradictions(scene_understanding, visual_evidence)
-        
-        if resolved_contra["resolved"]:
-            resolved_lines = []
-            for res in resolved_contra["resolved"]:
-                resolved_lines.append(f"- {res['contradiction']} → RESOLVED: {res['resolution']}")
-            
-            valid_tension_lines = [f"- {tension}" for tension in resolved_contra["valid_tensions"][:10]]  # Top 10
-            
-            resolved_contradictions_section = f"""
-RESOLVED CONTRADICTIONS (do not use as tension points):
-The following contradictions have been RESOLVED by visual evidence and cannot be used as tension points:
-{chr(10).join(resolved_lines)}
-
-You cannot reintroduce these contradictions, even to create philosophical tension.
-Once visual evidence resolves a contradiction, it is settled. You must work with the resolution.
-
-VALID TENSION POINTS (you may use these):
-{chr(10).join(valid_tension_lines)}
-
-These are universal tension points that remain valid regardless of visual evidence.
-"""
-    
-    # === STEP 3: CORRECTIVE SIGNALS (MANDATORY LOCKS) ===
-    corrective_signals_section = ""
-    if scene_understanding:
-        emotional_sub = scene_understanding.get("emotional_substrate", {})
-        corrective = emotional_sub.get("corrective_signals", {}) if emotional_sub else {}
-        
-        if corrective:
-            corrective_lines = []
-            for key, override in corrective.items():
-                if isinstance(override, dict) and "from" in override and "to" in override:
-                    corrective_lines.append(f"- {override['from']} → {override['to']}: {override.get('reason', '')}")
-            
-            if corrective_lines:
-                corrective_signals_section = f"""
-CORRECTIVE SIGNALS (MANDATORY LOCKS):
-{chr(10).join(corrective_lines)}
-
-These are BINDING CONSTRAINTS. You MUST apply them.
-- The "from" state is FORBIDDEN.
-- The "to" state becomes your baseline.
-- You may not contradict these corrections.
-- Violations = invalid critique.
-"""
-    
-    # === STEP 4: SEMANTIC ANCHORS (NAMING PERMISSION) ===
+    # === STEP 3: SEMANTIC ANCHORS (NAMING PERMISSION) ===
+    # Phase 7: Removed vocabulary locks and resolved contradictions (replaced with conclusion enforcement)
     anchors_section = ""
     if semantic_anchors:
         anchors_lines = []
@@ -3908,73 +4026,60 @@ EMOTIONAL SIGNAL
 ---
 """
     
-    # === STEP 6: HARD GOVERNANCE RULES ===
-    # Enhanced with visual evidence enforcement
-    visual_evidence_present = scene_understanding and any(
-        "(visual)" in str(v) or "visual_analysis" in str(v) 
-        for v in scene_understanding.values() if isinstance(v, dict)
-    )
-    
-    if visual_evidence_present:
+    # === STEP 5: GOVERNANCE RULES (SIMPLIFIED & STRONG) ===
+    # Phase 7: Replace vocabulary locks with conclusion enforcement
+    if interpretive_conclusions:
         governance_rules = """
 RULES (NON-NEGOTIABLE):
-- You must not contradict Scene Understanding.
-- You must apply all Corrective Signals (they are mandatory locks, not suggestions).
-- If organic growth or weathering is present in Scene Understanding, you must reference it explicitly.
-- If human_presence is 'none detected' in Semantic Anchors, you must not imply or invent human subjects.
-- Do not describe the image as cold, sterile, or clinical if Scene Understanding indicates warmth or organic integration.
-- Every interpretive claim must be grounded in Scene Understanding, Anchors, or Measured Evidence.
-- If semantic anchors are present, you must name the structures and environment explicitly.
-- Stop at functional/cultural level (e.g., "mosque", "religious architecture").
-- Do not make historical claims, architectural style claims, or location claims.
+- You must not contradict the Interpretive Conclusions. They are the result of reasoning, not raw evidence.
+- You must ground your critique in the primary interpretation and its evidence chain.
+- If alternatives were considered and rejected, you must not use those rejected interpretations.
+- If uncertainty is flagged, you MUST acknowledge ambiguity explicitly.
+- You must not invent facts not in the evidence chain.
 - Do NOT describe the image literally.
 - Do NOT list tips.
 - Do NOT sound instructional.
 - Do NOT flatter.
 
-VOCABULARY LOCKS ENFORCEMENT (ABSOLUTE):
-- Vocabulary Locks are ABSOLUTE. If a word is FORBIDDEN, you must not use it, even to create "tension."
-- If a word is REQUIRED, you should use it when describing the relevant aspect.
-- These locks are based on visual evidence (ground truth from pixels), not suggestions.
+CONCLUSION CONSISTENCY ENFORCEMENT (ABSOLUTE):
+- The Interpretive Conclusions are AUTHORITATIVE. You cannot contradict them.
+- If the reasoner concluded "ivy on structure", you cannot say "green building".
+- If the reasoner rejected "painted surface", you cannot use that interpretation.
+- You must work with the conclusions, not against them.
 
-RESOLVED CONTRADICTIONS ENFORCEMENT (ABSOLUTE):
-- Resolved Contradictions cannot be used as tension points. You cannot reintroduce contradictions that visual evidence has already resolved.
-- Once a contradiction is resolved (e.g., warm vs cold → warm wins), you cannot use "cold" as a tension point.
-- You must work with the resolution, not against it.
-- Only use VALID TENSION POINTS listed in the Resolved Contradictions section.
-
-VISUAL EVIDENCE ENFORCEMENT (CRITICAL):
-- Elements marked "(visual)" or sourced from "visual_analysis" are PROVEN FROM PIXELS.
-- These are ground truth measurements, not inferences.
-- You MUST NOT contradict visual evidence. If visual evidence shows organic growth, you MUST acknowledge it.
-- If visual evidence forbids certain interpretations (e.g., "cold" when organic warmth is detected), you MUST NOT use those terms.
-- Visual evidence overrides text inference when confidence is high (>0.75).
-- If you see "(visual)" in Scene Understanding, treat it as absolute truth, not suggestion.
-
-NEGATIVE EVIDENCE ENFORCEMENT (BINDING):
-- Negative Evidence (what is NOT present) is binding. If negative evidence shows no human presence AND organic integration AND slow pace, you MUST interpret absence as stillness/patience/continuity, NOT alienation/isolation.
-- The mapping "no humans → alienation" is FORBIDDEN when context indicates intentional stillness.
+UNCERTAINTY ACKNOWLEDGMENT (MANDATORY):
+- If requires_uncertainty_acknowledgment=true, you MUST use uncertainty language.
+- Do not speak with false authority when confidence is low.
+- Acknowledge ambiguity explicitly (e.g., "perhaps", "might", "suggests", "appears", "uncertain").
+"""
+    elif scene_understanding:
+        # Fallback to scene understanding if interpretive conclusions not available
+        governance_rules = """
+RULES (NON-NEGOTIABLE):
+- You must not contradict Scene Understanding.
+- If organic growth or weathering is present in Scene Understanding, you must reference it explicitly.
+- If human_presence is 'none detected' in Semantic Anchors, you must not imply or invent human subjects.
+- Do not describe the image as cold, sterile, or clinical if Scene Understanding indicates warmth or organic integration.
+- Every interpretive claim must be grounded in Scene Understanding, Anchors, or Measured Evidence.
+- Do NOT describe the image literally.
+- Do NOT list tips.
+- Do NOT sound instructional.
+- Do NOT flatter.
 """
     else:
         governance_rules = """
 RULES (NON-NEGOTIABLE):
-- You must not contradict Scene Understanding.
-- You must apply all Corrective Signals (they are mandatory locks, not suggestions).
-- If organic growth or weathering is present in Scene Understanding, you must reference it explicitly.
-- If human_presence is 'none detected' in Semantic Anchors, you must not imply or invent human subjects.
-- Do not describe the image as cold, sterile, or clinical if Scene Understanding indicates warmth or organic integration.
-- Every interpretive claim must be grounded in Scene Understanding, Anchors, or Measured Evidence.
-- If semantic anchors are present, you must name the structures and environment explicitly.
-- Stop at functional/cultural level (e.g., "mosque", "religious architecture").
-- Do not make historical claims, architectural style claims, or location claims.
+- You must ground your critique in verified observations.
+- Do not invent facts not in evidence.
 - Do NOT describe the image literally.
 - Do NOT list tips.
 - Do NOT sound instructional.
 - Do NOT flatter.
 """
     
-    # Assemble prompt in correct order: Scene Understanding → Vocabulary Locks → Resolved Contradictions → Corrective Signals → Anchors → Observations → Task
-    prompt += scene_understanding_section + vocabulary_locks_section + resolved_contradictions_section + corrective_signals_section + anchors_section + observations_section + f"""
+    # Assemble prompt in correct order: Interpretive Conclusions → Uncertainty Flags → Scene Understanding (fallback) → Semantic Anchors → Observations → Task → Governance
+    # Phase 7: Removed vocabulary_locks_section, resolved_contradictions_section, corrective_signals_section (replaced with conclusion enforcement)
+    prompt += interpretive_conclusions_section + uncertainty_flags_section + scene_understanding_section + anchors_section + observations_section + f"""
 Your task:
 
 1. Interpret what these choices reveal about the photographer's intent.

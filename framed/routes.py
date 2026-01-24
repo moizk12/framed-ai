@@ -172,11 +172,36 @@ def analyze():
         response_payload = dict(analysis_result)
         
         # Always generate critique using selected mentor mode
-        # Phase III-A: Evidence-driven critique generation for all mentor modes
+        # Phase 6: Critique voice receives interpretive conclusions (not raw evidence)
         critique = generate_merged_critique(analysis_result, mentor_mode)
         response_payload["critique"] = critique
         if ui_view:
             ui_view["critique"] = critique
+        
+        # Phase 5: Reflection loop (self-validation)
+        try:
+            from framed.analysis.reflection import reflect_on_critique
+            
+            interpretive_conclusions = analysis_result.get("interpretive_conclusions", {})
+            if interpretive_conclusions:
+                reflection = reflect_on_critique(critique, interpretive_conclusions)
+                response_payload["reflection_report"] = reflection
+                
+                # Regenerate if quality is too low (once only)
+                if reflection.get("requires_regeneration", False):
+                    _logger = current_app.logger
+                    _logger.warning(f"Reflection: Regenerating critique (quality: {reflection.get('quality_score', 0.0):.2f})")
+                    critique = generate_merged_critique(analysis_result, mentor_mode)
+                    response_payload["critique"] = critique
+                    if ui_view:
+                        ui_view["critique"] = critique
+                    
+                    # Re-check reflection
+                    reflection = reflect_on_critique(critique, interpretive_conclusions)
+                    response_payload["reflection_report"] = reflection
+        except Exception as e:
+            current_app.logger.warning(f"Reflection loop failed (non-fatal): {e}")
+            # Don't fail the request - reflection is optional
         
         if ui_view:
             response_payload["_ui"] = ui_view

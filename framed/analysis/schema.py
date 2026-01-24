@@ -100,7 +100,18 @@ def create_empty_analysis_result() -> Dict[str, Any]:
         # Optional, sparse, confidence-gated
         # Answers: material condition, temporal context, organic interaction, emotional substrate, relationships
         # Never shown to user - feeds critique engine only
-        "scene_understanding": {}
+        "scene_understanding": {},
+        # Visual Evidence: Ground truth from pixels (computer vision)
+        # Structured visual features with confidence scores
+        # Source: "visual_analysis" (proven from pixels)
+        "visual_evidence": {},
+        # Interpretive Conclusions: Output from the interpretive reasoner (the brain)
+        # Contains primary interpretation, alternatives, confidence, uncertainty flags
+        # This is the "reasoning" layer - silent, non-poetic, structured
+        "interpretive_conclusions": {},
+        # Reflection Report: Self-validation results after critique generation
+        # Checks for contradictions, invented facts, ignored uncertainty, generic language
+        "reflection_report": {}
     }
 
 

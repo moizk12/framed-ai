@@ -2,7 +2,10 @@
 
 ## Overview
 
-This document details all changes made to FRAMED since fixing the GPT critique generation issue. This represents a comprehensive evolution of FRAMED from a working ML application to a production-grade visual intelligence system with a "visual conscience" that prevents contradictions and enforces truth.
+This document details all changes made to FRAMED since fixing the GPT critique generation issue. This represents a comprehensive evolution of FRAMED from a working ML application to a production-grade reasoning-first visual intelligence system that "sees → understands → decides → speaks."
+
+**Last Updated:** 2026-01-24  
+**Version:** Reasoning-First Architecture v1.0
 
 ---
 
@@ -16,7 +19,15 @@ This document details all changes made to FRAMED since fixing the GPT critique g
 6. [Phase III-D: Unified Scene Understanding & Critique Governance](#phase-iii-d-unified-scene-understanding--critique-governance)
 7. [Visual Conscience: Deterministic Computer Vision Grounding](#visual-conscience-deterministic-computer-vision-grounding)
 8. [Visual Conscience Refinements](#visual-conscience-refinements)
-9. [Technical Improvements](#technical-improvements)
+9. [Phase 0: Foundations (Reasoning Architecture)](#phase-0-foundations-reasoning-architecture)
+10. [Phase 1: Visual Evidence Enhancements](#phase-1-visual-evidence-enhancements)
+11. [Phase 2: Semantic Signals Refinements](#phase-2-semantic-signals-refinements)
+12. [Phase 3: Interpretive Reasoner (The Brain)](#phase-3-interpretive-reasoner-the-brain)
+13. [Phase 4: Interpretive Memory (Learning)](#phase-4-interpretive-memory-learning)
+14. [Phase 5: Reflection Loop (Self-Validation)](#phase-5-reflection-loop-self-validation)
+15. [Phase 6: Critique Voice (Expression Only)](#phase-6-critique-voice-expression-only)
+16. [Phase 7: Governance (Simplified & Strong)](#phase-7-governance-simplified--strong)
+17. [Technical Improvements](#technical-improvements)
 
 ---
 
@@ -57,22 +68,15 @@ Refactor the FRAMED image analysis pipeline so that all perception and analysis 
   ```python
   {
     "metadata": {...},
-    "perception": {
-      "technical": {...},
-      "composition": {...},
-      "color": {...},
-      "lighting": {...},
-      "aesthetics": {...},
-      "semantics": {...},
-      "emotion": {...}
-    },
-    "derived": {
-      "emotional_mood": str,
-      "genre": {...},
-      "visual_interpretation": {...}
-    },
+    "perception": {...},
+    "derived": {...},
     "confidence": {...},
-    "errors": {}
+    "errors": {},
+    "semantic_anchors": {},
+    "scene_understanding": {},
+    "visual_evidence": {},
+    "interpretive_conclusions": {},
+    "reflection_report": {}
   }
   ```
 
@@ -123,17 +127,8 @@ Refactor FRAMED's critique prompt construction so that prompts receive ONLY obse
   - `derived.emotional_mood` → emotional_mood
 
 #### 2. Prompt Structure
-- New prompt format with placeholders:
-  ```
-  TECHNICAL STATE
-  - Brightness: {brightness}
-  - Contrast: {contrast}
-  ...
-  
-  COMPOSITION
-  - Symmetry: {symmetry}
-  ...
-  ```
+- New prompt format with placeholders for verified observations
+- No interpretive prose passed into prompts
 
 #### 3. Preserved Elements
 - All mentor personas (Balanced, Radical, Philosopher, Curator)
@@ -209,15 +204,17 @@ Introduce a "Pre-Critique Scene Understanding Pass" to synthesize contextual mea
 - Answers "What is materially, temporally, and atmospherically happening in this image?"
 - Universal dimensions:
   - Material condition (surface_state, organic_growth, erosion_level, age_indicators)
-  - Temporal context (time_scale, pace, endurance, change_indicators, moment_type)
+  - Temporal context (time_scale, pace, endurance, change_indicators, moment_type, temporal_direction)
   - Organic interaction (relationship, dominance, integration_level, specific_indicators)
   - Emotional substrate (temperature, pace, presence, quality, corrective_signals)
   - Contextual relationships
+  - Negative evidence (no_human_presence, no_motion_detected, no_artificial_surface_uniformity)
 
 #### 2. `synthesize_scene_understanding()`
 - Universal, lightweight, rule-based heuristics
 - Sparse & confidence-gated (only emit when confidence is high)
 - Corrective signals softly reweight interpretation
+- Uses visual evidence as primary source (ground truth from pixels)
 
 #### 3. Integration
 - Called after all perception analysis, before semantic anchors
@@ -263,13 +260,12 @@ Ensure Scene Understanding *governs* interpretation, making corrective signals m
 - Critique may not contradict
 
 #### 4. Critique Governance Rules
-- Added explicit, non-negotiable rules to prompt:
-  - Must not contradict Scene Understanding
-  - Must apply all Corrective Signals (mandatory locks, not suggestions)
-  - Must reference organic growth/weathering if present
-  - Must not invent human subjects if none detected
-  - Must not describe as cold/sterile if warmth/organic integration present
-  - Every interpretive claim must be grounded in Scene Understanding, Anchors, or Measured Evidence
+- Added explicit, non-negotiable rules to prompt
+- Must not contradict Scene Understanding
+- Must apply all Corrective Signals (mandatory locks, not suggestions)
+- Must reference organic growth/weathering if present
+- Must not invent human subjects if none detected
+- Must not describe as cold/sterile if warmth/organic integration present
 
 #### 5. Prompt Structure Reorganization
 - Strict order enforced:
@@ -311,14 +307,16 @@ Three deterministic, provable functions:
 - Calculates coverage ratio (0.0-1.0)
 - Spatial distribution analysis (vertical_surfaces, foreground, background, distributed)
 - Cluster counting (connected components)
-- Evidence: `["green_coverage=0.42", "green_clusters=5", "spatial_distribution=vertical_surfaces"]`
+- Salience determination (structural | incidental | peripheral | distributed | minimal)
+- Evidence: `["green_coverage=0.42", "green_clusters=5", "spatial_distribution=vertical_surfaces", "salience=structural"]`
 - Confidence: 0.95 for high coverage, 0.50 for minimal
 
 **`detect_material_condition(image_path)`**
 - Uses texture variance to detect surface roughness
 - Edge degradation analysis (age indicators)
+- Color uniformity analysis (paint vs organic detection)
 - Condition inference: "weathered" | "pristine" | "moderate" | "degraded"
-- Evidence: `["texture_variance=0.68", "edge_degradation=0.45", "condition=weathered"]`
+- Evidence: `["texture_variance=0.68", "edge_degradation=0.45", "color_uniformity=0.32", "condition=weathered"]`
 - Confidence: 0.90 for clear signals, 0.65 for ambiguous
 
 **`detect_organic_integration(image_path, green_mask, structure_edges)`**
@@ -334,6 +332,7 @@ Three deterministic, provable functions:
 - Calls all three functions
 - Returns unified visual evidence dict
 - Overall confidence (weighted average)
+- Validation and contradiction detection
 
 #### 2. Constrained Emotional Synthesis
 **`synthesize_emotional_substrate_constrained()`**
@@ -376,17 +375,6 @@ Three deterministic, provable functions:
 - Recommends overrides when visual confidence is high (>0.75)
 - Provides explainable reasons
 
-#### 8. Edge Case Handling
-- Dark images (< 30 brightness): Adjusted HSV thresholds, reduced confidence
-- Bright images (> 225 brightness): Adjusted HSV thresholds, reduced confidence
-- Prevents false positives in difficult conditions
-
-#### 9. Enhanced Logging
-- Detailed visual evidence logging
-- Validation warnings and issues
-- Contradiction detection results
-- Override recommendations
-
 ### Files Changed
 - `framed/analysis/vision.py`: 
   - Added `detect_organic_growth()`, `detect_material_condition()`, `detect_organic_integration()`
@@ -420,7 +408,8 @@ Add four critical refinements to strengthen the visual conscience and prevent in
 "negative_evidence": {
   "no_human_presence": True,
   "no_motion_detected": True,
-  "no_artificial_surface_uniformity": True
+  "no_artificial_surface_uniformity": True,
+  "evidence": "YOLO: no person, CLIP: no human terms, temporal: static"
 }
 ```
 
@@ -496,12 +485,449 @@ Add four critical refinements to strengthen the visual conscience and prevent in
 
 ---
 
+## Phase 0: Foundations (Reasoning Architecture)
+
+### Objective
+Establish the foundational structure for the reasoning-first architecture, including schema updates and evidence reliability hierarchy.
+
+### Key Changes
+
+#### 1. Schema Extensions
+- Added `visual_evidence` field to canonical schema
+- Added `interpretive_conclusions` field (output from interpretive reasoner)
+- Added `reflection_report` field (self-validation results)
+- All fields are optional and sparse (backward compatible)
+
+#### 2. Evidence Reliability Hierarchy
+- Documented hierarchy: `visual_pixels > semantic_models > technical_stats > stylistic_inference`
+- Every field carries `{value, confidence, source}` metadata
+- Reasoner uses reliability weights in confidence calculation
+
+### Files Changed
+- `framed/analysis/schema.py`: Added new fields to `create_empty_analysis_result()`
+
+### Impact
+- Foundation for reasoning-first architecture
+- Clear evidence hierarchy
+- Backward compatible
+
+---
+
+## Phase 1: Visual Evidence Enhancements
+
+### Objective
+Complete visual evidence extraction with negative evidence detection and enhanced validation.
+
+### Key Changes
+
+#### 1. Color Uniformity Analysis
+- Added to `detect_material_condition()`
+- Calculates hue variance in green regions (if significant green coverage)
+- Distinguishes paint (high uniformity) from organic growth (low uniformity)
+- Returns `color_uniformity` (0.0-1.0) in material condition dict
+
+#### 2. Negative Evidence Detection
+- **New File**: `framed/analysis/negative_evidence.py`
+- **Function**: `detect_negative_evidence(analysis_result)`
+- Detects:
+  - `no_human_presence`: True if YOLO, CLIP, and emotion detection all show no humans
+  - `no_motion_detected`: True if temporal pace is static/slow and CLIP shows no motion terms
+  - `no_artificial_surface_uniformity`: True if pristine condition + high uniformity + minimal organic + low texture
+- Returns explainable evidence string
+- Integrated into `analyze_image()` before interpretive reasoner
+
+#### 3. Evidence Validation Layer
+- `validate_visual_evidence()` already exists (from Visual Conscience)
+- Checks internal consistency
+- Flags low-confidence evidence
+- Detects contradictions
+
+### Files Changed
+- `framed/analysis/vision.py`: 
+  - Enhanced `detect_material_condition()` with color uniformity
+  - Integrated negative evidence detection
+- `framed/analysis/negative_evidence.py`: NEW - Negative evidence detection module
+
+### Impact
+- Paint vs organic growth now distinguishable
+- Negative evidence prevents false interpretations
+- Validation ensures evidence quality
+
+---
+
+## Phase 2: Semantic Signals Refinements
+
+### Objective
+Enhance CLIP inventory with confidence scoring and source attribution.
+
+### Key Changes
+
+#### 1. CLIP Inventory Enhancement
+- `get_clip_inventory()` now returns list of dicts instead of list of strings
+- Each dict contains:
+  ```python
+  {
+    "item": "ivy",
+    "confidence": 0.92,
+    "source": "material_condition_prompt"  # structural_prompt | material_condition_prompt | atmosphere_prompt
+  }
+  ```
+- Tracks which prompt detected each item
+- Confidence scores from CLIP softmax probabilities
+
+#### 2. Backward Compatibility
+- `generate_semantic_anchors()` handles both formats (list of dicts or list of strings)
+- `interpret_scene()` extracts items from dict format for reasoner
+- Legacy code continues to work
+
+### Files Changed
+- `framed/analysis/vision.py`: 
+  - Enhanced `get_clip_inventory()` to return metadata
+  - Updated `generate_semantic_anchors()` to handle both formats
+  - Updated `analyze_image()` to handle new format
+
+### Impact
+- CLIP inventory items now have confidence scores
+- Source attribution enables debugging
+- Better deduplication possible
+
+---
+
+## Phase 3: Interpretive Reasoner (The Brain)
+
+### Objective
+Implement the interpretive reasoning layer that interprets evidence before critique generation, following the principle "Reason first, then speak."
+
+### Key Concepts
+
+#### 1. Plausibility Gate (Pre-LLM Filter)
+- **Function**: `generate_plausible_interpretations(visual_evidence, semantic_signals)`
+- Cheap filter to limit interpretation space before expensive LLM call
+- Generates plausible interpretations based on visual evidence patterns
+- Examples:
+  - `green_coverage > 0.25` + `distribution == "vertical_surfaces"` + CLIP mentions "ivy" → `"ivy_on_structure"`
+  - `color_uniformity > 0.8` + `texture_variance < 0.2` → `"painted_surface"`
+- Returns list of interpretations with confidence hints
+- LLM only chooses from these, not invents new categories
+
+#### 2. Interpretive Reasoner (LLM, Silent)
+- **New File**: `framed/analysis/interpret_scene.py`
+- **Function**: `interpret_scene(visual_evidence, semantic_signals, technical_stats, interpretive_memory_patterns)`**
+- Responsibilities:
+  - Multi-hypothesis reasoning
+  - Evidence weighting (respects reliability hierarchy)
+  - Alternative rejection (with reasons)
+  - Confidence scoring (0-1)
+  - Uncertainty detection (first-class)
+- Answers only 5 questions:
+  1. What is most likely happening?
+  2. What else could be happening?
+  3. Why did you reject alternatives?
+  4. How confident are you (0-1)?
+  5. What emotional reading follows (one sentence max)?
+- Output (STRICT JSON):
+  ```json
+  {
+    "primary_interpretation": {
+      "conclusion": "ivy on cathedral facade",
+      "confidence": 0.78,
+      "evidence_chain": ["green_coverage=0.42 (visual)", "CLIP_detects='ivy' (semantic)", ...],
+      "reasoning": "brief explanation"
+    },
+    "alternatives": [
+      {
+        "interpretation": "green-painted facade",
+        "confidence": 0.18,
+        "reason_rejected": "why this is less likely"
+      }
+    ],
+    "uncertainty": {
+      "present": false,
+      "confidence_threshold": 0.65,
+      "requires_uncertainty_acknowledgment": false,
+      "reason": "why uncertain if present"
+    },
+    "emotional_reading": {
+      "primary": "warm_patience",
+      "secondary": "quiet_endurance",
+      "confidence": 0.81,
+      "reasoning": "one sentence max"
+    }
+  }
+  ```
+- Key Constraints:
+  - ❌ No open-ended philosophical reasoning
+  - ❌ No emotional prose
+  - ❌ No "What does this mean to humanity?"
+  - ✅ Answer only 5 questions
+  - ✅ Structured JSON output
+  - ✅ Low temperature (0.3) for consistent reasoning
+
+#### 3. Integration
+- Called in `analyze_image()` after visual evidence extraction, before scene understanding
+- Stores conclusions in `result["interpretive_conclusions"]`
+- Stores interpretation in memory for learning
+- Graceful fallback if reasoner unavailable (backward compatibility)
+
+### Files Changed
+- `framed/analysis/interpret_scene.py`: NEW - Interpretive reasoner module
+- `framed/analysis/vision.py`: 
+  - Integrated interpretive reasoner into `analyze_image()`
+  - Handles new CLIP inventory format
+- `framed/analysis/__init__.py`: Exported reasoner functions
+
+### Impact
+- Reasoning happens before language generation
+- Multi-hypothesis reasoning prevents single-answer bias
+- Uncertainty is first-class, not optional
+- Structured output enables downstream processing
+
+---
+
+## Phase 4: Interpretive Memory (Learning)
+
+### Objective
+Implement pattern-based memory that learns from past interpretations, improving confidence calibration over time without retraining models.
+
+### Key Concepts
+
+#### 1. Pattern Memory Store
+- **New File**: `framed/analysis/interpretive_memory.py`
+- Stores decision snapshots (NOT images or full evidence bundles)
+- Pattern signature (bucketed):
+  ```python
+  {
+    "green_coverage_bucket": "high",  # "low" | "medium" | "high"
+    "surface_type": "vertical",
+    "texture": "rough",
+    "clip_token": "ivy",
+    "yolo_object": "building"
+  }
+  ```
+- Decision snapshot:
+  ```python
+  {
+    "pattern_signature": {...},
+    "chosen_interpretation": "ivy_on_structure",
+    "confidence": 0.78,
+    "user_feedback": "felt_accurate",  # "felt_accurate" | "felt_wrong" | null
+    "timestamp": "2026-01-24T10:30:00Z"
+  }
+  ```
+- Storage: JSON file at `/data/framed/interpretive_memory/pattern_memory.json`
+- Keeps last 1000 entries (prevents unbounded growth)
+
+#### 2. Pattern Matching
+- **Function**: `query_memory_patterns(pattern_signature, limit=5)`
+- Simple matching: counts how many signature fields match
+- Returns historical decisions with similarity scores
+- Used by interpretive reasoner to inform confidence
+
+#### 3. Pattern Statistics
+- **Function**: `get_pattern_statistics(pattern_signature)`
+- Returns:
+  - `times_seen`: int
+  - `accuracy_rate`: float (if user_feedback available)
+  - `average_confidence`: float
+  - `most_common_interpretation`: str
+- Enables confidence calibration: "In 83% of similar cases, ivy was correct"
+
+#### 4. Correction Learning
+- **Function**: `update_pattern_confidence(pattern_signature, original_interpretation, user_feedback, correct_interpretation)`
+- When user says "this felt wrong", updates pattern accuracy
+- Affects future confidence calibration for similar patterns
+- No retraining required
+
+#### 5. Integration
+- Called in `analyze_image()` before interpretive reasoner
+- Queries memory for similar patterns
+- Passes patterns to reasoner as context
+- Stores interpretation after reasoner completes
+
+### Files Changed
+- `framed/analysis/interpretive_memory.py`: NEW - Interpretive memory module
+- `framed/analysis/vision.py`: 
+  - Integrated memory queries and storage
+  - Creates pattern signatures before reasoner
+  - Stores interpretations after reasoner
+
+### Impact
+- Learning without training
+- Confidence calibration improves over time
+- Statistics inform reasoner confidence
+- Privacy-safe (no images stored)
+
+---
+
+## Phase 5: Reflection Loop (Self-Validation)
+
+### Objective
+Implement post-critique self-validation to catch contradictions, invented facts, ignored uncertainty, and generic language.
+
+### Key Concepts
+
+#### 1. Reflection Pass
+- **New File**: `framed/analysis/reflection.py`
+- **Function**: `reflect_on_critique(critique_text, interpretive_conclusions)`
+- Checks:
+  1. **Contradiction with reasoner** (0-1 score)
+     - Does critique contradict interpreted conclusions?
+     - Example: Reasoner says "ivy on facade", critique says "green building"
+  2. **Invented facts** (0-1 score)
+     - Does critique claim facts not in evidence?
+     - Example: Critique says "ancient temple" but no evidence of age
+  3. **Ignored uncertainty** (0-1 score)
+     - If reasoner is uncertain, does critique acknowledge it?
+     - Example: Reasoner confidence = 0.61, critique is overly confident
+  4. **Generic language** (0-1 score)
+     - Does critique use generic, non-specific language?
+     - Example: "beautiful image" vs "weathered facade with ivy"
+
+#### 2. Quality Scoring
+- Each check returns 0-1 score
+- Quality score = average of all scores
+- If `quality_score < 0.70` → requires regeneration
+
+#### 3. Regeneration Rules
+- Maximum 1 regeneration attempt
+- No infinite loops
+- No analysis paralysis
+- If regeneration fails, return original critique with reflection report
+
+#### 4. Integration
+- Called in `framed/routes.py` after critique generation
+- Checks `interpretive_conclusions` if available
+- Regenerates critique once if quality is too low
+- Stores reflection report in `result["reflection_report"]`
+
+### Files Changed
+- `framed/analysis/reflection.py`: NEW - Reflection loop module
+- `framed/routes.py`: 
+  - Integrated reflection loop after critique generation
+  - Regenerates critique if quality < 0.70
+
+### Impact
+- Bad critiques are caught and regenerated
+- No infinite loops
+- Reflection is fast (< 1 second)
+- Quality improves automatically
+
+---
+
+## Phase 6: Critique Voice (Expression Only)
+
+### Objective
+Update critique generation to receive interpretive conclusions (not raw evidence) and generate critique that never contradicts reasoner conclusions.
+
+### Key Changes
+
+#### 1. Prompt Structure Update
+- **OLD**: Prompt received raw evidence (Scene Understanding, Semantic Anchors, Verified Observations)
+- **NEW**: Prompt receives interpretive conclusions FIRST, then supporting context
+- New order:
+  1. INTERPRETED SCENE CONCLUSIONS (AUTHORITATIVE)
+  2. UNCERTAINTY FLAGS (MANDATORY ACKNOWLEDGMENT)
+  3. SCENE UNDERSTANDING (FALLBACK/LEGACY - only if no interpretive conclusions)
+  4. SEMANTIC ANCHORS (NAMING PERMISSION)
+  5. VERIFIED OBSERVATIONS (TECHNICAL - SUPPORTING CONTEXT)
+  6. Task
+  7. GOVERNANCE RULES
+
+#### 2. Interpretive Conclusions Section
+- Primary interpretation with confidence and evidence chain
+- Alternatives considered (with rejection reasons)
+- Emotional reading from reasoner
+- Uncertainty flags (if confidence < 0.65)
+
+#### 3. Uncertainty Acknowledgment
+- If `requires_uncertainty_acknowledgment=true`, critique MUST use uncertainty language
+- Examples: "perhaps", "might", "suggests", "appears", "uncertain"
+- Prevents false authority when confidence is low
+
+#### 4. Governance Rules Update
+- **OLD**: Vocabulary locks, resolved contradictions, visual evidence enforcement
+- **NEW**: Conclusion consistency enforcement, uncertainty acknowledgment enforcement
+- Rules:
+  - Must not contradict Interpretive Conclusions
+  - Must ground critique in primary interpretation and evidence chain
+  - Must not use rejected interpretations
+  - Must acknowledge uncertainty if flagged
+  - Must not invent facts not in evidence chain
+
+#### 5. Fallback Support
+- If interpretive conclusions not available, falls back to Scene Understanding (backward compatibility)
+- Legacy format still supported
+
+### Files Changed
+- `framed/analysis/vision.py`: 
+  - Updated `generate_merged_critique()` to extract and use interpretive conclusions
+  - Reorganized prompt structure
+  - Updated governance rules
+  - Removed vocabulary locks and resolved contradictions sections (replaced with conclusion enforcement)
+
+### Impact
+- Critique never contradicts reasoner conclusions
+- Uncertainty is acknowledged when required
+- Critique is grounded in interpreted conclusions
+- Backward compatible with legacy format
+
+---
+
+## Phase 7: Governance (Simplified & Strong)
+
+### Objective
+Replace rigid vocabulary locks with intelligent conclusion enforcement, simplifying governance while maintaining strength.
+
+### Key Changes
+
+#### 1. Removed Vocabulary Locks
+- **OLD**: Hard word bans ("FORBIDDEN: cold, sterile"), absolute emotional constraints
+- **NEW**: Conclusion consistency enforcement
+- Rule: "You may not contradict interpreted conclusions or suppress uncertainty."
+
+#### 2. Removed Resolved Contradictions
+- **OLD**: Explicit list of resolved contradictions, valid tension points
+- **NEW**: Conclusion enforcement prevents contradictions automatically
+- If reasoner rejected an interpretation, critique cannot use it
+
+#### 3. Simplified Governance Rules
+- **OLD**: Complex rules with vocabulary locks, resolved contradictions, visual evidence enforcement, negative evidence enforcement
+- **NEW**: Simple but strong rules:
+  - Must not contradict Interpretive Conclusions
+  - Must ground critique in primary interpretation
+  - Must not use rejected interpretations
+  - Must acknowledge uncertainty if flagged
+  - Must not invent facts
+
+#### 4. Intelligence Replaces Enforcement
+- Reasoning consistency enforcement (intelligent)
+- Uncertainty acknowledgment enforcement (intelligent)
+- Conclusion grounding enforcement (intelligent)
+- No brittle rule explosions
+- No vocabulary prisons
+
+### Files Changed
+- `framed/analysis/vision.py`: 
+  - Removed `generate_vocabulary_locks()` and `generate_resolved_contradictions()` from prompt
+  - Updated governance rules to use conclusion enforcement
+  - Simplified prompt structure
+
+### Impact
+- No brittle rule explosions
+- Intelligence replaces enforcement
+- Governance is simple but strong
+- Easier to maintain
+
+---
+
 ## Technical Improvements
 
 ### 1. Error Handling & Graceful Degradation
 - All analysis steps wrapped with `safe_analyze()`
 - Partial results returned with error metadata
 - One failing model doesn't crash entire analysis
+- Interpretive reasoner is optional (backward compatibility)
+- Reflection loop is optional (non-fatal)
 
 ### 2. Lazy Loading
 - All heavy models (YOLO, CLIP, NIMA, OpenAI client) lazy-loaded
@@ -514,6 +940,7 @@ Add four critical refinements to strengthen the visual conscience and prevent in
 - All writable files go to `/data/framed` (HF) or `/tmp/framed` (local)
 - Environment variable `FRAMED_DATA_DIR` for configuration
 - All directories created with `os.makedirs(..., exist_ok=True)`
+- Interpretive memory stored in `/data/framed/interpretive_memory/`
 
 ### 4. Dockerfile Fix
 - Base image: `python:3.11-slim`
@@ -528,34 +955,95 @@ Add four critical refinements to strengthen the visual conscience and prevent in
 - Detailed error logging with `exc_info=True`
 - Visual evidence extraction logging
 - Contradiction detection logging
+- Interpretive reasoner logging
+- Reflection loop logging
+
+### 6. Backward Compatibility
+- All new components are optional
+- Legacy format still supported
+- Graceful fallbacks if new modules unavailable
+- No breaking changes to existing routes
 
 ---
 
 ## Summary of Evolution
 
-FRAMED has evolved from a working ML application to a production-grade visual intelligence system with:
+FRAMED has evolved from a working ML application to a production-grade reasoning-first visual intelligence system with:
 
 1. **Deterministic Schema**: All analysis conforms to canonical schema
 2. **Evidence-Driven Prompts**: Prompts receive only observed facts
 3. **Semantic Anchors**: High-confidence, multi-signal labels
 4. **Scene Understanding**: Contextual synthesis before critique
 5. **Visual Conscience**: Ground truth from pixels, not text inference
-6. **Governance Rules**: Hard rules prevent contradictions
-7. **Negative Evidence**: Tracks absence to prevent misinterpretation
-8. **Salience**: Distinguishes structural from incidental growth
-9. **Temporal Direction**: Distinguishes growth from decay
-10. **Invariant Protection**: Explicit hierarchy prevents regressions
+6. **Negative Evidence**: Tracks absence to prevent misinterpretation
+7. **Salience**: Distinguishes structural from incidental growth
+8. **Temporal Direction**: Distinguishes growth from decay
+9. **Invariant Protection**: Explicit hierarchy prevents regressions
+10. **Interpretive Reasoner**: Silent brain that reasons before speaking
+11. **Plausibility Gate**: Cheap filter prevents hallucination
+12. **Interpretive Memory**: Learning without training
+13. **Reflection Loop**: Self-validation catches mistakes
+14. **Conclusion Enforcement**: Intelligence replaces rigid rules
 
-The system now "sees" before it "speaks," with visual evidence serving as ground truth that text inference cannot provide. The visual conscience ensures that FRAMED cannot contradict what the image actually contains, even if it would sound poetic or plausible.
+### Architectural Shift
+
+**OLD Pipeline:**
+```
+Image → Heuristics → Rules → Prompt → Critique
+```
+
+**NEW Pipeline:**
+```
+Image
+ ↓
+Visual Evidence (pixels)
+ ↓
+Semantic Signals (CLIP / YOLO)
+ ↓
+PLAUSIBILITY GATE (cheap filter)
+ ↓
+INTERPRETIVE REASONER (silent brain)
+ ↓
+INTERPRETIVE MEMORY (learning)
+ ↓
+REFLECTION LOOP (self-check)
+ ↓
+CRITIQUE VOICE (expression only)
+```
+
+**Key Principle:** "Reason first, then speak" — separate interpretation from expression.
+
+The system now "sees → understands → decides → speaks," with visual evidence serving as ground truth, interpretive reasoning providing probabilistic conclusions, and critique generation expressing those conclusions in a mentor's voice.
 
 ---
 
 ## Files Modified
 
-- `framed/analysis/vision.py`: Major refactoring, added visual grounding, Scene Understanding, semantic anchors
-- `framed/analysis/schema.py`: NEW - Canonical schema definition
-- `framed/analysis/__init__.py`: Exported schema functions
-- `framed/routes.py`: Updated to handle canonical schema, always generate critique
+### New Files
+- `framed/analysis/schema.py`: Canonical schema definition
+- `framed/analysis/interpret_scene.py`: Interpretive reasoner module
+- `framed/analysis/interpretive_memory.py`: Pattern-based memory module
+- `framed/analysis/reflection.py`: Reflection loop module
+- `framed/analysis/negative_evidence.py`: Negative evidence detection module
+- `IMPLEMENTATION_STATUS.md`: Implementation tracking document
+
+### Modified Files
+- `framed/analysis/vision.py`: 
+  - Major refactoring for canonical schema
+  - Added visual grounding (HSV, texture, morphology)
+  - Added Scene Understanding synthesis
+  - Added semantic anchors generation
+  - Enhanced CLIP inventory with confidence/source
+  - Integrated interpretive reasoner
+  - Integrated negative evidence detection
+  - Updated critique generation to use interpretive conclusions
+  - Removed vocabulary locks, replaced with conclusion enforcement
+- `framed/analysis/schema.py`: Added new fields (visual_evidence, interpretive_conclusions, reflection_report)
+- `framed/analysis/__init__.py`: Exported new functions
+- `framed/routes.py`: 
+  - Updated to handle canonical schema
+  - Always generate critique
+  - Integrated reflection loop
 - `framed/__init__.py`: Updated paths, health endpoint
 - `framed/static/js/framed.js`: Removed raw JSON rendering, enforced `_ui` as only render source
 - `framed/static/css/style.css`: Ethereal visual styling
@@ -573,19 +1061,27 @@ The system now "sees" before it "speaks," with visual evidence serving as ground
 4. **Salience**: Test with structural vs incidental organic growth
 5. **Temporal Direction**: Test with accreting vs decaying vs static scenes
 6. **Contradiction Detection**: Test with images where visual and text evidence conflict
-7. **Governance Rules**: Verify critiques don't contradict Scene Understanding
+7. **Interpretive Reasoner**: Test with diverse images, verify structured output
+8. **Plausibility Gate**: Test with edge cases (green building vs ivy)
+9. **Interpretive Memory**: Test pattern matching and statistics
+10. **Reflection Loop**: Test with critiques that contradict reasoner
+11. **Uncertainty Acknowledgment**: Test with low-confidence interpretations
+12. **Conclusion Enforcement**: Verify critiques don't contradict reasoner
 
 ---
 
 ## Future Enhancements
 
-1. **Additional Visual Features**: Shadows, light patterns, motion blur detection
-2. **Material Classification**: When confidence is high, classify materials (stone, concrete, wood)
-3. **Learned Models**: If deterministic methods fail, add learned models with explainability
-4. **Portfolio Mode**: Use canonical schema for portfolio-level analysis
-5. **ECHO Enhancement**: Use Scene Understanding and visual evidence in ECHO memory
+1. **Phase 8: UX Alignment**: Optional toggles to reveal thinking
+2. **Phase 9: Future**: Optional fine-tuning, learned visual models
+3. **Additional Visual Features**: Shadows, light patterns, motion blur detection
+4. **Material Classification**: When confidence is high, classify materials (stone, concrete, wood)
+5. **Learned Models**: If deterministic methods fail, add learned models with explainability
+6. **Portfolio Mode**: Use canonical schema for portfolio-level analysis
+7. **ECHO Enhancement**: Use Scene Understanding and visual evidence in ECHO memory
+8. **User Feedback Integration**: Connect user corrections to interpretive memory
 
 ---
 
-*Last Updated: 2026-01-22*
-*Version: Visual Conscience v1.0*
+*Last Updated: 2026-01-24*  
+*Version: Reasoning-First Architecture v1.0*
