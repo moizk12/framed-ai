@@ -3767,7 +3767,67 @@ This is AUTHORITATIVE CONTEXT. You must not contradict it. Ground your critique 
         else:
             scene_understanding_section = ""
     
-    # === STEP 2: CORRECTIVE SIGNALS (MANDATORY LOCKS) ===
+    # === STEP 2: VOCABULARY LOCKS (ABSOLUTE) ===
+    # Generate universal vocabulary locks based on visual evidence
+    vocabulary_locks_section = ""
+    resolved_contradictions_section = ""
+    
+    # Try to get visual evidence from photo_data (may be stored temporarily)
+    # Also try to extract from scene understanding if visual evidence not directly available
+    visual_evidence = photo_data.get("_visual_evidence", {})
+    if not visual_evidence and scene_understanding:
+        # Try to reconstruct visual evidence from scene understanding
+        # This is a fallback - ideally visual_evidence should be passed directly
+        visual_evidence = {}
+    
+    if scene_understanding:
+        # Generate vocabulary locks (universal, evidence-driven)
+        vocab_locks = generate_vocabulary_locks(scene_understanding, visual_evidence)
+        
+        if vocab_locks["forbidden_words"] or vocab_locks["required_words"]:
+            forbidden_lines = [f"- {word}" for word in vocab_locks["forbidden_words"][:15]]  # Limit to top 15
+            required_lines = [f"- {word}" for word in vocab_locks["required_words"][:15]]  # Limit to top 15
+            
+            vocabulary_locks_section = f"""
+VOCABULARY LOCKS (ABSOLUTE - UNIVERSAL PATTERNS):
+Based on visual evidence and scene understanding, the following vocabulary restrictions apply:
+
+FORBIDDEN WORDS (do not use these, even to create "tension"):
+{chr(10).join(forbidden_lines) if forbidden_lines else "- None"}
+
+REQUIRED WORDS (you should use these when describing relevant aspects):
+{chr(10).join(required_lines) if required_lines else "- None"}
+
+These locks are ABSOLUTE. They are not suggestions. They are based on visual evidence (ground truth from pixels).
+If a word is FORBIDDEN, you must not use it, even if it would sound poetic or create interesting tension.
+If a word is REQUIRED, you should use it when describing the relevant aspect of the image.
+"""
+        
+        # Generate resolved contradictions (universal patterns)
+        resolved_contra = generate_resolved_contradictions(scene_understanding, visual_evidence)
+        
+        if resolved_contra["resolved"]:
+            resolved_lines = []
+            for res in resolved_contra["resolved"]:
+                resolved_lines.append(f"- {res['contradiction']} → RESOLVED: {res['resolution']}")
+            
+            valid_tension_lines = [f"- {tension}" for tension in resolved_contra["valid_tensions"][:10]]  # Top 10
+            
+            resolved_contradictions_section = f"""
+RESOLVED CONTRADICTIONS (do not use as tension points):
+The following contradictions have been RESOLVED by visual evidence and cannot be used as tension points:
+{chr(10).join(resolved_lines)}
+
+You cannot reintroduce these contradictions, even to create philosophical tension.
+Once visual evidence resolves a contradiction, it is settled. You must work with the resolution.
+
+VALID TENSION POINTS (you may use these):
+{chr(10).join(valid_tension_lines)}
+
+These are universal tension points that remain valid regardless of visual evidence.
+"""
+    
+    # === STEP 3: CORRECTIVE SIGNALS (MANDATORY LOCKS) ===
     corrective_signals_section = ""
     if scene_understanding:
         emotional_sub = scene_understanding.get("emotional_substrate", {})
