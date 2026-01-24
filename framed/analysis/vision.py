@@ -952,6 +952,9 @@ def synthesize_scene_understanding(analysis_result):
     # PRIORITY: Visual evidence (ground truth) > Text matching (inference)
     material_condition = {}
     
+    # Extract salience from organic growth (needed for both material condition and temporal context)
+    salience = organic_growth.get("salience", "minimal")  # Default to "minimal" if not present
+    
     # Use visual evidence as primary source (proven from pixels)
     if green_coverage > 0.35:
         # Visual evidence: extensive organic growth (proven)
@@ -1091,9 +1094,10 @@ def synthesize_scene_understanding(analysis_result):
     temporal_context = {}
     
     # Extract visual evidence for temporal direction
+    # IMPORTANT: Extract salience early to avoid NameError
     condition_vis = material_condition_vis.get("condition", "unknown")
     green_coverage = organic_growth.get("green_coverage", 0.0)
-    salience = organic_growth.get("salience", "minimal")
+    salience = organic_growth.get("salience", "minimal")  # Default to "minimal" if not present
     surface_roughness = material_condition_vis.get("surface_roughness", 0.0)
     edge_degradation = material_condition_vis.get("edge_degradation", 0.0)
     
