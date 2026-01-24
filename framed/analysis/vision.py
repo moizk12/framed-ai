@@ -903,10 +903,56 @@ def synthesize_scene_understanding(analysis_result):
     
     understanding = {}
     
+    # ========================================================
+    # SAFE DEFAULTS FOR ALL SCENE UNDERSTANDING VARIABLES
+    # Every variable must have a safe default at declaration
+    # This prevents NameError when variables are used before assignment
+    # ========================================================
+    
+    # Visual evidence defaults
+    visual_evidence = {}
+    organic_growth = {}
+    material_condition_vis = {}
+    organic_integration_vis = {}
+    green_coverage = 0.0
+    condition_vis = "unknown"
+    surface_roughness = 0.0
+    relationship_vis = "none"
+    integration_level_vis = "none"
+    salience = "minimal"
+    
+    # Perception signal defaults
+    perception = analysis_result.get("perception", {})
+    technical = perception.get("technical", {})
+    composition = perception.get("composition", {})
+    color = perception.get("color", {})
+    lighting = perception.get("lighting", {})
+    semantics = perception.get("semantics", {})
+    emotion = perception.get("emotion", {})
+    derived = analysis_result.get("derived", {})
+    
+    # Text signal defaults
+    clip_caption = ""
+    clip_tags = []
+    clip_inventory = []
+    all_text = ""
+    
+    # Technical measurement defaults
+    brightness = None
+    contrast = None
+    sharpness = None
+    color_mood = None
+    lighting_direction = None
+    
+    # Signal count defaults
+    organic_signals = 0
+    historical_signals = 0
+    motion_signals = 0
+    stillness_signals = 0
+    
     # === EXTRACT VISUAL EVIDENCE (GROUND TRUTH) ===
     # This is the new foundation - visual evidence from pixels
     image_path = analysis_result.get("_image_path")  # Temporarily stored during analysis
-    visual_evidence = {}
     if image_path and os.path.exists(image_path):
         try:
             visual_evidence = extract_visual_features(image_path)
@@ -914,7 +960,7 @@ def synthesize_scene_understanding(analysis_result):
             logger.warning(f"Visual feature extraction failed: {e}")
             visual_evidence = {}
     
-    # Extract visual evidence components
+    # Extract visual evidence components (with safe defaults)
     organic_growth = visual_evidence.get("organic_growth", {})
     material_condition_vis = visual_evidence.get("material_condition", {})
     organic_integration_vis = visual_evidence.get("organic_integration", {})
@@ -924,6 +970,7 @@ def synthesize_scene_understanding(analysis_result):
     surface_roughness = material_condition_vis.get("surface_roughness", 0.0)
     relationship_vis = organic_integration_vis.get("relationship", "none")
     integration_level_vis = organic_integration_vis.get("integration_level", "none")
+    salience = organic_growth.get("salience", "minimal")
     
     # Extract perception signals (for fallback and fusion)
     perception = analysis_result.get("perception", {})
@@ -947,6 +994,24 @@ def synthesize_scene_understanding(analysis_result):
     sharpness = technical.get("sharpness") if technical.get("available") else None
     color_mood = color.get("mood") if color.get("available") else None
     lighting_direction = lighting.get("direction") if lighting.get("available") else None
+    
+    # Calculate signal counts (with safe defaults)
+    organic_growth_terms = [
+        "ivy", "moss", "vegetation", "growth", "overgrown", "reclaimed", "patina", "weathering", 
+        "eroded", "aged", "weathered stone", "aged surface", "eroded facade", "patinated",
+        "ivy covered", "moss covered", "green growth", "climbing plants", "plant growth",
+        "nature reclaiming", "organic growth", "vegetation on surface", "greenery"
+    ]
+    organic_signals = sum(1 for term in organic_growth_terms if term in all_text)
+    
+    historical_terms = ["historical", "ancient", "old", "vintage", "cathedral", "temple", "monument", "heritage"]
+    historical_signals = sum(1 for term in historical_terms if term in all_text)
+    
+    motion_terms = ["motion", "movement", "dynamic", "action", "busy", "chaotic", "energetic"]
+    motion_signals = sum(1 for term in motion_terms if term in all_text)
+    
+    stillness_terms = ["still", "static", "quiet", "calm", "peaceful", "serene", "enduring", "patient"]
+    stillness_signals = sum(1 for term in stillness_terms if term in all_text)
     
     # === MATERIAL CONDITION ===
     # PRIORITY: Visual evidence (ground truth) > Text matching (inference)
@@ -1115,11 +1180,7 @@ def synthesize_scene_understanding(analysis_result):
         temporal_context["time_scale"] = "timeless"
     
     # Pace inference
-    motion_terms = ["motion", "movement", "dynamic", "action", "busy", "chaotic", "energetic"]
-    stillness_terms = ["still", "static", "quiet", "calm", "peaceful", "serene", "enduring", "patient"]
-    
-    motion_signals = sum(1 for term in motion_terms if term in all_text)
-    stillness_signals = sum(1 for term in stillness_terms if term in all_text)
+    # Note: motion_signals and stillness_signals already calculated above with safe defaults
     
     if motion_signals >= 2:
         temporal_context["pace"] = "fast"
