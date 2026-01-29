@@ -1,0 +1,23 @@
+{
+  "intelligence_health": {
+    "average_confidence": 0.85,
+    "confidence_variance": 0.0,
+    "confidence_std": 0.0,
+    "uncertainty_acknowledged_percent": 0.0,
+    "multiple_hypotheses_percent": 0.0
+  },
+  "failure_metrics": {
+    "hallucination_rate": 0.0,
+    "overconfidence_rate": 0.0,
+    "reflection_failure_escape_rate": 0.0,
+    "mentor_drift_frequency": 0.0
+  },
+  "learning_metrics": {
+    "memory_growth_rate": 100.0,
+    "correction_effectiveness": 0.0,
+    "average_confidence_adjustment": 0.0,
+    "new_patterns_stored": 200,
+    "evolution_entries_added": 200
+  },
+  "total_images": 200
+}

@@ -1,0 +1,25 @@
+{
+  "test_config": {
+    "dataset_path": "./test_dataset",
+    "max_images": 200,
+    "shuffle": true,
+    "seed": 123,
+    "disable_expression": false,
+    "run_dir": null,
+    "ingest_feedback": true
+  },
+  "total_images": 200,
+  "completed": 200,
+  "failed": 0,
+  "pass_fail_report": {
+    "passed": true,
+    "failures": [],
+    "warnings": [
+      "Average confidence 0.85 is high - may indicate insufficient uncertainty acknowledgment",
+      "Uncertainty acknowledged in only 0.00% of cases - may be too confident",
+      "Multiple hypotheses generated in only 0.00% of cases - may be too single-minded"
+    ],
+    "timestamp": "2026-01-26T04:12:18.564752"
+  },
+  "timestamp": "2026-01-26T04:12:18.564766"
+}

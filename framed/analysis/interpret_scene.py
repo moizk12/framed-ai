@@ -329,7 +329,13 @@ def format_evidence_for_reasoner(visual_evidence: Dict[str, Any],
     
     yolo_objects = semantic_signals.get("yolo_objects", [])
     if yolo_objects:
-        obj_names = [obj.get("name", str(obj)) for obj in yolo_objects[:5]]
+        # Handle both dict format and string format
+        obj_names = []
+        for obj in yolo_objects[:5]:
+            if isinstance(obj, dict):
+                obj_names.append(str(obj.get("name", obj)))
+            else:
+                obj_names.append(str(obj))
         lines.append(f"- YOLO objects: {', '.join(obj_names)}")
     
     # Technical stats (lower reliability)

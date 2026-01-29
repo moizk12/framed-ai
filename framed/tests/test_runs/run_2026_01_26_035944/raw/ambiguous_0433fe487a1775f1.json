@@ -1,0 +1,502 @@
+{
+  "image_id": "ambiguous_0433fe487a1775f1",
+  "image_path": "C:\\Users\\moizk\\Downloads\\framed-clean\\framed-clean\\test_dataset\\ambiguous\\0433fe487a1775f1.jpg",
+  "category": "ambiguous",
+  "timestamp": "2026-01-26T03:59:58.175344",
+  "file_validation": {
+    "exists": true,
+    "readable": true,
+    "size_bytes": 372693,
+    "error": null
+  },
+  "visual_evidence": {
+    "organic_growth": {
+      "green_coverage": 1.2715657552083333e-06,
+      "green_locations": "minimal",
+      "green_clusters": 0,
+      "salience": "minimal",
+      "evidence": [
+        "green_coverage=0.000",
+        "green_clusters=0",
+        "spatial_distribution=minimal"
+      ],
+      "confidence": 0.5
+    },
+    "material_condition": {
+      "surface_roughness": 0.0,
+      "edge_degradation": 0.0,
+      "condition": "unknown",
+      "evidence": [
+        "error: Python integer 768 out of bounds for uint8"
+      ],
+      "confidence": 0.0
+    },
+    "organic_integration": {
+      "overlap_ratio": 1.0,
+      "proximity_ratio": 1.0,
+      "relationship": "reclamation",
+      "integration_level": "high",
+      "evidence": [
+        "overlap_ratio=1.000",
+        "proximity_ratio=1.000",
+        "relationship=reclamation"
+      ],
+      "confidence": 0.95
+    },
+    "overall_confidence": 0.48333333333333334,
+    "validation": {
+      "is_valid": true,
+      "warnings": [
+        "Overall confidence (0.48) below threshold (0.6)",
+        "Material condition confidence is low - texture analysis may be unreliable",
+        "Contradiction: Reclamation relationship but minimal green coverage"
+      ],
+      "issues": []
+    },
+    "negative_evidence": {
+      "no_human_presence": false,
+      "no_motion_detected": true,
+      "no_artificial_surface_uniformity": false,
+      "evidence": "temporal: static, CLIP: no motion terms"
+    }
+  },
+  "core_interpretation": {
+    "primary_conclusion": "",
+    "confidence": 0.0,
+    "alternatives": [],
+    "uncertainty_acknowledged": true,
+    "uncertainty_reasons": []
+  },
+  "evidence_alignment": {
+    "visual_evidence_used": true,
+    "semantic_conflicts": false,
+    "evidence_priority_respected": true,
+    "hallucination_detected": false
+  },
+  "reflection_diagnostics": {
+    "reflection_score": 0.0,
+    "reflection_failures": [],
+    "regenerated": false,
+    "failure_types": []
+  },
+  "learning_impact": {
+    "memory_updated": true,
+    "confidence_adjusted": 0.0,
+    "new_pattern_stored": true,
+    "evolution_entry_added": true
+  },
+  "mentor_integrity": {
+    "mentor_drift": false,
+    "flattery_detected": false,
+    "instruction_creep": false,
+    "question_quality_score": 0.0
+  },
+  "category_validation": {
+    "category": "ambiguous",
+    "expectations_met": true,
+    "warnings": [],
+    "errors": []
+  },
+  "full_analysis": {
+    "intelligence": {
+      "recognition": {
+        "recognition": {
+          "what_i_see": "[PLACEHOLDER] I see the image clearly.",
+          "evidence": [
+            "[PLACEHOLDER] Visual evidence"
+          ],
+          "confidence": 0.85
+        },
+        "meta_cognition": {
+          "why_i_believe_this": "[PLACEHOLDER] Based on evidence...",
+          "confidence": 0.85,
+          "what_i_might_be_missing": "[PLACEHOLDER] Potential gaps..."
+        },
+        "temporal": {
+          "how_i_used_to_see_this": "[PLACEHOLDER] Previously...",
+          "how_i_see_it_now": "[PLACEHOLDER] Now...",
+          "evolution_reason": "[PLACEHOLDER] Evolution..."
+        },
+        "emotion": {
+          "what_i_feel": "[PLACEHOLDER] I feel...",
+          "why": "[PLACEHOLDER] Because...",
+          "evolution": "[PLACEHOLDER] Evolution of feeling..."
+        },
+        "continuity": {
+          "user_pattern": "[PLACEHOLDER] User usually...",
+          "comparison": "[PLACEHOLDER] This compares to...",
+          "trajectory": "[PLACEHOLDER] Trajectory..."
+        },
+        "mentor": {
+          "observations": [
+            "[PLACEHOLDER] Observation..."
+          ],
+          "questions": [
+            "[PLACEHOLDER] Question..."
+          ],
+          "challenges": []
+        },
+        "self_critique": {
+          "past_errors": [
+            "[PLACEHOLDER] Past error..."
+          ],
+          "evolution": "[PLACEHOLDER] How I evolved..."
+        },
+        "what_i_see": "",
+        "evidence": [],
+        "confidence": 0.0
+      },
+      "meta_cognition": {
+        "recognition": {
+          "what_i_see": "[PLACEHOLDER] I see the image clearly.",
+          "evidence": [
+            "[PLACEHOLDER] Visual evidence"
+          ],
+          "confidence": 0.85
+        },
+        "meta_cognition": {
+          "why_i_believe_this": "[PLACEHOLDER] Based on evidence...",
+          "confidence": 0.85,
+          "what_i_might_be_missing": "[PLACEHOLDER] Potential gaps..."
+        },
+        "temporal": {
+          "how_i_used_to_see_this": "[PLACEHOLDER] Previously...",
+          "how_i_see_it_now": "[PLACEHOLDER] Now...",
+          "evolution_reason": "[PLACEHOLDER] Evolution..."
+        },
+        "emotion": {
+          "what_i_feel": "[PLACEHOLDER] I feel...",
+          "why": "[PLACEHOLDER] Because...",
+          "evolution": "[PLACEHOLDER] Evolution of feeling..."
+        },
+        "continuity": {
+          "user_pattern": "[PLACEHOLDER] User usually...",
+          "comparison": "[PLACEHOLDER] This compares to...",
+          "trajectory": "[PLACEHOLDER] Trajectory..."
+        },
+        "mentor": {
+          "observations": [
+            "[PLACEHOLDER] Observation..."
+          ],
+          "questions": [
+            "[PLACEHOLDER] Question..."
+          ],
+          "challenges": []
+        },
+        "self_critique": {
+          "past_errors": [
+            "[PLACEHOLDER] Past error..."
+          ],
+          "evolution": "[PLACEHOLDER] How I evolved..."
+        },
+        "why_i_believe_this": "",
+        "confidence": 0.0,
+        "what_i_might_be_missing": "",
+        "evolution_awareness": ""
+      },
+      "temporal": {
+        "recognition": {
+          "what_i_see": "[PLACEHOLDER] I see the image clearly.",
+          "evidence": [
+            "[PLACEHOLDER] Visual evidence"
+          ],
+          "confidence": 0.85
+        },
+        "meta_cognition": {
+          "why_i_believe_this": "[PLACEHOLDER] Based on evidence...",
+          "confidence": 0.85,
+          "what_i_might_be_missing": "[PLACEHOLDER] Potential gaps..."
+        },
+        "temporal": {
+          "how_i_used_to_see_this": "[PLACEHOLDER] Previously...",
+          "how_i_see_it_now": "[PLACEHOLDER] Now...",
+          "evolution_reason": "[PLACEHOLDER] Evolution..."
+        },
+        "emotion": {
+          "what_i_feel": "[PLACEHOLDER] I feel...",
+          "why": "[PLACEHOLDER] Because...",
+          "evolution": "[PLACEHOLDER] Evolution of feeling..."
+        },
+        "continuity": {
+          "user_pattern": "[PLACEHOLDER] User usually...",
+          "comparison": "[PLACEHOLDER] This compares to...",
+          "trajectory": "[PLACEHOLDER] Trajectory..."
+        },
+        "mentor": {
+          "observations": [
+            "[PLACEHOLDER] Observation..."
+          ],
+          "questions": [
+            "[PLACEHOLDER] Question..."
+          ],
+          "challenges": []
+        },
+        "self_critique": {
+          "past_errors": [
+            "[PLACEHOLDER] Past error..."
+          ],
+          "evolution": "[PLACEHOLDER] How I evolved..."
+        },
+        "how_i_used_to_see_this": "",
+        "how_i_see_it_now": "",
+        "evolution_reason": "",
+        "patterns_learned": []
+      },
+      "emotion": {
+        "recognition": {
+          "what_i_see": "[PLACEHOLDER] I see the image clearly.",
+          "evidence": [
+            "[PLACEHOLDER] Visual evidence"
+          ],
+          "confidence": 0.85
+        },
+        "meta_cognition": {
+          "why_i_believe_this": "[PLACEHOLDER] Based on evidence...",
+          "confidence": 0.85,
+          "what_i_might_be_missing": "[PLACEHOLDER] Potential gaps..."
+        },
+        "temporal": {
+          "how_i_used_to_see_this": "[PLACEHOLDER] Previously...",
+          "how_i_see_it_now": "[PLACEHOLDER] Now...",
+          "evolution_reason": "[PLACEHOLDER] Evolution..."
+        },
+        "emotion": {
+          "what_i_feel": "[PLACEHOLDER] I feel...",
+          "why": "[PLACEHOLDER] Because...",
+          "evolution": "[PLACEHOLDER] Evolution of feeling..."
+        },
+        "continuity": {
+          "user_pattern": "[PLACEHOLDER] User usually...",
+          "comparison": "[PLACEHOLDER] This compares to...",
+          "trajectory": "[PLACEHOLDER] Trajectory..."
+        },
+        "mentor": {
+          "observations": [
+            "[PLACEHOLDER] Observation..."
+          ],
+          "questions": [
+            "[PLACEHOLDER] Question..."
+          ],
+          "challenges": []
+        },
+        "self_critique": {
+          "past_errors": [
+            "[PLACEHOLDER] Past error..."
+          ],
+          "evolution": "[PLACEHOLDER] How I evolved..."
+        },
+        "what_i_feel": "",
+        "why": "",
+        "evolution": ""
+      },
+      "continuity": {
+        "recognition": {
+          "what_i_see": "[PLACEHOLDER] I see the image clearly.",
+          "evidence": [
+            "[PLACEHOLDER] Visual evidence"
+          ],
+          "confidence": 0.85
+        },
+        "meta_cognition": {
+          "why_i_believe_this": "[PLACEHOLDER] Based on evidence...",
+          "confidence": 0.85,
+          "what_i_might_be_missing": "[PLACEHOLDER] Potential gaps..."
+        },
+        "temporal": {
+          "how_i_used_to_see_this": "[PLACEHOLDER] Previously...",
+          "how_i_see_it_now": "[PLACEHOLDER] Now...",
+          "evolution_reason": "[PLACEHOLDER] Evolution..."
+        },
+        "emotion": {
+          "what_i_feel": "[PLACEHOLDER] I feel...",
+          "why": "[PLACEHOLDER] Because...",
+          "evolution": "[PLACEHOLDER] Evolution of feeling..."
+        },
+        "continuity": {
+          "user_pattern": "[PLACEHOLDER] User usually...",
+          "comparison": "[PLACEHOLDER] This compares to...",
+          "trajectory": "[PLACEHOLDER] Trajectory..."
+        },
+        "mentor": {
+          "observations": [
+            "[PLACEHOLDER] Observation..."
+          ],
+          "questions": [
+            "[PLACEHOLDER] Question..."
+          ],
+          "challenges": []
+        },
+        "self_critique": {
+          "past_errors": [
+            "[PLACEHOLDER] Past error..."
+          ],
+          "evolution": "[PLACEHOLDER] How I evolved..."
+        },
+        "user_pattern": "",
+        "comparison": "",
+        "trajectory": "",
+        "shared_history": ""
+      },
+      "mentor": {
+        "recognition": {
+          "what_i_see": "[PLACEHOLDER] I see the image clearly.",
+          "evidence": [
+            "[PLACEHOLDER] Visual evidence"
+          ],
+          "confidence": 0.85
+        },
+        "meta_cognition": {
+          "why_i_believe_this": "[PLACEHOLDER] Based on evidence...",
+          "confidence": 0.85,
+          "what_i_might_be_missing": "[PLACEHOLDER] Potential gaps..."
+        },
+        "temporal": {
+          "how_i_used_to_see_this": "[PLACEHOLDER] Previously...",
+          "how_i_see_it_now": "[PLACEHOLDER] Now...",
+          "evolution_reason": "[PLACEHOLDER] Evolution..."
+        },
+        "emotion": {
+          "what_i_feel": "[PLACEHOLDER] I feel...",
+          "why": "[PLACEHOLDER] Because...",
+          "evolution": "[PLACEHOLDER] Evolution of feeling..."
+        },
+        "continuity": {
+          "user_pattern": "[PLACEHOLDER] User usually...",
+          "comparison": "[PLACEHOLDER] This compares to...",
+          "trajectory": "[PLACEHOLDER] Trajectory..."
+        },
+        "mentor": {
+          "observations": [
+            "[PLACEHOLDER] Observation..."
+          ],
+          "questions": [
+            "[PLACEHOLDER] Question..."
+          ],
+          "challenges": []
+        },
+        "self_critique": {
+          "past_errors": [
+            "[PLACEHOLDER] Past error..."
+          ],
+          "evolution": "[PLACEHOLDER] How I evolved..."
+        },
+        "observations": [],
+        "questions": [],
+        "challenges": []
+      },
+      "self_critique": {
+        "recognition": {
+          "what_i_see": "[PLACEHOLDER] I see the image clearly.",
+          "evidence": [
+            "[PLACEHOLDER] Visual evidence"
+          ],
+          "confidence": 0.85
+        },
+        "meta_cognition": {
+          "why_i_believe_this": "[PLACEHOLDER] Based on evidence...",
+          "confidence": 0.85,
+          "what_i_might_be_missing": "[PLACEHOLDER] Potential gaps..."
+        },
+        "temporal": {
+          "how_i_used_to_see_this": "[PLACEHOLDER] Previously...",
+          "how_i_see_it_now": "[PLACEHOLDER] Now...",
+          "evolution_reason": "[PLACEHOLDER] Evolution..."
+        },
+        "emotion": {
+          "what_i_feel": "[PLACEHOLDER] I feel...",
+          "why": "[PLACEHOLDER] Because...",
+          "evolution": "[PLACEHOLDER] Evolution of feeling..."
+        },
+        "continuity": {
+          "user_pattern": "[PLACEHOLDER] User usually...",
+          "comparison": "[PLACEHOLDER] This compares to...",
+          "trajectory": "[PLACEHOLDER] Trajectory..."
+        },
+        "mentor": {
+          "observations": [
+            "[PLACEHOLDER] Observation..."
+          ],
+          "questions": [
+            "[PLACEHOLDER] Question..."
+          ],
+          "challenges": []
+        },
+        "self_critique": {
+          "past_errors": [
+            "[PLACEHOLDER] Past error..."
+          ],
+          "evolution": "[PLACEHOLDER] How I evolved..."
+        },
+        "past_errors": [],
+        "evolution": ""
+      }
+    },
+    "perception": {
+      "technical": {
+        "available": true,
+        "brightness": 79.59,
+        "contrast": 57.45,
+        "sharpness": 243.9
+      },
+      "semantics": {
+        "available": true,
+        "caption": "A person staring out the window thoughtfully",
+        "tags": [],
+        "genre_hint": "General",
+        "embeddings": null
+      }
+    },
+    "visual_evidence": {
+      "organic_growth": {
+        "green_coverage": 1.2715657552083333e-06,
+        "green_locations": "minimal",
+        "green_clusters": 0,
+        "salience": "minimal",
+        "evidence": [
+          "green_coverage=0.000",
+          "green_clusters=0",
+          "spatial_distribution=minimal"
+        ],
+        "confidence": 0.5
+      },
+      "material_condition": {
+        "surface_roughness": 0.0,
+        "edge_degradation": 0.0,
+        "condition": "unknown",
+        "evidence": [
+          "error: Python integer 768 out of bounds for uint8"
+        ],
+        "confidence": 0.0
+      },
+      "organic_integration": {
+        "overlap_ratio": 1.0,
+        "proximity_ratio": 1.0,
+        "relationship": "reclamation",
+        "integration_level": "high",
+        "evidence": [
+          "overlap_ratio=1.000",
+          "proximity_ratio=1.000",
+          "relationship=reclamation"
+        ],
+        "confidence": 0.95
+      },
+      "overall_confidence": 0.48333333333333334,
+      "validation": {
+        "is_valid": true,
+        "warnings": [
+          "Overall confidence (0.48) below threshold (0.6)",
+          "Material condition confidence is low - texture analysis may be unreliable",
+          "Contradiction: Reclamation relationship but minimal green coverage"
+        ],
+        "issues": []
+      },
+      "negative_evidence": {
+        "no_human_presence": false,
+        "no_motion_detected": true,
+        "no_artificial_surface_uniformity": false,
+        "evidence": "temporal: static, CLIP: no motion terms"
+      }
+    },
+    "reflection_report": {}
+  }
+}

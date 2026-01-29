@@ -10,6 +10,7 @@ Key Principle: "Experience, not training" - learns from patterns, not retraining
 import os
 import json
 import logging
+import tempfile
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from collections import defaultdict
@@ -17,7 +18,9 @@ from collections import defaultdict
 logger = logging.getLogger(__name__)
 
 # Memory storage path
-MEMORY_DIR = os.path.join(os.getenv("FRAMED_DATA_DIR", "/tmp/framed"), "interpretive_memory")
+DEFAULT_BASE_DATA_DIR = os.path.join(tempfile.gettempdir(), "framed")
+BASE_DATA_DIR = os.getenv("FRAMED_DATA_DIR", DEFAULT_BASE_DATA_DIR)
+MEMORY_DIR = os.path.join(BASE_DATA_DIR, "interpretive_memory")
 MEMORY_FILE = os.path.join(MEMORY_DIR, "pattern_memory.json")
 
 # Ensure memory directory exists

@@ -111,7 +111,11 @@ def create_empty_analysis_result() -> Dict[str, Any]:
         "interpretive_conclusions": {},
         # Reflection Report: Self-validation results after critique generation
         # Checks for contradictions, invented facts, ignored uncertainty, generic language
-        "reflection_report": {}
+        "reflection_report": {},
+        # Intelligence Output: 7-layer reasoning output from intelligence core
+        # Contains all 7 layers: recognition, meta_cognition, temporal, emotion, continuity, mentor, self_critique
+        # This is FRAMED's brain - the reasoning that happens before expression
+        "intelligence": {}
     }
 
 

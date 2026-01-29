@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def reflect_on_critique(critique_text: str,
-                       interpretive_conclusions: Dict[str, Any]) -> Dict[str, Any]:
+                       reasoner_output: Dict[str, Any]) -> Dict[str, Any]:
     """
     Reflection Pass: Check if critique contradicts reasoner or has quality issues.
     
@@ -29,37 +29,75 @@ def reflect_on_critique(critique_text: str,
     
     Args:
         critique_text: Generated critique text
-        interpretive_conclusions: Output from interpret_scene()
+        reasoner_output: Either:
+            - Old format: Output from interpret_scene() (interpretive_conclusions)
+            - New format: Output from intelligence_core (intelligence_output)
     
     Returns:
         Dict with reflection scores and requires_regeneration flag
     """
     critique_lower = critique_text.lower()
     
-    # Extract reasoner conclusions
-    primary = interpretive_conclusions.get("primary_interpretation", {})
-    primary_conclusion = primary.get("conclusion", "").lower()
-    uncertainty = interpretive_conclusions.get("uncertainty", {})
-    requires_uncertainty = uncertainty.get("requires_uncertainty_acknowledgment", False)
+    # Detect format: new intelligence output has "recognition" key, old has "primary_interpretation"
+    is_intelligence_format = "recognition" in reasoner_output
+    
+    if is_intelligence_format:
+        # New format: Extract from intelligence layers
+        recognition = reasoner_output.get("recognition", {})
+        primary_conclusion = recognition.get("what_i_see", "").lower()
+        
+        # Extract uncertainty from recognition layer
+        confidence = recognition.get("confidence", 1.0)
+        requires_uncertainty = confidence < 0.65
+        
+        # Extract evidence from recognition
+        evidence_chain = recognition.get("evidence", [])
+        if isinstance(evidence_chain, list):
+            evidence_chain = [str(e) for e in evidence_chain]
+        else:
+            evidence_chain = [str(evidence_chain)]
+        
+        # For alternatives, check meta_cognition layer
+        alternatives = []
+        meta_cognition = reasoner_output.get("meta_cognition", {})
+        if meta_cognition:
+            rejected_alternatives = meta_cognition.get("rejected_alternatives", [])
+            alternatives = rejected_alternatives
+    else:
+        # Old format: Extract from interpretive_conclusions
+        primary = reasoner_output.get("primary_interpretation", {})
+        primary_conclusion = primary.get("conclusion", "").lower()
+        uncertainty = reasoner_output.get("uncertainty", {})
+        requires_uncertainty = uncertainty.get("requires_uncertainty_acknowledgment", False)
+        evidence_chain = primary.get("evidence_chain", [])
+        alternatives = reasoner_output.get("alternatives", [])
     
     # === CHECK 1: Contradiction with Reasoner ===
-    contradiction_score = check_contradiction(critique_lower, primary_conclusion, interpretive_conclusions)
+    contradiction_score = check_contradiction(critique_lower, primary_conclusion, reasoner_output, is_intelligence_format)
     
     # === CHECK 2: Invented Facts ===
-    invented_facts_score = check_invented_facts(critique_lower, interpretive_conclusions)
+    invented_facts_score = check_invented_facts(critique_lower, reasoner_output, evidence_chain, is_intelligence_format)
     
     # === CHECK 3: Ignored Uncertainty ===
     uncertainty_acknowledged = check_uncertainty_acknowledgment(critique_lower, requires_uncertainty)
     
     # === CHECK 4: Generic Language ===
-    generic_score = check_generic_language(critique_lower, interpretive_conclusions)
+    generic_score = check_generic_language(critique_lower, primary_conclusion)
+    
+    # === CHECK 5: Overconfidence Detection ===
+    overconfidence_score = check_overconfidence(critique_lower, reasoner_output, is_intelligence_format)
+    
+    # === CHECK 6: Drift from Mentor Philosophy ===
+    mentor_drift_score = check_mentor_philosophy_drift(critique_lower)
     
     # Calculate quality score (inverted - lower scores = worse quality)
     scores = [
         contradiction_score,  # Lower = more contradiction
         invented_facts_score,  # Lower = more invented facts
         1.0 if uncertainty_acknowledged else 0.0,  # 0 if uncertainty ignored
-        generic_score  # Lower = more generic
+        generic_score,  # Lower = more generic
+        overconfidence_score,  # Lower = more overconfident
+        mentor_drift_score  # Lower = more drift from mentor philosophy
     ]
     quality_score = sum(scores) / len(scores)
     
@@ -71,6 +109,8 @@ def reflect_on_critique(critique_text: str,
         "invented_facts_score": invented_facts_score,
         "uncertainty_acknowledged": uncertainty_acknowledged,
         "generic_language_score": generic_score,
+        "overconfidence_score": overconfidence_score,
+        "mentor_drift_score": mentor_drift_score,
         "quality_score": quality_score,
         "requires_regeneration": requires_regeneration
     }
@@ -83,7 +123,8 @@ def reflect_on_critique(critique_text: str,
 
 def check_contradiction(critique_lower: str,
                        primary_conclusion: str,
-                       conclusions: Dict[str, Any]) -> float:
+                       reasoner_output: Dict[str, Any],
+                       is_intelligence_format: bool = False) -> float:
     """
     Check if critique contradicts reasoner conclusions.
     
@@ -112,14 +153,27 @@ def check_contradiction(critique_lower: str,
             contradiction_count += 1
     
     # Also check alternatives - if reasoner rejected something, critique shouldn't use it
-    alternatives = conclusions.get("alternatives", [])
-    for alt in alternatives:
-        alt_interp = alt.get("interpretation", "").lower()
-        reason_rejected = alt.get("reason_rejected", "").lower()
-        
-        # If critique uses rejected interpretation, that's a contradiction
-        if alt_interp in critique_lower and "rejected" in reason_rejected:
-            contradiction_count += 1
+    if is_intelligence_format:
+        # New format: alternatives are in meta_cognition layer
+        meta_cognition = reasoner_output.get("meta_cognition", {})
+        alternatives = meta_cognition.get("rejected_alternatives", [])
+        for alt in alternatives:
+            alt_interp = alt.get("interpretation", "").lower() if isinstance(alt, dict) else str(alt).lower()
+            reason_rejected = alt.get("reason_rejected", "").lower() if isinstance(alt, dict) else ""
+            
+            # If critique uses rejected interpretation, that's a contradiction
+            if alt_interp in critique_lower and ("rejected" in reason_rejected or reason_rejected):
+                contradiction_count += 1
+    else:
+        # Old format: alternatives are at top level
+        alternatives = reasoner_output.get("alternatives", [])
+        for alt in alternatives:
+            alt_interp = alt.get("interpretation", "").lower()
+            reason_rejected = alt.get("reason_rejected", "").lower()
+            
+            # If critique uses rejected interpretation, that's a contradiction
+            if alt_interp in critique_lower and "rejected" in reason_rejected:
+                contradiction_count += 1
     
     # Score: 1.0 if no contradictions, decreasing with each contradiction
     score = max(0.0, 1.0 - (contradiction_count * 0.3))
@@ -127,16 +181,14 @@ def check_contradiction(critique_lower: str,
 
 
 def check_invented_facts(critique_lower: str,
-                        conclusions: Dict[str, Any]) -> float:
+                        reasoner_output: Dict[str, Any],
+                        evidence_chain: List[str],
+                        is_intelligence_format: bool = False) -> float:
     """
     Check if critique invents facts not in evidence.
     
     Returns: 0.0 (many invented facts) to 1.0 (no invented facts)
     """
-    # Extract evidence chain from primary interpretation
-    primary = conclusions.get("primary_interpretation", {})
-    evidence_chain = primary.get("evidence_chain", [])
-    
     # Common invented fact patterns
     invented_patterns = [
         "ancient temple",  # Unless evidence says "ancient"
@@ -150,10 +202,11 @@ def check_invented_facts(critique_lower: str,
     
     # Check if critique uses invented patterns without evidence
     invented_count = 0
+    evidence_text = " ".join(evidence_chain).lower() if evidence_chain else ""
+    
     for pattern in invented_patterns:
         if pattern in critique_lower:
             # Check if evidence supports this
-            evidence_text = " ".join(evidence_chain).lower()
             if pattern.split()[0] not in evidence_text:  # First word should be in evidence
                 invented_count += 1
     
@@ -184,7 +237,7 @@ def check_uncertainty_acknowledgment(critique_lower: str,
 
 
 def check_generic_language(critique_lower: str,
-                          conclusions: Dict[str, Any]) -> float:
+                          primary_conclusion: str) -> float:
     """
     Check if critique uses generic, non-specific language.
     
@@ -204,9 +257,7 @@ def check_generic_language(critique_lower: str,
     generic_count = sum(1 for phrase in generic_phrases if phrase in critique_lower)
     
     # Also check if critique uses specific terms from conclusions
-    primary = conclusions.get("primary_interpretation", {})
-    conclusion_text = primary.get("conclusion", "").lower()
-    conclusion_terms = set(conclusion_text.split())
+    conclusion_terms = set(primary_conclusion.split())
     
     # Count how many conclusion terms appear in critique
     critique_terms = set(critique_lower.split())
@@ -215,4 +266,104 @@ def check_generic_language(critique_lower: str,
     
     # Score: penalize generic phrases, reward specificity
     score = max(0.0, 1.0 - (generic_count * 0.15) + specificity_bonus)
+    return score
+
+
+def check_overconfidence(critique_lower: str,
+                        reasoner_output: Dict[str, Any],
+                        is_intelligence_format: bool = False) -> float:
+    """
+    Check if critique is overconfident (claims certainty when confidence is low).
+    
+    Returns: 0.0 (very overconfident) to 1.0 (appropriately confident)
+    """
+    # Extract confidence from reasoner
+    if is_intelligence_format:
+        recognition = reasoner_output.get("recognition", {})
+        confidence = recognition.get("confidence", 1.0)
+    else:
+        primary = reasoner_output.get("primary_interpretation", {})
+        confidence = primary.get("confidence", 1.0)
+    
+    # Check for overconfident language when confidence is low
+    overconfident_phrases = [
+        "this is definitely",
+        "this is clearly",
+        "this is obviously",
+        "this is certainly",
+        "this is absolutely",
+        "without a doubt",
+        "undoubtedly",
+        "certainly"
+    ]
+    
+    has_overconfident_language = any(phrase in critique_lower for phrase in overconfident_phrases)
+    
+    # If confidence is low (< 0.65) but critique uses overconfident language, that's a problem
+    if confidence < 0.65 and has_overconfident_language:
+        return 0.0  # Major overconfidence violation
+    
+    # If confidence is medium (0.65-0.85) and critique uses overconfident language, minor violation
+    if 0.65 <= confidence < 0.85 and has_overconfident_language:
+        return 0.5  # Minor overconfidence
+    
+    # If confidence is high (>= 0.85) and critique uses confident language, that's fine
+    return 1.0
+
+
+def check_mentor_philosophy_drift(critique_lower: str) -> float:
+    """
+    Check if critique drifts from mentor philosophy.
+    
+    Mentor philosophy violations:
+    - Flattery ("beautiful", "amazing", "perfect")
+    - Instructions ("you should", "try to", "consider")
+    - Generic praise ("great shot", "nice work")
+    - Tips or advice ("use this technique", "apply this rule")
+    
+    Returns: 0.0 (major drift) to 1.0 (aligned with mentor philosophy)
+    """
+    violation_count = 0
+    
+    # Flattery phrases
+    flattery_phrases = [
+        "beautiful image",
+        "amazing photograph",
+        "perfect composition",
+        "excellent work",
+        "outstanding",
+        "brilliant",
+        "stunning",
+        "gorgeous"
+    ]
+    
+    # Instruction phrases
+    instruction_phrases = [
+        "you should",
+        "you must",
+        "try to",
+        "consider",
+        "use this",
+        "apply this",
+        "follow this",
+        "remember to"
+    ]
+    
+    # Generic praise
+    praise_phrases = [
+        "great shot",
+        "nice work",
+        "good job",
+        "well done",
+        "lovely",
+        "wonderful"
+    ]
+    
+    # Check for violations
+    for phrase in flattery_phrases + instruction_phrases + praise_phrases:
+        if phrase in critique_lower:
+            violation_count += 1
+    
+    # Score: 1.0 if no violations, decreasing with each violation
+    score = max(0.0, 1.0 - (violation_count * 0.2))
     return score

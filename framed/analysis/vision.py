@@ -1,4 +1,5 @@
 import os, uuid, json
+import tempfile
 import logging
 import hashlib
 from typing import Dict, Any, Optional
@@ -19,7 +20,8 @@ logger = logging.getLogger(__name__)
 # On Hugging Face Spaces, set FRAMED_DATA_DIR=/data/framed
 
 # Base data directory - centralized and writable
-BASE_DATA_DIR = os.getenv("FRAMED_DATA_DIR", "/tmp/framed")
+DEFAULT_BASE_DATA_DIR = os.path.join(tempfile.gettempdir(), "framed")
+BASE_DATA_DIR = os.getenv("FRAMED_DATA_DIR", DEFAULT_BASE_DATA_DIR)
 
 # Subdirectories under BASE_DATA_DIR
 MODEL_DIR = os.path.join(BASE_DATA_DIR, "models")
@@ -65,7 +67,7 @@ def ensure_directories():
             print(f"⚠️ Warning: Cannot create directory {p}: {e}")
             # Fallback to /tmp/framed if BASE_DATA_DIR fails
             if p == BASE_DATA_DIR:
-                fallback_base = "/tmp/framed"
+                fallback_base = DEFAULT_BASE_DATA_DIR
                 os.makedirs(fallback_base, exist_ok=True)
                 print(f"✅ Using fallback base directory: {fallback_base}")
 
@@ -232,9 +234,8 @@ def get_openai_client():
             logger.warning(f"OpenAI client initialization issue (version compatibility): {e}")
             logger.warning("This may be due to httpx/OpenAI version mismatch. Client will be unavailable.")
             return None
-        else:
-            logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
-            return None
+        logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
+        return None
     except Exception as e:
         logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
         return None
@@ -538,10 +539,27 @@ def generate_semantic_anchors(clip_inventory, clip_tags, clip_caption, yolo_obje
     anchors = {}
     
     # Normalize inputs to lowercase for matching
-    inventory_lower = [item.lower() for item in (clip_inventory or [])]
-    tags_lower = [tag.lower() for tag in (clip_tags or [])]
-    caption_lower = (clip_caption or "").lower()
-    yolo_lower = [obj.lower() for obj in (yolo_objects or [])]
+    # Handle both dict format (new) and string format (legacy) for clip_inventory
+    inventory_lower = []
+    for item in (clip_inventory or []):
+        if isinstance(item, dict):
+            # New format: extract "item" field
+            inventory_lower.append(str(item.get("item", "")).lower())
+        else:
+            # Legacy format: string
+            inventory_lower.append(str(item).lower())
+    
+    tags_lower = [str(tag).lower() for tag in (clip_tags or [])]
+    caption_lower = str(clip_caption or "").lower()
+    # Handle both dict format and string format for yolo_objects
+    yolo_lower = []
+    for obj in (yolo_objects or []):
+        if isinstance(obj, dict):
+            # Dict format: extract "name" field or convert to string
+            yolo_lower.append(str(obj.get("name", obj)).lower())
+        else:
+            # String format
+            yolo_lower.append(str(obj).lower())
     
     all_text = " ".join(inventory_lower + tags_lower + [caption_lower] + yolo_lower).lower()
     
@@ -1639,7 +1657,8 @@ def detect_material_condition(image_path):
         local_variance = cv2.filter2D((gray.astype(np.float32) - local_mean) ** 2, -1, kernel)
         
         # Global texture variance (normalized 0-1)
-        mean_variance = np.mean(local_variance)
+        # Ensure we get a scalar value, not an array
+        mean_variance = float(np.mean(local_variance))
         max_possible_variance = 255.0 ** 2  # Maximum variance for 8-bit image
         normalized_variance = min(mean_variance / max_possible_variance, 1.0)
         surface_roughness = float(normalized_variance)
@@ -1683,7 +1702,8 @@ def detect_material_condition(image_path):
         ]
         
         # Edge case: Check if image is too dark or too bright (affects texture analysis)
-        mean_brightness = np.mean(gray)
+        # Ensure we get a scalar value, not an array
+        mean_brightness = float(np.mean(gray))
         is_dark = mean_brightness < 30
         is_bright = mean_brightness > 225
         
@@ -1855,6 +1875,119 @@ def detect_organic_integration(image_path, green_mask=None, structure_edges=None
         logger.warning(f"Organic integration detection failed: {e}")
         return {"overlap_ratio": 0.0, "relationship": "none", "integration_level": "none",
                "evidence": [f"error: {str(e)}"], "confidence": 0.0}
+
+
+def extract_places365_signals(image_path):
+    """
+    Extract scene and attribute signals using ResNet50-Places365.
+    
+    Position in pipeline: After Visual Evidence, Before Interpretive Reasoner
+    Purpose: Provides scene category probabilities, indoor/outdoor, man-made vs natural,
+             and high-level attributes (religious, historical, urban, etc.)
+    
+    What it provides:
+    - scene_category: Top scene category (e.g., "cathedral", "forest", "street")
+    - scene_probabilities: Top 5 scene categories with probabilities
+    - indoor_outdoor: "indoor" | "outdoor" | "unknown"
+    - man_made_natural: "man_made" | "natural" | "mixed" | "unknown"
+    - attributes: High-level attributes (religious, historical, urban, etc.)
+    
+    What it does NOT provide:
+    - Emotional meaning
+    - Critique
+    - Reasoning
+    - Decisions
+    
+    Args:
+        image_path: Path to image file
+    
+    Returns:
+        Dict with Places365 signals
+    """
+    try:
+        import torch
+        from PIL import Image
+        
+        # Lazy load CLIP model for fallback (until Places365 weights are loaded)
+        clip_model, clip_processor, device = get_clip_model()
+        image = Image.open(image_path).convert('RGB')
+        
+        # Scene category candidates (Places365-like categories)
+        scene_candidates = [
+            "cathedral", "church", "mosque", "temple", "religious building",
+            "forest", "woodland", "nature", "landscape",
+            "street", "urban", "city", "road", "sidewalk",
+            "indoor", "interior", "room", "hall",
+            "outdoor", "exterior", "outdoors",
+            "building", "architecture", "structure",
+            "man-made", "artificial", "constructed",
+            "natural", "wild", "organic"
+        ]
+        
+        inputs = clip_processor(text=scene_candidates, images=image, return_tensors="pt", padding=True)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        
+        with torch.no_grad():
+            outputs = clip_model(**inputs)
+            logits_per_image = outputs.logits_per_image
+            probs = logits_per_image.softmax(dim=1).cpu().numpy()[0]
+        
+        # Get top 5 scene categories
+        top_indices = probs.argsort()[-5:][::-1]
+        scene_probabilities = [
+            {"category": scene_candidates[i], "probability": float(probs[i])}
+            for i in top_indices
+        ]
+        
+        top_category = scene_candidates[top_indices[0]]
+        top_prob = float(probs[top_indices[0]])
+        
+        # Infer indoor/outdoor
+        indoor_probs = sum(probs[i] for i, cat in enumerate(scene_candidates) if cat in ["indoor", "interior", "room", "hall"])
+        outdoor_probs = sum(probs[i] for i, cat in enumerate(scene_candidates) if cat in ["outdoor", "exterior", "outdoors", "forest", "landscape"])
+        
+        if indoor_probs > outdoor_probs and indoor_probs > 0.3:
+            indoor_outdoor = "indoor"
+        elif outdoor_probs > indoor_probs and outdoor_probs > 0.3:
+            indoor_outdoor = "outdoor"
+        else:
+            indoor_outdoor = "unknown"
+        
+        # Infer man-made vs natural
+        man_made_probs = sum(probs[i] for i, cat in enumerate(scene_candidates) if cat in ["man-made", "artificial", "constructed", "building", "architecture", "structure", "street", "urban", "city"])
+        natural_probs = sum(probs[i] for i, cat in enumerate(scene_candidates) if cat in ["natural", "wild", "organic", "forest", "woodland", "nature"])
+        
+        if man_made_probs > natural_probs and man_made_probs > 0.3:
+            man_made_natural = "man_made"
+        elif natural_probs > man_made_probs and natural_probs > 0.3:
+            man_made_natural = "natural"
+        elif man_made_probs > 0.2 and natural_probs > 0.2:
+            man_made_natural = "mixed"
+        else:
+            man_made_natural = "unknown"
+        
+        # Extract attributes
+        attributes = []
+        if top_category in ["cathedral", "church", "mosque", "temple", "religious building"]:
+            attributes.append("religious")
+        if top_category in ["cathedral", "church", "mosque", "temple", "building", "architecture"]:
+            attributes.append("historical")
+        if top_category in ["street", "urban", "city", "road"]:
+            attributes.append("urban")
+        
+        return {
+            "scene_category": top_category,
+            "scene_probabilities": scene_probabilities[:5],
+            "indoor_outdoor": indoor_outdoor,
+            "man_made_natural": man_made_natural,
+            "attributes": attributes,
+            "confidence": top_prob,
+            "source": "clip_fallback"  # CLIP-based approximation until Places365 weights loaded
+        }
+    
+    except Exception as e:
+        logger.warning(f"Places365 signal extraction failed: {e}")
+        return {}
 
 
 def validate_visual_evidence(visual_evidence, min_confidence=0.60):
@@ -3077,89 +3210,120 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
         except Exception as e:
             logger.warning(f"Negative evidence detection failed (non-fatal): {e}")
         
+        # === PLACES365 SCENE/ATTRIBUTE SIGNALS ===
+        # ResNet50-Places365: Scene category probabilities, indoor/outdoor, man-made vs natural, high-level attributes
+        # Position: After Visual Evidence, Before Interpretive Reasoner
+        # Purpose: Provides scene understanding signals that feed into the reasoner
+        places365_signals = {}
+        try:
+            places365_signals = extract_places365_signals(path)
+            if places365_signals:
+                # Store in perception layer for use by reasoner
+                if not result.get("perception"):
+                    result["perception"] = {}
+                if not result["perception"].get("scene"):
+                    result["perception"]["scene"] = {}
+                result["perception"]["scene"]["places365"] = places365_signals
+                logger.info(f"Places365 signals extracted: scene_category={places365_signals.get('scene_category', 'unknown')}, "
+                           f"indoor_outdoor={places365_signals.get('indoor_outdoor', 'unknown')}, "
+                           f"man_made_natural={places365_signals.get('man_made_natural', 'unknown')}")
+        except Exception as e:
+            logger.warning(f"Places365 signal extraction failed (non-fatal): {e}")
+        
         # === INTERPRETIVE REASONER (THE BRAIN) ===
         # Phase 3: Reasoning-first architecture - interpret evidence before critique
-        try:
-            from .interpret_scene import interpret_scene
-            from .interpretive_memory import create_pattern_signature, query_memory_patterns, store_interpretation
-            
-            # Prepare semantic signals
-            # Handle new CLIP inventory format (list of dicts with confidence/source) or legacy format (list of strings)
-            if isinstance(clip_inventory, list) and len(clip_inventory) > 0:
-                if isinstance(clip_inventory[0], dict):
-                    # New format: list of dicts with item, confidence, source
-                    clip_inventory_items = [item["item"] for item in clip_inventory]
+        # NOTE: This is the OLD reasoner. When intelligence core is active, this is optional/fallback.
+        # Feature flag: FRAMED_USE_INTELLIGENCE_CORE (default: true) controls whether to skip this.
+        USE_INTELLIGENCE_CORE = os.getenv("FRAMED_USE_INTELLIGENCE_CORE", "true").lower() == "true"
+        
+        if not USE_INTELLIGENCE_CORE:
+            # Old reasoner (backward compatibility mode)
+            try:
+                from .interpret_scene import interpret_scene
+                from .interpretive_memory import create_pattern_signature, query_memory_patterns, store_interpretation
+                
+                # Prepare semantic signals
+                # Handle new CLIP inventory format (list of dicts with confidence/source) or legacy format (list of strings)
+                if isinstance(clip_inventory, list) and len(clip_inventory) > 0:
+                    if isinstance(clip_inventory[0], dict):
+                        # New format: list of dicts with item, confidence, source
+                        clip_inventory_items = [item["item"] for item in clip_inventory]
+                    else:
+                        # Legacy format: list of strings
+                        clip_inventory_items = clip_inventory
                 else:
-                    # Legacy format: list of strings
-                    clip_inventory_items = clip_inventory
-            else:
-                clip_inventory_items = []
-            
-            semantic_signals = {
-                "clip_inventory": clip_inventory_items,  # Use items only for reasoner
-                "clip_inventory_full": clip_inventory if isinstance(clip_inventory, list) and len(clip_inventory) > 0 and isinstance(clip_inventory[0], dict) else [],  # Full metadata for other uses
-                "clip_caption": clip_data.get("caption", ""),
-                "yolo_objects": object_data.get("objects", [])
-            }
-            
-            # Prepare technical stats
-            technical_stats = {
-                "brightness": result["perception"]["technical"].get("brightness"),
-                "contrast": result["perception"]["technical"].get("contrast"),
-                "sharpness": result["perception"]["technical"].get("sharpness"),
-                "color_mood": result["perception"]["color"].get("mood")
-            }
-            
-            # Query interpretive memory for similar patterns
-            pattern_signature = create_pattern_signature(visual_evidence, semantic_signals)
-            memory_patterns = query_memory_patterns(pattern_signature, limit=5)
-            
-            # Call interpretive reasoner
-            interpretive_conclusions = interpret_scene(
-                visual_evidence=visual_evidence,
-                semantic_signals=semantic_signals,
-                technical_stats=technical_stats,
-                interpretive_memory_patterns=memory_patterns
-            )
-            
-            # Store conclusions in result
-            result["interpretive_conclusions"] = interpretive_conclusions
-            
-            # Store interpretation in memory for learning
-            primary = interpretive_conclusions.get("primary_interpretation", {})
-            chosen_interp = primary.get("conclusion", "unclear_interpretation")
-            confidence = primary.get("confidence", 0.5)
-            store_interpretation(pattern_signature, chosen_interp, confidence)
-            
-            logger.info(f"Interpretive reasoner: {chosen_interp} (confidence: {confidence:.2f})")
-            
-        except Exception as e:
-            logger.warning(f"Interpretive reasoner failed (non-fatal): {e}")
-            # Don't add error - reasoner is optional for now (backward compatibility)
-            result["interpretive_conclusions"] = {}
+                    clip_inventory_items = []
+                
+                semantic_signals = {
+                    "clip_inventory": clip_inventory_items,  # Use items only for reasoner
+                    "clip_inventory_full": clip_inventory if isinstance(clip_inventory, list) and len(clip_inventory) > 0 and isinstance(clip_inventory[0], dict) else [],  # Full metadata for other uses
+                    "clip_caption": clip_data.get("caption", ""),
+                    "yolo_objects": object_data.get("objects", [])
+                }
+                
+                # Prepare technical stats
+                technical_stats = {
+                    "brightness": result["perception"]["technical"].get("brightness"),
+                    "contrast": result["perception"]["technical"].get("contrast"),
+                    "sharpness": result["perception"]["technical"].get("sharpness"),
+                    "color_mood": result["perception"]["color"].get("mood")
+                }
+                
+                # Query interpretive memory for similar patterns
+                pattern_signature = create_pattern_signature(visual_evidence, semantic_signals)
+                memory_patterns = query_memory_patterns(pattern_signature, limit=5)
+                
+                # Call interpretive reasoner
+                interpretive_conclusions = interpret_scene(
+                    visual_evidence=visual_evidence,
+                    semantic_signals=semantic_signals,
+                    technical_stats=technical_stats,
+                    interpretive_memory_patterns=memory_patterns
+                )
+                
+                # Store conclusions in result
+                result["interpretive_conclusions"] = interpretive_conclusions
+                
+                # Store interpretation in memory for learning
+                primary = interpretive_conclusions.get("primary_interpretation", {})
+                chosen_interp = primary.get("conclusion", "unclear_interpretation")
+                confidence = primary.get("confidence", 0.5)
+                store_interpretation(pattern_signature, chosen_interp, confidence)
+                
+                logger.info(f"Interpretive reasoner: {chosen_interp} (confidence: {confidence:.2f})")
+                
+            except Exception as e:
+                logger.warning(f"Interpretive reasoner failed (non-fatal): {e}")
+                # Don't add error - reasoner is optional for now (backward compatibility)
+                result["interpretive_conclusions"] = {}
         
         # === SCENE UNDERSTANDING SYNTHESIS ===
         # Synthesize contextual understanding of "what is happening here"
         # Called after all perception, before semantic anchors
         # NOW USES VISUAL EVIDENCE as primary source (ground truth from pixels)
+        # NOTE: When intelligence core is active, this is optional/fallback.
+        # Intelligence core Layer 1-4 provides scene understanding via LLM reasoning.
+        # This rule-based synthesis is kept for backward compatibility and as fallback.
         # Temporarily store clip_inventory and image_path for Scene Understanding access
         result["_clip_inventory"] = clip_inventory if isinstance(clip_inventory, list) else []
         result["_image_path"] = path  # For visual evidence extraction in Scene Understanding
-        try:
-            scene_understanding = synthesize_scene_understanding(result)
-            # Only add understanding if any elements were synthesized (sparse by default)
-            if scene_understanding:
-                result["scene_understanding"] = scene_understanding
-            # Clean up temporary storage
-            result.pop("_clip_inventory", None)
-            result.pop("_image_path", None)
-            result.pop("_visual_evidence", None)
-        except Exception as e:
-            logger.warning(f"Scene understanding synthesis failed (non-fatal): {e}")
-            result.pop("_clip_inventory", None)
-            result.pop("_image_path", None)
-            result.pop("_visual_evidence", None)
-            # Don't add error - understanding is optional
+        
+        # Only run rule-based scene understanding if intelligence core is disabled
+        # Otherwise, intelligence core will provide scene understanding
+        if not USE_INTELLIGENCE_CORE:
+            try:
+                scene_understanding = synthesize_scene_understanding(result)
+                # Only add understanding if any elements were synthesized (sparse by default)
+                if scene_understanding:
+                    result["scene_understanding"] = scene_understanding
+            except Exception as e:
+                logger.warning(f"Scene understanding synthesis failed (non-fatal): {e}")
+                # Don't add error - understanding is optional
+        
+        # Clean up temporary storage
+        result.pop("_clip_inventory", None)
+        result.pop("_image_path", None)
+        result.pop("_visual_evidence", None)
         
         # === SEMANTIC ANCHORS GENERATION ===
         # Generate semantic anchors from multiple signals (sparse, only high-confidence)
@@ -3181,6 +3345,78 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
         except Exception as e:
             logger.warning(f"Semantic anchor generation failed (non-fatal): {e}")
             # Don't add error - anchors are optional
+        
+        # === INTELLIGENCE CORE (7-LAYER REASONING) ===
+        # Phase 1: Intelligence Core - FRAMED's brain
+        # This replaces rule-based synthesis with LLM-based reasoning
+        try:
+            from .intelligence_core import framed_intelligence
+            from .temporal_memory import (
+                create_pattern_signature as create_temporal_signature,
+                format_temporal_memory_for_intelligence,
+                store_interpretation as store_temporal_interpretation,
+                track_user_trajectory,
+            )
+            
+            # Prepare semantic signals for intelligence core
+            semantic_signals_for_intelligence = {
+                "objects": object_data.get("objects", []),
+                "tags": clip_data.get("tags", []),
+                "caption_keywords": clip_data.get("caption", "").split()[:20] if clip_data.get("caption") else [],
+            }
+            
+            # Create pattern signature for temporal memory
+            temporal_signature = create_temporal_signature(visual_evidence, semantic_signals_for_intelligence)
+            
+            # Query temporal memory
+            temporal_memory_data = format_temporal_memory_for_intelligence(temporal_signature, user_id=photo_id)
+            
+            # Get user history (from temporal memory)
+            user_history = temporal_memory_data.get("user_trajectory", {})
+            
+            # Run intelligence core (7-layer reasoning)
+            intelligence_output = framed_intelligence(
+                visual_evidence=visual_evidence,
+                analysis_result=result,
+                temporal_memory=temporal_memory_data,
+                user_history=user_history,
+            )
+            
+            # Store intelligence output in result
+            result["intelligence"] = intelligence_output
+            
+            # Store interpretation in temporal memory for learning
+            confidence = intelligence_output.get("meta_cognition", {}).get("confidence", 0.85)
+            store_temporal_interpretation(
+                signature=temporal_signature,
+                interpretation=intelligence_output,
+                confidence=confidence,
+            )
+            
+            # Track user trajectory
+            track_user_trajectory(
+                analysis_result=result,
+                intelligence_output=intelligence_output,
+                user_id=photo_id,
+            )
+            
+            # Implicit learning (Phase 4)
+            try:
+                from .learning_system import learn_implicitly
+                learn_implicitly(
+                    analysis_result=result,
+                    intelligence_output=intelligence_output,
+                    user_history=user_history,
+                )
+            except Exception as e:
+                logger.warning(f"Implicit learning failed (non-fatal): {e}")
+            
+            logger.info(f"Intelligence core completed: confidence={confidence:.2f}")
+            
+        except Exception as e:
+            logger.warning(f"Intelligence core failed (non-fatal): {e}")
+            # Don't add error - intelligence core is optional for backward compatibility
+            result["intelligence"] = {}
         
         # Cache the result
         if file_hash:

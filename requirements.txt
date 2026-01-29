@@ -37,3 +37,6 @@ httpx==0.27.2
 
 # Utilities
 requests==2.31.0
+
+# Places365 Scene Recognition
+places365==0.1.0

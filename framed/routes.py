@@ -171,20 +171,77 @@ def analyze():
         ui_view = clean_result_for_ui(analysis_result)
         response_payload = dict(analysis_result)
         
-        # Always generate critique using selected mentor mode
-        # Phase 6: Critique voice receives interpretive conclusions (not raw evidence)
-        critique = generate_merged_critique(analysis_result, mentor_mode)
-        response_payload["critique"] = critique
-        if ui_view:
-            ui_view["critique"] = critique
+        # === EXPRESSION LAYER (Model B) ===
+        # Phase 3: Expression Layer - Transform intelligence output into poetic critique
+        # Use new expression layer if intelligence output is available, otherwise fallback to legacy
+        intelligence_output = analysis_result.get("intelligence", {})
+        
+        if intelligence_output and intelligence_output.get("recognition", {}).get("what_i_see"):
+            # Use new expression layer (Model B)
+            try:
+                from framed.analysis.expression_layer import (
+                    generate_poetic_critique,
+                    apply_mentor_hierarchy,
+                    integrate_self_correction,
+                )
+                from framed.analysis.temporal_memory import load_user_trajectory
+                
+                # Get user history for mentor hierarchy
+                user_history = load_user_trajectory(user_id=photo_id)
+                
+                # Apply mentor hierarchy
+                mentor_reasoning = intelligence_output.get("mentor", {})
+                mentor_interventions = apply_mentor_hierarchy(mentor_reasoning, user_history)
+                
+                # Generate poetic critique
+                critique = generate_poetic_critique(
+                    intelligence_output=intelligence_output,
+                    mentor_mode=mentor_mode,
+                )
+                
+                # Integrate self-correction
+                self_critique = intelligence_output.get("self_critique", {})
+                critique = integrate_self_correction(critique, self_critique)
+                
+                response_payload["critique"] = critique
+                if ui_view:
+                    ui_view["critique"] = critique
+                
+                logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")
+                
+            except Exception as e:
+                current_app.logger.warning(f"Expression layer failed (non-fatal): {e}, falling back to legacy critique")
+                # Fallback to legacy critique generation
+                critique = generate_merged_critique(analysis_result, mentor_mode)
+                response_payload["critique"] = critique
+                if ui_view:
+                    ui_view["critique"] = critique
+        else:
+            # Fallback to legacy critique generation (for backward compatibility)
+            critique = generate_merged_critique(analysis_result, mentor_mode)
+            response_payload["critique"] = critique
+            if ui_view:
+                ui_view["critique"] = critique
         
         # Phase 5: Reflection loop (self-validation)
         try:
             from framed.analysis.reflection import reflect_on_critique
             
+            # Prefer intelligence output over old interpretive conclusions
+            intelligence_output = analysis_result.get("intelligence", {})
             interpretive_conclusions = analysis_result.get("interpretive_conclusions", {})
-            if interpretive_conclusions:
+            
+            # Use intelligence output if available, otherwise fallback to old conclusions
+            if intelligence_output and intelligence_output.get("recognition", {}).get("what_i_see"):
+                # Use intelligence output for reflection
+                reflection = reflect_on_critique(critique, intelligence_output)
+            elif interpretive_conclusions:
+                # Fallback to old interpretive conclusions
                 reflection = reflect_on_critique(critique, interpretive_conclusions)
+            else:
+                reflection = None
+            
+            if reflection:
                 response_payload["reflection_report"] = reflection
                 
                 # Regenerate if quality is too low (once only)
