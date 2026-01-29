@@ -3233,6 +3233,8 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
         # === INTERPRETIVE REASONER (THE BRAIN) ===
         # Phase 3: Reasoning-first architecture - interpret evidence before critique
         # NOTE: This is the OLD reasoner. When intelligence core is active, this is optional/fallback.
+        # NOTE: interpret_scene.py and interpretive_memory.py are legacy fallbacks only.
+        # They must never run when FRAMED_USE_INTELLIGENCE_CORE is enabled.
         # Feature flag: FRAMED_USE_INTELLIGENCE_CORE (default: true) controls whether to skip this.
         USE_INTELLIGENCE_CORE = os.getenv("FRAMED_USE_INTELLIGENCE_CORE", "true").lower() == "true"
         
