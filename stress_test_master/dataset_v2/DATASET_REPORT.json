@@ -1,0 +1,15 @@
+{
+  "categories": {
+    "ambiguous": 4,
+    "portraits": 5,
+    "mixed": 4,
+    "interiors": 4,
+    "nature": 5,
+    "artistic": 4,
+    "architecture": 5,
+    "street": 5
+  },
+  "total": 36,
+  "source": "picsum.photos",
+  "version": "v2"
+}
