@@ -8,4 +8,5 @@ Each run contains:
 - `failures.json` — Failed image IDs (empty if clean)
 - `raw/` — Per-image condensed results
 
-**Recent calibration runs:** run_2026_02_01_112130 (8.2), run_2026_02_01_120033 (8.4), run_2026_02_01_120045 (Phase 9).
+**Recent runs:** run_2026_02_01_112130 (8.2), run_2026_02_01_120033 (8.4), run_2026_02_01_120045 (Phase 9).  
+**Datasets:** Use stress_test_master/dataset_v2 only (36 real photos).

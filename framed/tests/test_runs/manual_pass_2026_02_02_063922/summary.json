@@ -1,0 +1,29 @@
+{
+  "test_config": {
+    "dataset_path": "C:\\Users\\moizk\\Downloads\\framed-clean\\calibration_micro_set",
+    "max_images": 15,
+    "shuffle": true,
+    "seed": 42,
+    "disable_expression": false,
+    "disable_cache": true,
+    "run_dir": "C:\\Users\\moizk\\Downloads\\framed-clean\\framed\\tests\\test_runs\\manual_pass_2026_02_02_063922"
+  },
+  "total_images": 14,
+  "completed": 14,
+  "failed": 0,
+  "pass_fail_report": {
+    "passed": true,
+    "failures": [],
+    "warnings": [
+      "Multiple hypotheses generated in only 0.0% of cases - may be too single-minded"
+    ],
+    "timestamp": "2026-02-02T06:51:20.751369Z"
+  },
+  "timestamp": "2026-02-02T06:51:20.751376Z",
+  "elapsed_ms": 0,
+  "elapsed_seconds": 0,
+  "elapsed_human": "N/A",
+  "run_id": "manual_pass_2026_02_02_063922",
+  "started_at": "2026-02-02T06:51:20.751172+00:00",
+  "ended_at": "2026-02-02T06:51:20.751178+00:00"
+}

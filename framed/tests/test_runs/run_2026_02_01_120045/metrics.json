@@ -1,0 +1,46 @@
+{
+  "intelligence_health": {
+    "average_confidence": 0.62,
+    "confidence_variance": 0.0059,
+    "confidence_std": 0.0771,
+    "confidence_distribution": {
+      "0.0-0.2": 0,
+      "0.2-0.4": 0,
+      "0.4-0.6": 6,
+      "0.6-0.8": 18,
+      "0.8-1.0": 1
+    },
+    "uncertainty_acknowledged_percent": 100.0,
+    "multiple_hypotheses_percent": 16.0,
+    "unresolved_disagreement_percent": 68.0,
+    "plausibility_low_percent": 0.0,
+    "hypothesis_diversity_penalized_percent": 0.0
+  },
+  "reflection_metrics": {
+    "regeneration_required_percent": 0.0,
+    "regeneration_count": 0
+  },
+  "failure_metrics": {
+    "hallucination_rate": 0.0,
+    "overconfidence_rate": 0.0,
+    "reflection_failure_escape_rate": 0.0,
+    "mentor_drift_frequency": 0.0
+  },
+  "learning_metrics": {
+    "memory_growth_rate": 100.0,
+    "correction_effectiveness": 0.0,
+    "average_confidence_adjustment": 0.0,
+    "new_patterns_stored": 25,
+    "evolution_entries_added": 25
+  },
+  "total_images": 25,
+  "run_metadata": {
+    "elapsed_ms": 2418659,
+    "elapsed_seconds": 2418.659,
+    "elapsed_human": "0h 40m 18s",
+    "images_per_hour": 37.2,
+    "run_id": "run_2026_02_01_120045",
+    "started_at": "2026-02-01T12:00:45.644457+00:00",
+    "ended_at": "2026-02-01T12:41:04.303557+00:00"
+  }
+}

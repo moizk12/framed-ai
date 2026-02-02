@@ -29,11 +29,59 @@ All reasoning is internal - not exposed to user unless needed.
 
 import json
 import logging
+import os
+import re
 from typing import Dict, Any, Optional, List
 
 from .llm_provider import call_model_a
+from .ambiguity import (
+    compute_plausibility,
+    compute_ambiguity_score,
+    compute_disagreement_state,
+    apply_confidence_governor,
+    compute_reasoning_cost_profile,
+    compute_hypothesis_diversity,
+)
+from .self_assessment import get_governor_bias
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_parse_layer_json(content: str) -> Optional[Dict[str, Any]]:
+    """Parse JSON from Responses API output; handles plain text, markdown blocks, and empty responses."""
+    if not content or not isinstance(content, str):
+        return None
+    text = content.strip()
+    if not text:
+        return None
+    # Direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Extract from ```json ... ``` or ``` ... ```
+    for pattern in (r"```(?:json)?\s*([\s\S]*?)```", r"```\s*([\s\S]*?)```"):
+        m = re.search(pattern, text)
+        if m:
+            try:
+                return json.loads(m.group(1).strip())
+            except json.JSONDecodeError:
+                continue
+    # Find first complete {...} block
+    start = text.find("{")
+    if start >= 0:
+        depth = 0
+        for i, c in enumerate(text[start:], start):
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start : i + 1])
+                    except json.JSONDecodeError:
+                        break
+    return None
 
 
 # ========================================================
@@ -50,6 +98,18 @@ def format_visual_evidence(visual_evidence: Dict[str, Any]) -> str:
         return "No visual evidence available."
     
     lines = []
+
+    # Scene / abstraction gate (prevents surface-study bias leaking everywhere)
+    scene_gate = visual_evidence.get("scene_gate", {}) if isinstance(visual_evidence, dict) else {}
+    if isinstance(scene_gate, dict) and scene_gate:
+        scene_type = scene_gate.get("scene_type", "unknown")
+        is_surface_study = bool(scene_gate.get("is_surface_study", False))
+        lines.append(f"- Scene Gate: scene_type={scene_type}, is_surface_study={is_surface_study}")
+        if not is_surface_study:
+            lines.append(
+                "- IMPORTANT: This appears to be a scene depiction. Treat material_condition / organic_integration as background-only metrics; "
+                "do NOT center recognition on 'weathered stone / reclamation'."
+            )
     
     # Organic growth
     organic_growth = visual_evidence.get("organic_growth", {})
@@ -60,23 +120,26 @@ def format_visual_evidence(visual_evidence: Dict[str, Any]) -> str:
         confidence = organic_growth.get("confidence", 0.0)
         lines.append(f"- Organic Growth: coverage={green_coverage:.3f}, salience={salience}, locations={green_locations} (confidence: {confidence:.2f})")
     
-    # Material condition
-    material_condition = visual_evidence.get("material_condition", {})
-    if material_condition:
-        condition = material_condition.get("condition", "unknown")
-        surface_roughness = material_condition.get("surface_roughness", 0.0)
-        edge_degradation = material_condition.get("edge_degradation", 0.0)
-        confidence = material_condition.get("confidence", 0.0)
-        lines.append(f"- Material Condition: {condition}, roughness={surface_roughness:.3f}, edge_degradation={edge_degradation:.3f} (confidence: {confidence:.2f})")
-    
-    # Organic integration
-    organic_integration = visual_evidence.get("organic_integration", {})
-    if organic_integration:
-        relationship = organic_integration.get("relationship", "none")
-        integration_level = organic_integration.get("integration_level", "none")
-        overlap_ratio = organic_integration.get("overlap_ratio", 0.0)
-        confidence = organic_integration.get("confidence", 0.0)
-        lines.append(f"- Organic Integration: relationship={relationship}, level={integration_level}, overlap={overlap_ratio:.3f} (confidence: {confidence:.2f})")
+    # Material condition + organic integration are ONLY foregrounded for surface studies.
+    is_surface_study = bool(scene_gate.get("is_surface_study", True)) if isinstance(scene_gate, dict) else True
+    if is_surface_study:
+        # Material condition
+        material_condition = visual_evidence.get("material_condition", {})
+        if material_condition:
+            condition = material_condition.get("condition", "unknown")
+            surface_roughness = material_condition.get("surface_roughness", 0.0)
+            edge_degradation = material_condition.get("edge_degradation", 0.0)
+            confidence = material_condition.get("confidence", 0.0)
+            lines.append(f"- Material Condition: {condition}, roughness={surface_roughness:.3f}, edge_degradation={edge_degradation:.3f} (confidence: {confidence:.2f})")
+
+        # Organic integration
+        organic_integration = visual_evidence.get("organic_integration", {})
+        if organic_integration:
+            relationship = organic_integration.get("relationship", "none")
+            integration_level = organic_integration.get("integration_level", "none")
+            overlap_ratio = organic_integration.get("overlap_ratio", 0.0)
+            confidence = organic_integration.get("confidence", 0.0)
+            lines.append(f"- Organic Integration: relationship={relationship}, level={integration_level}, overlap={overlap_ratio:.3f} (confidence: {confidence:.2f})")
     
     # Overall confidence
     overall_confidence = visual_evidence.get("overall_confidence", 0.0)
@@ -208,17 +271,62 @@ def format_user_history(user_history: Optional[Dict[str, Any]]) -> str:
 # LAYER 1: CERTAIN RECOGNITION
 # ========================================================
 
-def reason_about_recognition(visual_evidence: Dict[str, Any]) -> Dict[str, Any]:
+def reason_about_recognition(
+    visual_evidence: Dict[str, Any],
+    require_multiple_hypotheses: bool = False,
+) -> Dict[str, Any]:
     """
     Layer 1: Certain Recognition
-    
+
     LLM reasons about what it sees, not just matches patterns.
     Returns structured recognition with evidence and confidence.
-    
+    When require_multiple_hypotheses=True, returns hypotheses array with alternatives.
+
     Output: {"what_i_see": "...", "evidence": [...], "confidence": 0.92}
+    or with hypotheses: {"hypotheses": [...], "what_i_see": primary, "alternatives": [...]}
     """
     try:
-        prompt = f"""
+        if require_multiple_hypotheses:
+            prompt = f"""
+You are FRAMED's recognition engine. This image has conflicting or weak signals—you MUST consider multiple interpretations.
+
+VISUAL EVIDENCE (ground truth from pixels):
+{format_visual_evidence(visual_evidence)}
+
+REASONING TASK:
+Generate AT LEAST 2 plausible interpretations. Do not collapse to one. Each hypothesis must include:
+- conclusion: What you might be seeing
+- confidence: 0.0-1.0 for that interpretation
+- evidence: List of visual features supporting it
+- rejection_reason: Why the OTHER interpretation(s) might be wrong (for each alternative)
+
+The evidence is ambiguous. A mentor thinks in parallel, not decides early.
+
+OUTPUT FORMAT (JSON):
+{{
+    "hypotheses": [
+        {{
+            "conclusion": "I see weathered stone with ivy reclaiming the structure",
+            "confidence": 0.65,
+            "evidence": ["green_coverage=0.42", "condition=weathered"],
+            "rejection_reason": "Alternative assumes no organic growth, but green coverage is visible"
+        }},
+        {{
+            "conclusion": "I see painted concrete with green paint or graffiti",
+            "confidence": 0.35,
+            "evidence": ["color_uniformity high", "green may be paint"],
+            "rejection_reason": "Texture suggests natural weathering, not paint"
+        }}
+    ],
+    "what_i_see": "I see weathered stone with ivy reclaiming the structure (primary, but alternative: painted surface)",
+    "evidence": ["green_coverage=0.42", "condition=weathered", "integration=reclamation"],
+    "confidence": 0.55
+}}
+
+CRITICAL: You MUST output at least 2 hypotheses when signals are conflicting.
+"""
+        else:
+            prompt = f"""
 You are FRAMED's recognition engine. You see images with certainty, not tentativeness.
 
 VISUAL EVIDENCE (ground truth from pixels):
@@ -227,19 +335,24 @@ VISUAL EVIDENCE (ground truth from pixels):
 REASONING TASK:
 What are you seeing? Be certain, not tentative. Provide evidence for your recognition.
 
+SCENE INVARIANT:
+- If scene_type != "surface_study", you MUST treat material-aging / surface-weathering as **background context only**.
+- For non-surface scenes (interiors, streets, landscapes, people, abstract art), your primary recognition must describe the **scene/subject** (e.g. room, city street, people at a table, lake house), not just a close-up of a weathered surface.
+- Only when scene_type == "surface_study" may your primary conclusion be "weathered stone / reclaimed surface" etc.
+
 REQUIREMENTS:
-- State what you see clearly: "I see weathered stone with ivy reclaiming the structure"
+- State what you see clearly and concretely (e.g. "I see a bright living room interior with a blue sofa and plants by the window").
 - NOT tentative: "I think I see..." or "This might be..."
-- Provide evidence: List specific visual features that support your recognition
+- Provide evidence: List specific visual features that support it
 - Assess confidence: How confident are you? (0.0-1.0, honest assessment)
 
 OUTPUT FORMAT (JSON):
 {{
-    "what_i_see": "I see weathered stone with ivy reclaiming the structure. This is nature integrating with architecture over time.",
+    "what_i_see": "I see a bright interior room with a sofa, chair, plants, and a window wall letting in natural light.",
     "evidence": [
-        "green_coverage=0.42 (visual analysis)",
-        "condition=weathered (texture analysis)",
-        "integration=reclamation (morphological analysis)"
+        "scene_type from visual evidence = interior_scene",
+        "objects detected: sofa, chair, plants, window",
+        "technical + color signals consistent with indoor room"
     ],
     "confidence": 0.92
 }}
@@ -262,30 +375,41 @@ OUTPUT FORMAT (JSON):
                 "error": result["error"]
             }
         
-        # Parse JSON response
-        try:
-            recognition = json.loads(result["content"])
-            # Validate structure
-            if not isinstance(recognition, dict):
-                raise ValueError("Recognition output is not a dictionary")
-            if "what_i_see" not in recognition:
-                recognition["what_i_see"] = ""
-            if "evidence" not in recognition:
-                recognition["evidence"] = []
-            if "confidence" not in recognition:
-                recognition["confidence"] = 0.0
-            
-            logger.info(f"Layer 1 (Recognition) completed: confidence={recognition.get('confidence', 0.0):.2f}")
-            return recognition
-        
-        except json.JSONDecodeError as e:
-            logger.error(f"Layer 1 (Recognition) JSON parse failed: {e}")
-            return {
-                "what_i_see": "",
-                "evidence": [],
-                "confidence": 0.0,
-                "error": f"JSON parse error: {str(e)}"
-            }
+        # Parse JSON response (Responses API may return plain text or markdown-wrapped JSON)
+        recognition = _safe_parse_layer_json(result.get("content") or "")
+        if recognition is None:
+            logger.error("Layer 1 (Recognition) JSON parse failed: empty or invalid JSON")
+            return {"what_i_see": "", "evidence": [], "confidence": 0.0, "error": "JSON parse failed"}
+        if not isinstance(recognition, dict):
+            recognition = {"what_i_see": str(recognition)[:500], "evidence": [], "confidence": 0.0}
+        if "what_i_see" not in recognition:
+            recognition["what_i_see"] = ""
+        if "evidence" not in recognition:
+            recognition["evidence"] = []
+        if "confidence" not in recognition:
+            recognition["confidence"] = 0.0
+
+        # Extract alternatives from hypotheses for reflection
+        if require_multiple_hypotheses and recognition.get("hypotheses"):
+            hypotheses = recognition.get("hypotheses", [])
+            if isinstance(hypotheses, list) and len(hypotheses) >= 2:
+                recognition["alternatives"] = [
+                    {"conclusion": h.get("conclusion", ""), "confidence": h.get("confidence", 0), "rejection_reason": h.get("rejection_reason", "")}
+                    for h in hypotheses[1:]  # non-primary
+                ]
+                recognition["rejected_alternatives"] = [h.get("conclusion", "") for h in hypotheses[1:]]
+                recognition["multiple_hypotheses_present"] = True
+            else:
+                recognition["multiple_hypotheses_present"] = False
+                recognition["alternatives"] = []
+                recognition["rejected_alternatives"] = []
+        else:
+            recognition["multiple_hypotheses_present"] = bool(recognition.get("hypotheses") and len(recognition.get("hypotheses", [])) >= 2)
+            recognition.setdefault("alternatives", [])
+            recognition.setdefault("rejected_alternatives", [])
+
+        logger.info(f"Layer 1 (Recognition) completed: confidence={recognition.get('confidence', 0.0):.2f}, hypotheses={recognition.get('multiple_hypotheses_present', False)}")
+        return recognition
     
     except Exception as e:
         logger.error(f"Layer 1 (Recognition) failed: {e}", exc_info=True)
@@ -369,32 +493,28 @@ OUTPUT FORMAT (JSON):
                 "error": result["error"]
             }
         
-        try:
-            meta_cognition = json.loads(result["content"])
-            # Validate structure
-            if not isinstance(meta_cognition, dict):
-                raise ValueError("Meta-cognition output is not a dictionary")
-            if "why_i_believe_this" not in meta_cognition:
-                meta_cognition["why_i_believe_this"] = ""
-            if "confidence" not in meta_cognition:
-                meta_cognition["confidence"] = recognition.get("confidence", 0.0)
-            if "what_i_might_be_missing" not in meta_cognition:
-                meta_cognition["what_i_might_be_missing"] = ""
-            if "evolution_awareness" not in meta_cognition:
-                meta_cognition["evolution_awareness"] = ""
-            
-            logger.info(f"Layer 2 (Meta-Cognition) completed: confidence={meta_cognition.get('confidence', 0.0):.2f}")
-            return meta_cognition
-        
-        except json.JSONDecodeError as e:
-            logger.error(f"Layer 2 (Meta-Cognition) JSON parse failed: {e}")
+        meta_cognition = _safe_parse_layer_json(result.get("content") or "")
+        if meta_cognition is None:
+            logger.error("Layer 2 (Meta-Cognition) JSON parse failed: empty or invalid JSON")
             return {
                 "why_i_believe_this": "",
                 "confidence": recognition.get("confidence", 0.0),
                 "what_i_might_be_missing": "",
                 "evolution_awareness": "",
-                "error": f"JSON parse error: {str(e)}"
+                "error": "JSON parse failed"
             }
+        if not isinstance(meta_cognition, dict):
+            meta_cognition = {"why_i_believe_this": str(meta_cognition)[:500], "confidence": recognition.get("confidence", 0.0), "what_i_might_be_missing": "", "evolution_awareness": ""}
+        if "why_i_believe_this" not in meta_cognition:
+            meta_cognition["why_i_believe_this"] = ""
+        if "confidence" not in meta_cognition:
+            meta_cognition["confidence"] = recognition.get("confidence", 0.0)
+        if "what_i_might_be_missing" not in meta_cognition:
+            meta_cognition["what_i_might_be_missing"] = ""
+        if "evolution_awareness" not in meta_cognition:
+            meta_cognition["evolution_awareness"] = ""
+        logger.info(f"Layer 2 (Meta-Cognition) completed: confidence={meta_cognition.get('confidence', 0.0):.2f}")
+        return meta_cognition
     
     except Exception as e:
         logger.error(f"Layer 2 (Meta-Cognition) failed: {e}", exc_info=True)
@@ -482,32 +602,28 @@ OUTPUT FORMAT (JSON):
                 "error": result["error"]
             }
         
-        try:
-            temporal = json.loads(result["content"])
-            # Validate structure
-            if not isinstance(temporal, dict):
-                raise ValueError("Temporal output is not a dictionary")
-            if "how_i_used_to_see_this" not in temporal:
-                temporal["how_i_used_to_see_this"] = ""
-            if "how_i_see_it_now" not in temporal:
-                temporal["how_i_see_it_now"] = meta_cognition.get("why_i_believe_this", "")
-            if "evolution_reason" not in temporal:
-                temporal["evolution_reason"] = ""
-            if "patterns_learned" not in temporal:
-                temporal["patterns_learned"] = []
-            
-            logger.info(f"Layer 3 (Temporal Consciousness) completed")
-            return temporal
-        
-        except json.JSONDecodeError as e:
-            logger.error(f"Layer 3 (Temporal Consciousness) JSON parse failed: {e}")
+        temporal = _safe_parse_layer_json(result.get("content") or "")
+        if temporal is None:
+            logger.error("Layer 3 (Temporal Consciousness) JSON parse failed: empty or invalid JSON")
             return {
                 "how_i_used_to_see_this": "",
                 "how_i_see_it_now": meta_cognition.get("why_i_believe_this", ""),
                 "evolution_reason": "",
                 "patterns_learned": [],
-                "error": f"JSON parse error: {str(e)}"
+                "error": "JSON parse failed"
             }
+        if not isinstance(temporal, dict):
+            temporal = {"how_i_used_to_see_this": "", "how_i_see_it_now": meta_cognition.get("why_i_believe_this", ""), "evolution_reason": "", "patterns_learned": []}
+        if "how_i_used_to_see_this" not in temporal:
+            temporal["how_i_used_to_see_this"] = ""
+        if "how_i_see_it_now" not in temporal:
+            temporal["how_i_see_it_now"] = meta_cognition.get("why_i_believe_this", "")
+        if "evolution_reason" not in temporal:
+            temporal["evolution_reason"] = ""
+        if "patterns_learned" not in temporal:
+            temporal["patterns_learned"] = []
+        logger.info("Layer 3 (Temporal Consciousness) completed")
+        return temporal
     
     except Exception as e:
         logger.error(f"Layer 3 (Temporal Consciousness) failed: {e}", exc_info=True)
@@ -580,29 +696,20 @@ OUTPUT FORMAT (JSON):
                 "error": result["error"]
             }
         
-        try:
-            emotion = json.loads(result["content"])
-            # Validate structure
-            if not isinstance(emotion, dict):
-                raise ValueError("Emotion output is not a dictionary")
-            if "what_i_feel" not in emotion:
-                emotion["what_i_feel"] = ""
-            if "why" not in emotion:
-                emotion["why"] = ""
-            if "evolution" not in emotion:
-                emotion["evolution"] = temporal.get("evolution_reason", "")
-            
-            logger.info(f"Layer 4 (Emotional Resonance) completed")
-            return emotion
-        
-        except json.JSONDecodeError as e:
-            logger.error(f"Layer 4 (Emotional Resonance) JSON parse failed: {e}")
-            return {
-                "what_i_feel": "",
-                "why": "",
-                "evolution": "",
-                "error": f"JSON parse error: {str(e)}"
-            }
+        emotion = _safe_parse_layer_json(result.get("content") or "")
+        if emotion is None:
+            logger.error("Layer 4 (Emotional Resonance) JSON parse failed: empty or invalid JSON")
+            return {"what_i_feel": "", "why": "", "evolution": "", "error": "JSON parse failed"}
+        if not isinstance(emotion, dict):
+            emotion = {"what_i_feel": str(emotion)[:500], "why": "", "evolution": temporal.get("evolution_reason", "")}
+        if "what_i_feel" not in emotion:
+            emotion["what_i_feel"] = ""
+        if "why" not in emotion:
+            emotion["why"] = ""
+        if "evolution" not in emotion:
+            emotion["evolution"] = temporal.get("evolution_reason", "")
+        logger.info("Layer 4 (Emotional Resonance) completed")
+        return emotion
     
     except Exception as e:
         logger.error(f"Layer 4 (Emotional Resonance) failed: {e}", exc_info=True)
@@ -681,32 +788,22 @@ OUTPUT FORMAT (JSON):
                 "error": result["error"]
             }
         
-        try:
-            continuity = json.loads(result["content"])
-            # Validate structure
-            if not isinstance(continuity, dict):
-                raise ValueError("Continuity output is not a dictionary")
-            if "user_pattern" not in continuity:
-                continuity["user_pattern"] = ""
-            if "comparison" not in continuity:
-                continuity["comparison"] = ""
-            if "trajectory" not in continuity:
-                continuity["trajectory"] = ""
-            if "shared_history" not in continuity:
-                continuity["shared_history"] = ""
-            
-            logger.info(f"Layer 5 (Continuity of Self) completed")
-            return continuity
-        
-        except json.JSONDecodeError as e:
-            logger.error(f"Layer 5 (Continuity of Self) JSON parse failed: {e}")
-            return {
-                "user_pattern": "",
-                "comparison": "",
-                "trajectory": "",
-                "shared_history": "",
-                "error": f"JSON parse error: {str(e)}"
-            }
+        continuity = _safe_parse_layer_json(result.get("content") or "")
+        if continuity is None:
+            logger.error("Layer 5 (Continuity of Self) JSON parse failed: empty or invalid JSON")
+            return {"user_pattern": "", "comparison": "", "trajectory": "", "shared_history": "", "error": "JSON parse failed"}
+        if not isinstance(continuity, dict):
+            continuity = {"user_pattern": "", "comparison": "", "trajectory": "", "shared_history": ""}
+        if "user_pattern" not in continuity:
+            continuity["user_pattern"] = ""
+        if "comparison" not in continuity:
+            continuity["comparison"] = ""
+        if "trajectory" not in continuity:
+            continuity["trajectory"] = ""
+        if "shared_history" not in continuity:
+            continuity["shared_history"] = ""
+        logger.info("Layer 5 (Continuity of Self) completed")
+        return continuity
     
     except Exception as e:
         logger.error(f"Layer 5 (Continuity of Self) failed: {e}", exc_info=True)
@@ -802,37 +899,26 @@ OUTPUT FORMAT (JSON):
                 "error": result["error"]
             }
         
-        try:
-            mentor = json.loads(result["content"])
-            # Validate structure
-            if not isinstance(mentor, dict):
-                raise ValueError("Mentor output is not a dictionary")
-            if "observations" not in mentor:
-                mentor["observations"] = []
-            if "questions" not in mentor:
-                mentor["questions"] = []
-            if "challenges" not in mentor:
-                mentor["challenges"] = []
-            
-            # Ensure lists are actually lists
-            if not isinstance(mentor["observations"], list):
-                mentor["observations"] = []
-            if not isinstance(mentor["questions"], list):
-                mentor["questions"] = []
-            if not isinstance(mentor["challenges"], list):
-                mentor["challenges"] = []
-            
-            logger.info(f"Layer 6 (Mentor Voice) completed: {len(mentor.get('observations', []))} observations, {len(mentor.get('questions', []))} questions, {len(mentor.get('challenges', []))} challenges")
-            return mentor
-        
-        except json.JSONDecodeError as e:
-            logger.error(f"Layer 6 (Mentor Voice) JSON parse failed: {e}")
-            return {
-                "observations": [],
-                "questions": [],
-                "challenges": [],
-                "error": f"JSON parse error: {str(e)}"
-            }
+        mentor = _safe_parse_layer_json(result.get("content") or "")
+        if mentor is None:
+            logger.error("Layer 6 (Mentor Voice) JSON parse failed: empty or invalid JSON")
+            return {"observations": [], "questions": [], "challenges": [], "error": "JSON parse failed"}
+        if not isinstance(mentor, dict):
+            mentor = {"observations": [], "questions": [], "challenges": []}
+        if "observations" not in mentor:
+            mentor["observations"] = []
+        if "questions" not in mentor:
+            mentor["questions"] = []
+        if "challenges" not in mentor:
+            mentor["challenges"] = []
+        if not isinstance(mentor["observations"], list):
+            mentor["observations"] = []
+        if not isinstance(mentor["questions"], list):
+            mentor["questions"] = []
+        if not isinstance(mentor["challenges"], list):
+            mentor["challenges"] = []
+        logger.info(f"Layer 6 (Mentor Voice) completed: {len(mentor.get('observations', []))} observations, {len(mentor.get('questions', []))} questions, {len(mentor.get('challenges', []))} challenges")
+        return mentor
     
     except Exception as e:
         logger.error(f"Layer 6 (Mentor Voice) failed: {e}", exc_info=True)
@@ -911,30 +997,20 @@ OUTPUT FORMAT (JSON):
                 "error": result["error"]
             }
         
-        try:
-            self_critique = json.loads(result["content"])
-            # Validate structure
-            if not isinstance(self_critique, dict):
-                raise ValueError("Self-critique output is not a dictionary")
-            if "past_errors" not in self_critique:
-                self_critique["past_errors"] = []
-            if "evolution" not in self_critique:
-                self_critique["evolution"] = ""
-            
-            # Ensure past_errors is a list
-            if not isinstance(self_critique["past_errors"], list):
-                self_critique["past_errors"] = []
-            
-            logger.info(f"Layer 7 (Self-Critique) completed: {len(self_critique.get('past_errors', []))} past errors identified")
-            return self_critique
-        
-        except json.JSONDecodeError as e:
-            logger.error(f"Layer 7 (Self-Critique) JSON parse failed: {e}")
-            return {
-                "past_errors": [],
-                "evolution": "",
-                "error": f"JSON parse error: {str(e)}"
-            }
+        self_critique = _safe_parse_layer_json(result.get("content") or "")
+        if self_critique is None:
+            logger.error("Layer 7 (Self-Critique) JSON parse failed: empty or invalid JSON")
+            return {"past_errors": [], "evolution": "", "error": "JSON parse failed"}
+        if not isinstance(self_critique, dict):
+            self_critique = {"past_errors": [], "evolution": ""}
+        if "past_errors" not in self_critique:
+            self_critique["past_errors"] = []
+        if "evolution" not in self_critique:
+            self_critique["evolution"] = ""
+        if not isinstance(self_critique["past_errors"], list):
+            self_critique["past_errors"] = []
+        logger.info(f"Layer 7 (Self-Critique) completed: {len(self_critique.get('past_errors', []))} past errors identified")
+        return self_critique
     
     except Exception as e:
         logger.error(f"Layer 7 (Self-Critique) failed: {e}", exc_info=True)
@@ -946,6 +1022,140 @@ OUTPUT FORMAT (JSON):
 
 
 # ========================================================
+# MINIMAL INTELLIGENCE (Plausibility Gate: Low)
+# ========================================================
+
+def _create_minimal_intelligence(
+    visual_evidence: Dict[str, Any],
+    plausibility: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Minimal intelligence when plausibility is low (skip Model A)."""
+    return {
+        "recognition": {
+            "what_i_see": "Insufficient or conflicting signal for reliable interpretation.",
+            "evidence": ["plausibility=low", plausibility.get("reason", "insufficient signal")],
+            "confidence": 0.25,
+            "alternatives": [],
+            "rejected_alternatives": [],
+            "multiple_hypotheses_present": False,
+        },
+        "meta_cognition": {
+            "why_i_believe_this": "Visual and semantic signals are too weak for confident reasoning.",
+            "confidence": 0.25,
+            "what_i_might_be_missing": "Adequate image quality, clear subject, coherent visual/semantic agreement.",
+            "evolution_awareness": "",
+        },
+        "temporal": {"how_i_used_to_see_this": "", "how_i_see_it_now": "", "evolution_reason": "", "patterns_learned": []},
+        "emotion": {"what_i_feel": "", "why": "", "evolution": ""},
+        "continuity": {"user_pattern": "", "comparison": "", "trajectory": "", "shared_history": ""},
+        "mentor": {"observations": [], "questions": [], "challenges": []},
+        "self_critique": {"past_errors": [], "evolution": ""},
+        "plausibility": plausibility,
+        "ambiguity_score": 0.0,
+        "disagreement_state": {"exists": False, "reason": "", "resolution": "none"},
+        "reasoning_cost_profile": {"effort": "minimal", "tokens_estimated": 0, "reasons": [plausibility.get("reason", "")]},
+        "confidence_governed": True,
+        "skip_model_a": True,
+    }
+
+
+# ========================================================
+# COMBINED LAYERS 2–7 (single Model A call when enabled)
+# ========================================================
+# Feature flag: FRAMED_COMBINED_LAYERS_2_7 (default: true). Fallback to 6 separate calls if combined fails.
+# Guardrail: Recognition is passed as read-only evidence; combined call must not modify it.
+
+USE_COMBINED_LAYERS_2_7 = os.environ.get("FRAMED_COMBINED_LAYERS_2_7", "true").lower() == "true"
+
+
+def _validate_combined_layers_2_7(data: Optional[Dict[str, Any]]) -> bool:
+    """Strict schema check: combined output must have all required layer keys and types."""
+    if not data or not isinstance(data, dict):
+        return False
+    required = {
+        "meta_cognition": ("why_i_believe_this", "confidence", "what_i_might_be_missing"),
+        "temporal": ("how_i_used_to_see_this", "how_i_see_it_now", "evolution_reason"),
+        "emotion": ("what_i_feel", "why", "evolution"),
+        "continuity": ("user_pattern", "comparison", "trajectory"),
+        "mentor": ("observations", "questions", "challenges"),
+        "self_critique": ("past_errors", "evolution"),
+    }
+    for layer, keys in required.items():
+        if layer not in data or not isinstance(data[layer], dict):
+            return False
+        for k in keys:
+            if k not in data[layer]:
+                return False
+    return True
+
+
+def reason_about_layers_2_7(
+    recognition: Dict[str, Any],
+    temporal_memory: Optional[Dict[str, Any]] = None,
+    user_history: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Single Model A call for layers 2–7. Recognition is read-only evidence; do not modify it.
+    Returns dict with meta_cognition, temporal, emotion, continuity, mentor, self_critique or None on failure.
+    """
+    try:
+        past_text = format_temporal_memory(temporal_memory) if temporal_memory else "No past interpretations available."
+        user_text = format_user_history(user_history) if user_history else "No user history available."
+        rec_text = recognition.get("what_i_see", "No recognition available")
+        evidence_text = json.dumps(recognition.get("evidence", []), indent=2)
+
+        prompt = f"""
+You are FRAMED's reasoning engine. Output layers 2–7 in one JSON. RECOGNITION IS READ-ONLY EVIDENCE. Do not modify it.
+
+CURRENT RECOGNITION (read-only):
+"{rec_text}"
+EVIDENCE: {evidence_text}
+CONFIDENCE: {recognition.get('confidence', 0.0):.2f}
+
+PAST INTERPRETATIONS: {past_text}
+USER HISTORY: {user_text}
+
+Output exactly one JSON object with these keys. Each value is an object with the specified fields.
+
+meta_cognition: {{ "why_i_believe_this": string, "confidence": number 0-1, "what_i_might_be_missing": string, "evolution_awareness": string }}
+temporal: {{ "how_i_used_to_see_this": string, "how_i_see_it_now": string, "evolution_reason": string, "patterns_learned": array }}
+emotion: {{ "what_i_feel": string, "why": string, "evolution": string }}
+continuity: {{ "user_pattern": string, "comparison": string, "trajectory": string, "shared_history": string }}
+mentor: {{ "observations": array of strings, "questions": array of strings, "challenges": array of strings }}
+self_critique: {{ "past_errors": array of strings, "evolution": string }}
+
+OUTPUT FORMAT (valid JSON only):
+{{
+  "meta_cognition": {{ "why_i_believe_this": "...", "confidence": 0.9, "what_i_might_be_missing": "...", "evolution_awareness": "..." }},
+  "temporal": {{ "how_i_used_to_see_this": "...", "how_i_see_it_now": "...", "evolution_reason": "...", "patterns_learned": [] }},
+  "emotion": {{ "what_i_feel": "...", "why": "...", "evolution": "..." }},
+  "continuity": {{ "user_pattern": "...", "comparison": "...", "trajectory": "...", "shared_history": "..." }},
+  "mentor": {{ "observations": [], "questions": [], "challenges": [] }},
+  "self_critique": {{ "past_errors": [], "evolution": "..." }}
+}}
+"""
+        result = call_model_a(
+            prompt=prompt,
+            system_prompt="You are FRAMED's reasoning engine. Output layers 2–7 as one JSON. Recognition is read-only; do not modify it.",
+            response_format={"type": "json_object"},
+            max_tokens=4000,
+            temperature=0.5,
+        )
+        if result.get("error"):
+            logger.warning(f"Combined layers 2–7 failed: {result['error']}")
+            return None
+        parsed = _safe_parse_layer_json(result.get("content") or "")
+        if not _validate_combined_layers_2_7(parsed):
+            logger.warning("Combined layers 2–7: schema validation failed, falling back to 6 calls")
+            return None
+        logger.info("Combined layers 2–7 completed (single Model A call)")
+        return parsed
+    except Exception as e:
+        logger.warning(f"Combined layers 2–7 failed: {e}, falling back to 6 calls")
+        return None
+
+
+# ========================================================
 # MAIN INTELLIGENCE CORE FUNCTION
 # ========================================================
 
@@ -954,62 +1164,139 @@ def framed_intelligence(
     analysis_result: Dict[str, Any],
     temporal_memory: Optional[Dict[str, Any]] = None,
     user_history: Optional[Dict[str, Any]] = None,
+    pattern_signature: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Main intelligence core function.
-    
+
     Orchestrates all 7 layers of reasoning, building on each previous layer.
-    This is where FRAMED's brain lives.
-    
-    Args:
-        visual_evidence: Visual analysis results from extract_visual_features() (YOLO, CLIP, OpenCV)
-        analysis_result: Full analysis result (canonical schema) for semantic signals
-        temporal_memory: Past interpretations and evolution (from temporal_memory.py)
-        user_history: User trajectory and patterns (from temporal_memory.py)
-    
+    Includes: plausibility gate, ambiguity scoring, confidence governor, disagreement state.
+
     Returns:
-        Structured intelligence output with all 7 layers:
-        {
-            "recognition": {...},
-            "meta_cognition": {...},
-            "temporal": {...},
-            "emotion": {...},
-            "continuity": {...},
-            "mentor": {...},
-            "self_critique": {...}
-        }
+        Structured intelligence output with all 7 layers plus:
+        - plausibility, ambiguity_score, disagreement_state, reasoning_cost_profile
+        - confidence_governed, require_multiple_hypotheses
     """
     try:
         logger.info("Starting FRAMED Intelligence Core (7-layer reasoning)")
+
+        # Semantic signals for plausibility (from perception layer)
+        perception = analysis_result.get("perception", {}) or {}
+        semantics = perception.get("semantics", {}) or {}
+        composition = perception.get("composition", {}) or {}
+        clip_data = semantics
+        # Objects: YOLO may store in perception.composition or perception.objects
+        objects_raw = perception.get("objects", {})
+        objects_list = objects_raw.get("objects", []) if isinstance(objects_raw, dict) else (objects_raw if isinstance(objects_raw, list) else [])
+        if not objects_list and composition.get("available"):
+            objects_list = ["subject_detected"]  # proxy for composition having subject
+        semantic_signals_for_plaus = {
+            "objects": objects_list,
+            "tags": semantics.get("tags", []) or [],
+            "caption_keywords": (semantics.get("caption", "") or "").split()[:20],
+        }
+
+        # === HITL calibration (load before plausibility for ambiguity/multi-hyp bias) ===
+        hitl_calibration = {}
+        try:
+            from framed.feedback.calibration import get_hitl_calibration
+            hitl_calibration = get_hitl_calibration(pattern_signature)
+        except Exception:
+            pass
+
+        # === PLAUSIBILITY GATE ===
+        plausibility = compute_plausibility(
+            visual_evidence, semantic_signals_for_plaus, clip_data,
+            hitl_multi_hypothesis_bias=hitl_calibration.get("multi_hypothesis_bias", 0),
+        )
+        if plausibility.get("skip_model_a"):
+            logger.info("Plausibility low: skipping Model A, using minimal intelligence")
+            return _create_minimal_intelligence(visual_evidence, plausibility)
+
+        # === LAYER 1: RECOGNITION (with optional multi-hypothesis) ===
+        force_multi = plausibility.get("force_multi_hypothesis", False)
+        logger.info(f"Layer 1: Certain Recognition (multi_hypothesis={force_multi})...")
+        recognition = reason_about_recognition(visual_evidence, require_multiple_hypotheses=force_multi)
+
+        # === AMBIGUITY & DISAGREEMENT (post-Layer 1) ===
+        ambiguity_sensitivity_bump = hitl_calibration.get("ambiguity_sensitivity_bump", 0)
+        ambiguity = compute_ambiguity_score(
+            visual_evidence, recognition, semantic_signals_for_plaus,
+            ambiguity_sensitivity_bump=ambiguity_sensitivity_bump,
+        )
+        force_multi = force_multi or ambiguity.get("require_multiple_hypotheses", False)
+        if force_multi and not recognition.get("multiple_hypotheses_present") and recognition.get("confidence", 0) < 0.65:
+            logger.info("Ambiguity requires multi-hypothesis but recognition produced single—flagging for reflection")
+        disagreement = compute_disagreement_state(visual_evidence, recognition, semantic_signals_for_plaus)
+
+        # === HYPOTHESIS DIVERSITY (Option 1: penalize semantic variants) ===
+        primary = recognition.get("what_i_see", "")
+        alts = recognition.get("alternatives", []) or recognition.get("rejected_alternatives", [])
+        hypothesis_diversity = compute_hypothesis_diversity(primary, alts)
+        penalize_diversity = hypothesis_diversity.get("penalize_hypothesis_diversity", False)
+
+        # === CONFIDENCE GOVERNOR (Option 2: self-assessment bias) ===
+        raw_conf = recognition.get("confidence", 0.5)
+        multi_present = recognition.get("multiple_hypotheses_present", False)
+        governor_bias = get_governor_bias(signature=pattern_signature)
+        governed_conf, gov_rationale = apply_confidence_governor(
+            raw_conf,
+            ambiguity.get("ambiguity_score", 0),
+            multi_present,
+            disagreement.get("exists", False),
+            penalize_hypothesis_diversity=penalize_diversity,
+            governor_bias=governor_bias,
+        )
+        recognition["confidence"] = governed_conf
+        recognition["confidence_governance"] = gov_rationale
+        recognition["require_multiple_hypotheses"] = force_multi
+
+        # === LAYERS 2–7: combined (one call) or fallback (6 calls) ===
+        combined_ok = False
+        if USE_COMBINED_LAYERS_2_7:
+            combined = reason_about_layers_2_7(recognition, temporal_memory, user_history)
+            if combined and _validate_combined_layers_2_7(combined):
+                meta_cognition = combined["meta_cognition"]
+                temporal = combined["temporal"]
+                emotion = combined["emotion"]
+                continuity = combined["continuity"]
+                mentor = combined["mentor"]
+                self_critique = combined["self_critique"]
+                combined_ok = True
+                # Apply governor to meta_cognition confidence (same as 6-call path)
+                mc_raw = meta_cognition.get("confidence", governed_conf)
+                mc_governed, _ = apply_confidence_governor(
+                    mc_raw, ambiguity.get("ambiguity_score", 0), multi_present, disagreement.get("exists", False),
+                    penalize_hypothesis_diversity=penalize_diversity, governor_bias=governor_bias,
+                )
+                meta_cognition["confidence"] = mc_governed
+                meta_cognition["rejected_alternatives"] = recognition.get("rejected_alternatives", []) or meta_cognition.get("rejected_alternatives", [])
+
+        if not combined_ok:
+            # Fallback: 6 separate Model A calls (recognition is read-only evidence for each)
+            logger.info("Layer 2: Meta-Cognition...")
+            meta_cognition = reason_about_thinking(recognition, temporal_memory)
+            mc_raw = meta_cognition.get("confidence", governed_conf)
+            mc_governed, _ = apply_confidence_governor(
+                mc_raw, ambiguity.get("ambiguity_score", 0), multi_present, disagreement.get("exists", False),
+                penalize_hypothesis_diversity=penalize_diversity, governor_bias=governor_bias,
+            )
+            meta_cognition["confidence"] = mc_governed
+            meta_cognition["rejected_alternatives"] = recognition.get("rejected_alternatives", []) or meta_cognition.get("rejected_alternatives", [])
+            logger.info("Layer 3: Temporal Consciousness...")
+            temporal = reason_about_evolution(meta_cognition, temporal_memory)
+            logger.info("Layer 4: Emotional Resonance...")
+            emotion = reason_about_feeling(meta_cognition, temporal)
+            logger.info("Layer 5: Continuity of Self...")
+            continuity = reason_about_trajectory(emotion, user_history)
+            logger.info("Layer 6: Mentor Voice (Reasoning)...")
+            mentor = reason_about_mentorship(continuity, user_history)
+            logger.info("Layer 7: Self-Critique...")
+            self_critique = reason_about_past_errors(mentor, temporal_memory)
         
-        # Layer 1: Certain Recognition
-        logger.info("Layer 1: Certain Recognition...")
-        recognition = reason_about_recognition(visual_evidence)
-        
-        # Layer 2: Meta-Cognition
-        logger.info("Layer 2: Meta-Cognition...")
-        meta_cognition = reason_about_thinking(recognition, temporal_memory)
-        
-        # Layer 3: Temporal Consciousness
-        logger.info("Layer 3: Temporal Consciousness...")
-        temporal = reason_about_evolution(meta_cognition, temporal_memory)
-        
-        # Layer 4: Emotional Resonance
-        logger.info("Layer 4: Emotional Resonance...")
-        emotion = reason_about_feeling(meta_cognition, temporal)
-        
-        # Layer 5: Continuity of Self
-        logger.info("Layer 5: Continuity of Self...")
-        continuity = reason_about_trajectory(emotion, user_history)
-        
-        # Layer 6: Mentor Voice (Reasoning)
-        logger.info("Layer 6: Mentor Voice (Reasoning)...")
-        mentor = reason_about_mentorship(continuity, user_history)
-        
-        # Layer 7: Self-Critique
-        logger.info("Layer 7: Self-Critique...")
-        self_critique = reason_about_past_errors(mentor, temporal_memory)
-        
+        # Reasoning cost profile
+        cost_profile = compute_reasoning_cost_profile(plausibility, ambiguity, disagreement)
+
         # Compile intelligence output
         intelligence_output = {
             "recognition": recognition,
@@ -1018,10 +1305,18 @@ def framed_intelligence(
             "emotion": emotion,
             "continuity": continuity,
             "mentor": mentor,
-            "self_critique": self_critique
+            "self_critique": self_critique,
+            "plausibility": plausibility,
+            "ambiguity_score": ambiguity.get("ambiguity_score", 0),
+            "ambiguity": ambiguity,
+            "disagreement_state": disagreement,
+            "hypothesis_diversity": hypothesis_diversity,
+            "reasoning_cost_profile": cost_profile,
+            "confidence_governed": True,
+            "require_multiple_hypotheses": force_multi,
         }
         
-        logger.info("FRAMED Intelligence Core completed successfully")
+        logger.info(f"FRAMED Intelligence Core completed: conf={meta_cognition.get('confidence', 0):.2f}, multi_hyp={multi_present}, disagreement={disagreement.get('exists', False)}")
         return intelligence_output
     
     except Exception as e:

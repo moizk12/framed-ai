@@ -8,15 +8,74 @@ Key Functions:
 - generate_poetic_critique: Transform intelligence output into poetic critique
 - apply_mentor_hierarchy: Determine observations, questions, or challenges
 - integrate_self_correction: Integrate evolutionary self-correction into critique
+
+Expression cache: keyed by (intelligence_output, mentor_mode, HITL calibration state).
+Bump EXPRESSION_CACHE_VERSION or change HITL calibration to invalidate cache.
 """
 
 import json
 import logging
+import os
+import hashlib
+import tempfile
 from typing import Dict, Any, Optional
 
 from .llm_provider import call_model_b
 
 logger = logging.getLogger(__name__)
+
+# Expression cache: same intelligence + voice + calibration => same critique
+_default_base = os.path.join(tempfile.gettempdir(), "framed")
+_EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
+EXPRESSION_CACHE_VERSION = 1  # Bump to invalidate all expression cache entries
+
+
+def _hitl_calibration_state_for_cache() -> str:
+    """Return a string that changes when HITL calibration changes (for cache key)."""
+    try:
+        from framed.feedback.calibration import HITL_CALIBRATION_PATH
+        p = HITL_CALIBRATION_PATH
+        if os.path.exists(p):
+            return str(os.path.getmtime(p))
+    except Exception:
+        pass
+    return "0"
+
+
+def _expression_cache_key(intelligence_output: Dict[str, Any], mentor_mode: str) -> str:
+    """Stable cache key: intelligence + mentor_mode + cache version + HITL calibration state."""
+    canonical = json.dumps(intelligence_output, sort_keys=True, default=str)
+    cal_state = _hitl_calibration_state_for_cache()
+    raw = f"{canonical}|{mentor_mode}|{EXPRESSION_CACHE_VERSION}|{cal_state}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _get_cached_expression(key: str) -> Optional[str]:
+    """Return cached critique if present and valid."""
+    try:
+        os.makedirs(_EXPRESSION_CACHE_DIR, exist_ok=True)
+        path = os.path.join(_EXPRESSION_CACHE_DIR, f"{key}.json")
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("_version") != EXPRESSION_CACHE_VERSION:
+            return None
+        return data.get("critique")
+    except Exception as e:
+        logger.debug(f"Expression cache read failed: {e}")
+        return None
+
+
+def _save_cached_expression(key: str, critique: str) -> None:
+    """Store critique in expression cache."""
+    try:
+        os.makedirs(_EXPRESSION_CACHE_DIR, exist_ok=True)
+        path = os.path.join(_EXPRESSION_CACHE_DIR, f"{key}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"_version": EXPRESSION_CACHE_VERSION, "critique": critique}, f, default=str)
+    except Exception as e:
+        logger.debug(f"Expression cache write failed: {e}")
 
 
 # ========================================================
@@ -97,6 +156,19 @@ def format_intelligence_output(intelligence_output: Dict[str, Any]) -> str:
             lines.append(f"  Past errors: {json.dumps(self_critique.get('past_errors', []), indent=4)}")
         if self_critique.get("evolution"):
             lines.append(f"  Evolution: {self_critique.get('evolution')}")
+
+    # Disagreement state (structural)
+    disagreement = intelligence_output.get("disagreement_state", {})
+    if disagreement.get("exists"):
+        lines.append(f"DISAGREEMENT (must acknowledge): {disagreement.get('reason', 'Visual vs semantic conflict')}")
+        lines.append(f"  Resolution: {disagreement.get('resolution', 'unresolved')}")
+
+    # Multiple hypotheses
+    if intelligence_output.get("require_multiple_hypotheses") or recognition.get("multiple_hypotheses_present"):
+        alts = recognition.get("alternatives", []) or recognition.get("rejected_alternatives", [])
+        if alts:
+            lines.append(f"MULTIPLE HYPOTHESES: Primary + alternatives: {alts}")
+        lines.append(f"  Confidence: {recognition.get('confidence', 0):.2f} (multiple interpretations possible)")
     
     return "\n".join(lines) if lines else "Intelligence output incomplete."
 
@@ -151,11 +223,40 @@ def generate_poetic_critique(
         str: Poetic critique (prose, not JSON)
     """
     try:
+        # Expression cache: same intelligence + mentor_mode + HITL state => same critique
+        cache_key = _expression_cache_key(intelligence_output, mentor_mode)
+        cached = _get_cached_expression(cache_key)
+        if cached is not None:
+            logger.info("Expression layer: cache hit (skipping Model B)")
+            return cached
+
         # Get mentor mode configuration
         mode_config = MENTOR_MODES.get(mentor_mode, MENTOR_MODES["Balanced Mentor"])
+
+        # Confidence constraints: forbid definitive language when confidence < 0.6
+        confidence = (
+            intelligence_output.get("meta_cognition", {}).get("confidence")
+            or intelligence_output.get("recognition", {}).get("confidence")
+            or 0.5
+        )
+        forbid_definitive_language = confidence < 0.6
+        disagreement_exists = intelligence_output.get("disagreement_state", {}).get("exists", False)
+        require_multiple_hypotheses = intelligence_output.get("require_multiple_hypotheses", False)
+        requires_uncertainty_acknowledgment = forbid_definitive_language or disagreement_exists or require_multiple_hypotheses
         
         # Format intelligence output
         intelligence_text = format_intelligence_output(intelligence_output)
+
+        # Build constraints section for prompt
+        constraints_section = ""
+        if requires_uncertainty_acknowledgment:
+            constraints_section = """
+**CRITICAL CONSTRAINTS (confidence < 0.6 or disagreement present):**
+- FORBIDDEN phrases: "This image shows...", "Clearly", "Undeniably", "What we see here is", "Obviously", "Definitely"
+- REQUIRED phrasing: "One plausible reading is...", "This interpretation remains tentative...", "The evidence leans toward..."
+- You MUST acknowledge uncertainty. Do not smooth over ambiguity.
+- If disagreement exists between visual and semantic signals, name it.
+"""
         
         prompt = f"""
 You are FRAMED's mentor voice. You speak with wisdom, warmth, and poetry.
@@ -167,12 +268,13 @@ MENTOR MODE: {mentor_mode}
 DESCRIPTION: {mode_config["description"]}
 TONE: {mode_config["tone"]}
 VOICE: {mode_config["voice"]}
+{constraints_section}
 
 MENTOR INSTRUCTION:
 Transform this reasoning into a poetic critique. Speak as a mentor, not a tool.
 
 REQUIREMENTS:
-1. **Certainty embodied, not announced:**
+1. **Certainty embodied, not announced (unless confidence < 0.6—then acknowledge uncertainty):**
    - Say "I see weathered stone" not "I think I see weathered stone"
    - Be confident, not tentative
    - Intelligence is embodied in voice, not dumped as evidence
@@ -223,9 +325,11 @@ End not with advice — but with a question or unresolved pull."""
         result = call_model_b(
             prompt=prompt,
             system_prompt=system_prompt,
-            max_tokens=2000,
+            max_tokens=1500,  # Cap for latency; sufficient for critique
             temperature=0.8,  # Higher temperature for creativity and warmth
         )
+        
+        logger.info(f"Using expression model: {result.get('model', 'unknown')}")
         
         if result.get("error"):
             logger.warning(f"Expression layer (Model B) failed: {result['error']}")
@@ -234,9 +338,40 @@ End not with advice — but with a question or unresolved pull."""
         critique = result.get("content", "").strip()
         
         if not critique:
+            # Mechanical robustness: retry once + deterministic fallback
             logger.warning("Expression layer returned empty critique")
-            return "[Critique generation returned empty response]"
+            retry_enabled = os.environ.get("FRAMED_MODEL_B_EMPTY_RETRY", "true").lower() == "true"
+            if retry_enabled:
+                try:
+                    retry_prompt = prompt + "\n\nCRITICAL: Your output was empty. You MUST return a non-empty critique (min 200 characters)."
+                    retry_system = system_prompt + "\n\nCRITICAL: Never return an empty response. Always produce at least 2 paragraphs."
+                    retry = call_model_b(
+                        prompt=retry_prompt,
+                        system_prompt=retry_system,
+                        max_tokens=900,
+                        temperature=0.4,
+                    )
+                    critique2 = (retry.get("content", "") or "").strip()
+                    if critique2:
+                        _save_cached_expression(cache_key, critique2)
+                        logger.info(f"Expression layer (Model B) retry succeeded: {len(critique2)} characters")
+                        return critique2
+                except Exception as e:
+                    logger.warning(f"Expression layer retry failed (non-fatal): {e}")
+
+            # Deterministic fallback: never empty
+            rec = intelligence_output.get("recognition", {}) or {}
+            what_i_see = (rec.get("what_i_see") or "").strip()
+            if not what_i_see:
+                what_i_see = "I see a scene whose meaning is not yet stable."
+            fallback = (
+                f"{what_i_see}\n\n"
+                "I won’t pretend certainty where the output failed. What matters now is correction: "
+                "what, exactly, in the frame should be named differently?\n"
+            )
+            return fallback
         
+        _save_cached_expression(cache_key, critique)
         logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")
         return critique
     

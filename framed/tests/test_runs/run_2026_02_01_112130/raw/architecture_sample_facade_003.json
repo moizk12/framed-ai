@@ -1,0 +1,91 @@
+{
+  "image_id": "architecture_sample_facade_003",
+  "category": "architecture",
+  "failed": false,
+  "error": null,
+  "visual_evidence": {
+    "organic_growth": {
+      "green_coverage": 0.0,
+      "green_locations": "minimal",
+      "green_clusters": 0,
+      "salience": "minimal",
+      "evidence": [
+        "green_coverage=0.000",
+        "green_clusters=0",
+        "spatial_distribution=minimal"
+      ],
+      "confidence": 0.5
+    },
+    "material_condition": {
+      "surface_roughness": 5.4132915182509635e-08,
+      "edge_degradation": 0.22087670427938966,
+      "texture_variance": 5.4132915182509635e-08,
+      "color_uniformity": 1.0,
+      "condition": "moderate",
+      "evidence": [
+        "texture_variance=0.000",
+        "edge_degradation=0.221",
+        "condition=moderate",
+        "color_uniformity=1.000"
+      ],
+      "confidence": 0.65
+    },
+    "organic_integration": {
+      "overlap_ratio": 0.0,
+      "proximity_ratio": 0.0,
+      "relationship": "none",
+      "integration_level": "none",
+      "evidence": [
+        "overlap_ratio=0.000",
+        "proximity_ratio=0.000",
+        "relationship=none"
+      ],
+      "confidence": 0.5
+    },
+    "overall_confidence": 0.5499999999999999,
+    "validation": {
+      "is_valid": true,
+      "warnings": [
+        "Overall confidence (0.55) below threshold (0.6)"
+      ],
+      "issues": []
+    },
+    "negative_evidence": {
+      "no_human_presence": false,
+      "no_motion_detected": true,
+      "no_artificial_surface_uniformity": false,
+      "evidence": "temporal: static, CLIP: no motion terms"
+    }
+  },
+  "core_interpretation": {
+    "confidence": 0.25,
+    "primary": "",
+    "uncertainty_acknowledged": false,
+    "alternatives": []
+  },
+  "evidence_alignment": {
+    "hallucination_detected": false,
+    "visual_evidence_used": true
+  },
+  "learning_impact": {
+    "memory_updated": true,
+    "new_pattern_stored": true
+  },
+  "mentor_integrity": {
+    "mentor_drift": false
+  },
+  "reflection_diagnostics": {
+    "contradiction_score": 1.0,
+    "invented_facts_score": 1.0,
+    "uncertainty_acknowledged": false,
+    "generic_language_score": 1.0,
+    "overconfidence_score": 1.0,
+    "mentor_drift_score": 1.0,
+    "hypothesis_suppression_score": 1.0,
+    "confidence_language_score": 1.0,
+    "quality_score": 0.875,
+    "requires_regeneration": false
+  },
+  "critique": "[PLACEHOLDER] This is a mock critique response. Replace with actual LLM implementation.",
+  "condensed": true
+}

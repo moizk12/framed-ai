@@ -2,7 +2,8 @@ import os, uuid, json
 import tempfile
 import logging
 import hashlib
-from typing import Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Any, Optional, Tuple
 import cv2
 import numpy as np
 from PIL import Image
@@ -28,6 +29,13 @@ MODEL_DIR = os.path.join(BASE_DATA_DIR, "models")
 UPLOAD_DIR = os.path.join(BASE_DATA_DIR, "uploads")
 CACHE_DIR = os.path.join(BASE_DATA_DIR, "cache")
 ANALYSIS_CACHE_DIR = os.path.join(BASE_DATA_DIR, "analysis_cache")
+EXPRESSION_CACHE_DIR = os.path.join(BASE_DATA_DIR, "expression_cache")
+
+# Cache version: bump to invalidate all caches (e.g. after schema/intelligence changes)
+CACHE_VERSION = 2
+
+# Parallel perception: cap workers to avoid GPU OOM (CLIP/YOLO/NIMA may share GPU)
+PERCEPTION_MAX_WORKERS = min(4, int(os.environ.get("FRAMED_PERCEPTION_WORKERS", "4")))
 
 # Legacy compatibility (for backward compatibility)
 DATA_ROOT = BASE_DATA_DIR
@@ -55,6 +63,7 @@ def ensure_directories():
         UPLOAD_DIR,
         CACHE_DIR,
         ANALYSIS_CACHE_DIR,
+        EXPRESSION_CACHE_DIR,
         RESULTS_FOLDER,
         TMP_FOLDER,
         YOLO_CONFIG_DIR
@@ -1644,7 +1653,7 @@ def detect_material_condition(image_path):
                    "evidence": ["image_load_failed"], "confidence": 0.0}
         
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        h, w = gray.shape
+        height, width = gray.shape
         
         # === TEXTURE VARIANCE (Roughness Detection) ===
         # Use local variance to detect surface roughness
@@ -1725,17 +1734,18 @@ def detect_material_condition(image_path):
         # High uniformity = likely paint/manufactured, low uniformity = likely organic/natural
         # Analyze color variance in the green regions (if any)
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
+        hue_ch, sat_ch, val_ch = cv2.split(hsv)
         
         # Calculate color uniformity (inverse of variance)
         # For green regions specifically (if green coverage > 0.1)
-        green_mask_temp = cv2.inRange(hsv, np.array([40, 50, 50]), np.array([80, 255, 255]))
+        green_mask_temp = cv2.inRange(hsv, np.array([40, 50, 50], dtype=np.uint8),
+                                      np.array([80, 255, 255], dtype=np.uint8))
         green_pixels = np.sum(green_mask_temp > 0)
-        total_pixels = h * w
+        total_pixels = int(height * width)
         
         if green_pixels > total_pixels * 0.1:  # If significant green coverage
             # Calculate hue variance in green regions
-            green_hue = h[green_mask_temp > 0]
+            green_hue = hue_ch[green_mask_temp > 0]
             if len(green_hue) > 0:
                 hue_variance = np.var(green_hue.astype(np.float32))
                 max_hue_variance = 180.0 ** 2  # Max variance for hue (0-180)
@@ -1745,7 +1755,7 @@ def detect_material_condition(image_path):
                 color_uniformity = 0.5  # Default if no green pixels
         else:
             # For non-green regions, calculate overall color uniformity
-            hue_variance = np.var(h.astype(np.float32))
+            hue_variance = np.var(hue_ch.astype(np.float32))
             max_hue_variance = 180.0 ** 2
             normalized_hue_variance = min(hue_variance / max_hue_variance, 1.0)
             color_uniformity = 1.0 - normalized_hue_variance
@@ -2294,7 +2304,15 @@ def get_cached_analysis(file_hash: str) -> Optional[Dict[str, Any]]:
     try:
         with open(cache_path, 'r') as f:
             cached_result = json.load(f)
-        
+
+        # Invalidate if cache version changed
+        if cached_result.get("_cache_version") != CACHE_VERSION:
+            logger.info(f"Cache invalidated for {file_hash[:8]}... (version mismatch)")
+            return None
+
+        # Remove cache metadata before returning
+        cached_result.pop("_cache_version", None)
+
         # Validate schema before returning
         if validate_schema(cached_result):
             logger.info(f"Cache hit for hash: {file_hash[:8]}...")
@@ -2311,6 +2329,7 @@ def save_cached_analysis(file_hash: str, result: Dict[str, Any]) -> bool:
     """
     Saves analysis result to cache using file hash as key.
     Returns True on success, False on error.
+    Cache is invalidated when CACHE_VERSION changes.
     """
     if not file_hash:
         return False
@@ -2319,8 +2338,10 @@ def save_cached_analysis(file_hash: str, result: Dict[str, Any]) -> bool:
     
     try:
         ensure_directories()
+        to_save = dict(result)
+        to_save["_cache_version"] = CACHE_VERSION
         with open(cache_path, 'w') as f:
-            json.dump(result, f, indent=2, default=str)
+            json.dump(to_save, f, indent=2, default=str)
         logger.info(f"Cached analysis for hash: {file_hash[:8]}...")
         return True
     except Exception as e:
@@ -2933,17 +2954,15 @@ def detect_genre(photo_data):
 
 
 
-def analyze_image(path, photo_id: str = "", filename: str = ""):
+def analyze_image(path, photo_id: str = "", filename: str = "", disable_cache: bool = False):
     """
     Analyzes an image and returns results in the canonical schema format.
-    
-    Phase II: Canonical Schema - This function now returns a deterministic,
-    structured result conforming to the schema defined in schema.py.
     
     Args:
         path: Path to the image file
         photo_id: Optional unique identifier for the photo
         filename: Optional original filename
+        disable_cache: If True, skip cache lookup and recompute analysis
         
     Returns:
         Dict conforming to canonical AnalysisResult schema
@@ -2956,8 +2975,11 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
     if not photo_id:
         photo_id = file_hash[:16] if file_hash else str(uuid.uuid4())
     
-    # Check cache first
-    cached_result = get_cached_analysis(file_hash)
+    # Check cache first (unless disabled)
+    if not disable_cache:
+        cached_result = get_cached_analysis(file_hash)
+    else:
+        cached_result = None
     if cached_result:
         # Update metadata with current request info
         cached_result["metadata"]["photo_id"] = photo_id
@@ -2999,8 +3021,8 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
             logger.warning(f"Technical analysis failed: {e}")
             result["errors"]["technical"] = str(e)
 
-        # === AI + SEMANTIC ANALYSIS ===
-        # Wrap each analysis to prevent one failure from breaking the entire analysis
+        # === AI + SEMANTIC ANALYSIS (parallel perception) ===
+        # Run independent perception steps in parallel; cap workers to avoid GPU OOM.
         def safe_analyze(func, *args, error_key=None, default=None, **kwargs):
             """Safely run an analysis function, returning default on error."""
             try:
@@ -3012,56 +3034,94 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
                 if error_key:
                     result["errors"][error_key] = error_msg
                 return default if default is not None else {}
-        
-        # CLIP semantic analysis
-        clip_data = safe_analyze(get_clip_description, path, error_key="clip", 
-                                 default={"caption": None, "tags": [], "genre_hint": None})
-        if clip_data.get("caption"):
-            result["perception"]["semantics"]["available"] = True
-            result["perception"]["semantics"]["caption"] = clip_data.get("caption")
-            result["perception"]["semantics"]["tags"] = clip_data.get("tags", [])
-            result["perception"]["semantics"]["genre_hint"] = clip_data.get("genre_hint")
-            result["confidence"]["clip"] = True
-        
-        # CLIP inventory analysis (for semantic anchors)
-        clip_inventory = safe_analyze(get_clip_inventory, path, error_key="clip_inventory",
-                                     default=[])
-        
-        # NIMA aesthetic analysis
+
+        def _run_one(name, func, args, default, error_key):
+            try:
+                return (name, func(*args), error_key, None)
+            except Exception as e:
+                logger.warning(f"Perception '{name}' failed: {e}")
+                return (name, default, error_key, str(e))
+
         nima_model = None
         try:
             nima_model = get_nima_model()
         except Exception as e:
             logger.warning(f"NIMA model load failed (non-fatal): {e}")
             result["errors"]["nima_load"] = str(e)
-        
-        nima_result = safe_analyze(predict_nima_score, nima_model, path, error_key="nima",
-                                  default={"mean_score": None, "distribution": {}})
+
+        clip_default = {"caption": None, "tags": [], "genre_hint": None}
+        objects_default = {"objects": [], "object_narrative": None, "subject_position": None, "subject_size": None, "framing_description": None, "spatial_interpretation": None}
+        nima_default = {"mean_score": None, "distribution": {}}
+        color_default = {"palette": [], "mood": None}
+        harmony_default = {"dominant_color": None, "harmony": None}
+        lines_default = {"line_pattern": None, "line_style": None, "symmetry": None}
+        lighting_default = {"direction": None}
+        tonal_default = {"tonal_range": None}
+        emotion_default = {"subject_type": None, "emotion": None}
+        clutter_default = {"clutter_level": None}
+
+        tasks = [
+            ("clip", get_clip_description, (path,), clip_default, "clip"),
+            ("clip_inventory", get_clip_inventory, (path,), [], "clip_inventory"),
+            ("nima", predict_nima_score, (nima_model, path), nima_default, "nima"),
+            ("color", analyze_color, (path,), color_default, "color"),
+            ("color_harmony", analyze_color_harmony, (path,), harmony_default, "color_harmony"),
+            ("objects", detect_objects_and_framing, (path,), objects_default, "objects"),
+            ("lines_symmetry", analyze_lines_and_symmetry, (path,), lines_default, "lines_symmetry"),
+            ("lighting", analyze_lighting_direction, (path,), lighting_default, "lighting"),
+            ("tonal_range", analyze_tonal_range, (path,), tonal_default, "tonal_range"),
+            ("subject_emotion", analyze_subject_emotion, (path,), emotion_default, "emotion"),
+            ("clutter", analyze_background_clutter, (path,), clutter_default, "clutter"),
+            ("visual_evidence", extract_visual_features, (path,), {}, "visual_evidence"),
+        ]
+        out = {}
+        with ThreadPoolExecutor(max_workers=PERCEPTION_MAX_WORKERS) as executor:
+            futures = {executor.submit(_run_one, *t): t[0] for t in tasks}
+            for future in as_completed(futures):
+                name, value, error_key, error_msg = future.result()
+                if error_msg and error_key:
+                    result["errors"][error_key] = error_msg
+                out[name] = value
+
+        clip_data = out.get("clip", clip_default)
+        clip_inventory = out.get("clip_inventory", [])
+        nima_result = out.get("nima", nima_default)
+        color_analysis = out.get("color", color_default)
+        color_harmony = out.get("color_harmony", harmony_default)
+        object_data = out.get("objects", objects_default)
+        lines_symmetry = out.get("lines_symmetry", lines_default)
+        lighting_direction = out.get("lighting", lighting_default)
+        tonal_range = out.get("tonal_range", tonal_default)
+        subject_emotion = out.get("subject_emotion", emotion_default)
+        clutter_result = out.get("clutter", clutter_default)
+        visual_evidence = out.get("visual_evidence", {})
+
+        # Store YOLO objects in canonical location for downstream modules (e.g. negative_evidence.py)
+        # negative_evidence.py expects analysis_result["objects"] as a list of dicts with "name".
+        try:
+            objs = object_data.get("objects", []) if isinstance(object_data, dict) else []
+            result["objects"] = [{"name": str(o)} for o in (objs or [])]
+        except Exception:
+            result["objects"] = []
+
+        if clip_data.get("caption"):
+            result["perception"]["semantics"]["available"] = True
+            result["perception"]["semantics"]["caption"] = clip_data.get("caption")
+            result["perception"]["semantics"]["tags"] = clip_data.get("tags", [])
+            result["perception"]["semantics"]["genre_hint"] = clip_data.get("genre_hint")
+            result["confidence"]["clip"] = True
         if nima_result.get("mean_score") is not None:
             result["perception"]["aesthetics"]["available"] = True
             result["perception"]["aesthetics"]["mean_score"] = nima_result.get("mean_score")
             result["perception"]["aesthetics"]["distribution"] = nima_result.get("distribution", {})
             result["confidence"]["nima"] = True
-        
-        # Color analysis
-        color_analysis = safe_analyze(analyze_color, path, error_key="color",
-                                     default={"palette": [], "mood": None})
         if color_analysis.get("palette"):
             result["perception"]["color"]["available"] = True
             result["perception"]["color"]["palette"] = color_analysis.get("palette", [])
             result["perception"]["color"]["mood"] = color_analysis.get("mood")
-        
-        color_harmony = safe_analyze(analyze_color_harmony, path, error_key="color_harmony",
-                                     default={"dominant_color": None, "harmony": None})
         if color_harmony.get("dominant_color"):
             result["perception"]["color"]["harmony"]["dominant_color"] = color_harmony.get("dominant_color")
             result["perception"]["color"]["harmony"]["harmony_type"] = color_harmony.get("harmony")
-        
-        # YOLO object detection
-        object_data = safe_analyze(detect_objects_and_framing, path, error_key="objects",
-                                   default={"objects": [], "object_narrative": None, 
-                                           "subject_position": None, "subject_size": None,
-                                           "framing_description": None, "spatial_interpretation": None})
         if object_data.get("objects"):
             result["perception"]["composition"]["available"] = True
             result["perception"]["composition"]["subject_framing"] = {
@@ -3071,43 +3131,22 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
                 "interpretation": object_data.get("spatial_interpretation")
             }
             result["confidence"]["yolo"] = True
-        
-        # Lines and symmetry
-        lines_symmetry = safe_analyze(analyze_lines_and_symmetry, path, error_key="lines_symmetry",
-                                     default={"line_pattern": None, "line_style": None, "symmetry": None})
         if lines_symmetry.get("line_pattern"):
             result["perception"]["composition"]["line_pattern"] = lines_symmetry.get("line_pattern")
             result["perception"]["composition"]["line_style"] = lines_symmetry.get("line_style")
             result["perception"]["composition"]["symmetry"] = lines_symmetry.get("symmetry")
-        
-        # Lighting
-        lighting_direction = safe_analyze(analyze_lighting_direction, path, error_key="lighting",
-                                         default={"direction": None})
         if lighting_direction.get("direction"):
             result["perception"]["lighting"]["available"] = True
             result["perception"]["lighting"]["direction"] = lighting_direction.get("direction")
-        
-        # Tonal range
-        tonal_range = safe_analyze(analyze_tonal_range, path, error_key="tonal_range",
-                                   default={"tonal_range": None})
         if tonal_range.get("tonal_range"):
             result["perception"]["lighting"]["quality"] = tonal_range.get("tonal_range")
-
-            # Subject emotion
-        subject_emotion = safe_analyze(analyze_subject_emotion, path, error_key="emotion",
-                                      default={"subject_type": None, "emotion": None})
         if subject_emotion.get("subject_type"):
             result["perception"]["emotion"]["available"] = True
             result["perception"]["emotion"]["subject_type"] = subject_emotion.get("subject_type")
             result["perception"]["emotion"]["emotion"] = subject_emotion.get("emotion")
-        
-        # DeepFace (optional, toggleable)
-        # Note: DeepFace is disabled by default, can be enabled via DEEPFACE_ENABLE env var
-        # This is a placeholder for future implementation
         result["confidence"]["deepface"] = False
-        
+
         # === DERIVED FIELDS ===
-        # Build legacy-style dict for derived field functions (temporary compatibility)
         legacy_dict = {
             "brightness": result["perception"]["technical"].get("brightness"),
             "contrast": result["perception"]["technical"].get("contrast"),
@@ -3123,61 +3162,61 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
             "symmetry": result["perception"]["composition"].get("symmetry"),
             "objects": object_data.get("objects", []),
             "subject_framing": result["perception"]["composition"].get("subject_framing", {}),
-            "background_clutter": safe_analyze(analyze_background_clutter, path, error_key="clutter",
-                                               default={"clutter_level": None})
+            "background_clutter": clutter_result
         }
         
-        # Visual interpretation
-        visual_interp = safe_analyze(interpret_visual_features, legacy_dict, error_key="visual_interpretation", default={})
+        # Derived fields: run interpret_visual_features, infer_emotion, detect_genre in parallel
+        def _run_derived(name, func, default, error_key):
+            try:
+                return (name, func(legacy_dict), error_key, None)
+            except Exception as e:
+                logger.warning(f"Derived '{name}' failed: {e}")
+                return (name, default, error_key, str(e))
+        derived_tasks = [
+            ("visual_interp", interpret_visual_features, {}, "visual_interpretation"),
+            ("emotion_result", infer_emotion, {"emotional_mood": None}, "emotion_inference"),
+            ("genre_info", detect_genre, {"genre": None, "subgenre": None}, "genre_detection"),
+        ]
+        derived_out = {}
+        with ThreadPoolExecutor(max_workers=3) as exec_derived:
+            futures = {exec_derived.submit(_run_derived, t[0], t[1], t[2], t[3]): t[0] for t in derived_tasks}
+            for future in as_completed(futures):
+                name, value, error_key, error_msg = future.result()
+                if error_msg and error_key:
+                    result["errors"][error_key] = error_msg
+                derived_out[name] = value
+        visual_interp = derived_out.get("visual_interp", {})
+        emotion_result = derived_out.get("emotion_result", {})
+        genre_info = derived_out.get("genre_info", {})
         if visual_interp:
             result["derived"]["visual_interpretation"] = visual_interp
-        
-        # Emotional mood inference
-        emotion_result = safe_analyze(infer_emotion, legacy_dict, error_key="emotion_inference",
-                                     default={"emotional_mood": None})
         if emotion_result.get("emotional_mood"):
             result["derived"]["emotional_mood"] = emotion_result.get("emotional_mood")
-        
-        # Genre detection
-        genre_info = safe_analyze(detect_genre, legacy_dict, error_key="genre_detection",
-                                 default={"genre": None, "subgenre": None})
         if genre_info.get("genre"):
             result["derived"]["genre"]["genre"] = genre_info.get("genre")
             result["derived"]["genre"]["subgenre"] = genre_info.get("subgenre")
         
-        # === VISUAL EVIDENCE EXTRACTION (GROUND TRUTH) ===
-        # Extract visual features using deterministic computer vision
-        # This provides ground truth that text matching cannot
-        visual_evidence = {}
-        try:
-            visual_evidence = extract_visual_features(path)
-            
-            # Log detailed visual evidence
-            og = visual_evidence.get("organic_growth", {})
-            mc = visual_evidence.get("material_condition", {})
-            oi = visual_evidence.get("organic_integration", {})
-            validation = visual_evidence.get("validation", {})
-            
+        # Visual evidence was extracted in parallel above; log and detect contradictions
+        og = visual_evidence.get("organic_growth", {})
+        mc = visual_evidence.get("material_condition", {})
+        oi = visual_evidence.get("organic_integration", {})
+        validation = visual_evidence.get("validation", {})
+        if visual_evidence:
             logger.info(f"Visual evidence extracted: "
                        f"green_coverage={og.get('green_coverage', 0.0):.3f} (conf={og.get('confidence', 0.0):.2f}), "
                        f"condition={mc.get('condition', 'unknown')} (conf={mc.get('confidence', 0.0):.2f}), "
                        f"integration={oi.get('relationship', 'none')} (conf={oi.get('confidence', 0.0):.2f}), "
                        f"overall_conf={visual_evidence.get('overall_confidence', 0.0):.2f}")
-            
-            # Log validation results
             if validation.get("warnings"):
                 logger.info(f"Visual evidence warnings: {validation['warnings']}")
             if validation.get("issues"):
                 logger.warning(f"Visual evidence issues: {validation['issues']}")
-            
-            # Detect contradictions with text inference (if available)
-            # This helps enforce visual conscience
             if clip_data.get("caption") or clip_data.get("tags"):
                 text_inference = {
-                    "has_organic_growth": any(term in (clip_data.get("caption", "") + " " + " ".join(clip_data.get("tags", []))).lower() 
+                    "has_organic_growth": any(term in (clip_data.get("caption", "") + " " + " ".join(clip_data.get("tags", []))).lower()
                                              for term in ["ivy", "moss", "vegetation", "green", "growth"]),
-                    "condition": "unknown",  # Would need to extract from CLIP
-                    "organic_relationship": "none"  # Would need to extract from CLIP
+                    "condition": "unknown",
+                    "organic_relationship": "none"
                 }
                 contradictions = detect_contradictions(visual_evidence, text_inference)
                 if contradictions["contradictions"]:
@@ -3186,9 +3225,6 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
                         logger.info(f"  - {cont['type']}: visual={cont['visual']}, text={cont['text']} (severity={cont['severity']})")
                     if contradictions["overrides"]:
                         logger.info(f"Visual evidence will override text inference in {len(contradictions['overrides'])} cases")
-        except Exception as e:
-            logger.warning(f"Visual evidence extraction failed (non-fatal): {e}")
-            visual_evidence = {}
         
         # Store visual evidence in result (for interpretive reasoner and scene understanding)
         if visual_evidence:
@@ -3229,6 +3265,183 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
                            f"man_made_natural={places365_signals.get('man_made_natural', 'unknown')}")
         except Exception as e:
             logger.warning(f"Places365 signal extraction failed (non-fatal): {e}")
+
+        # === SCENE / ABSTRACTION GATE (Phase 10: perception diversity) ===
+        # Purpose: prevent "material-surface reasoning" from leaking into normal scenes.
+        # This is heuristic (not training) and intentionally conservative, but uses
+        # multiple signals (Places365 + YOLO + CLIP) to classify the scene.
+        try:
+            places = (result.get("perception", {}).get("scene", {}) or {}).get("places365", {}) or {}
+            scene_category = str(places.get("scene_category", "") or "").lower()
+            indoor_outdoor = str(places.get("indoor_outdoor", "") or "").lower()
+
+            yolo_objs = [str(o).lower() for o in (object_data.get("objects", []) or [])]
+            caption = str(clip_data.get("caption", "") or "").lower()
+            tags = [str(t).lower() for t in (clip_data.get("tags", []) or [])]
+            inv_items = []
+            if isinstance(clip_inventory, list):
+                for item in clip_inventory:
+                    if isinstance(item, dict):
+                        inv_items.append(str(item.get("item", "")).lower())
+                    else:
+                        inv_items.append(str(item).lower())
+            text_blob = " ".join([caption] + tags + inv_items + yolo_objs + [scene_category]).lower()
+
+            # Basic counts
+            def _count_any(candidates):
+                return sum(1 for o in yolo_objs if any(tok in o for tok in candidates))
+
+            people_terms = ["person", "people", "man", "woman", "child", "face"]
+            vehicle_terms = ["car", "truck", "bus", "taxi", "bicycle", "motorcycle"]
+            building_terms = ["building", "tower", "skyscraper", "bridge"]
+
+            num_people = _count_any(people_terms) or sum(1 for t in tags if "person" in t or "people" in t)
+            num_vehicles = _count_any(vehicle_terms)
+            num_buildings = _count_any(building_terms) or ("city" in text_blob) or ("street" in text_blob)
+            looks_abstract_terms = any(k in text_blob for k in ["abstract", "nonrepresentational", "non-representational"])
+            looks_painting = any(k in text_blob for k in ["painting", "canvas", "acrylic", "oil painting", "artwork"])
+
+            # Visual artisticness fallback (for when CLIP fails and Places365 is noisy):
+            # high average saturation + no detected objects often indicates artwork / non-photographic surfaces.
+            avg_saturation = None
+            try:
+                hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+                avg_saturation = float(hsv_img[:, :, 1].mean() / 255.0)
+            except Exception:
+                avg_saturation = None
+
+            # Coarse scene typing (minimal, extensible taxonomy)
+            scene_type = "unknown"
+            # Prefer explicit "painting/canvas" for abstract_art; pure "abstract" can be a false positive on textures.
+            if looks_painting or (looks_abstract_terms and ("painting" in text_blob or "canvas" in text_blob)):
+                scene_type = "abstract_art"
+            elif (avg_saturation is not None and avg_saturation > 0.50 and num_people == 0 and num_vehicles == 0 and not num_buildings):
+                # Strong color saturation + no objects: likely artistic / non-representational
+                scene_type = "abstract_art"
+            elif num_people > 0:
+                scene_type = "people_scene"
+            elif indoor_outdoor == "indoor" or any(
+                k in text_blob
+                for k in [
+                    "living room",
+                    "interior",
+                    "bedroom",
+                    "room",
+                    "sofa",
+                    "couch",
+                    "chair",
+                    "desk",
+                    "table",
+                    "tv",
+                    "window",
+                ]
+            ):
+                scene_type = "interior_scene"
+            elif num_buildings or num_vehicles or any(
+                k in text_blob for k in ["downtown", "urban", "intersection", "traffic", "crosswalk"]
+            ):
+                scene_type = "street_scene"
+            elif indoor_outdoor == "outdoor" and any(
+                k in text_blob
+                for k in [
+                    "mountain",
+                    "mountains",
+                    "lake",
+                    "river",
+                    "forest",
+                    "field",
+                    "landscape",
+                    "tree",
+                    "trees",
+                    "house",
+                    "cabin",
+                ]
+            ):
+                scene_type = "landscape_scene"
+
+            # Decide whether "material-surface" signals are likely the subject
+            og = (visual_evidence or {}).get("organic_growth", {}) or {}
+            mc = (visual_evidence or {}).get("material_condition", {}) or {}
+            oi = (visual_evidence or {}).get("organic_integration", {}) or {}
+            green_cov = float(og.get("green_coverage", 0.0) or 0.0)
+            edge_deg = float(mc.get("edge_degradation", 0.0) or 0.0)
+            rough = float(mc.get("surface_roughness", 0.0) or 0.0)
+
+            # Surface study is plausible only when scene is NOT clearly a scene depiction.
+            scene_is_depiction = scene_type in {
+                "abstract_art",
+                "people_scene",
+                "interior_scene",
+                "street_scene",
+                "landscape_scene",
+            }
+            is_surface_study = (
+                not scene_is_depiction
+                and (edge_deg > 0.6 or rough > 0.12)
+                and num_people == 0
+                and num_vehicles == 0
+                and not num_buildings
+            )
+            if is_surface_study:
+                scene_type = "surface_study"
+
+            # Explain why surface_study was rejected (optional debugging aid)
+            rejection_reasons = []
+            if not is_surface_study:
+                if scene_is_depiction:
+                    rejection_reasons.append(f"scene_type={scene_type}")
+                if indoor_outdoor in {"indoor", "outdoor"}:
+                    rejection_reasons.append(f"places_indoor_outdoor={indoor_outdoor}")
+                if num_people > 0:
+                    rejection_reasons.append("objects_detected=people")
+                if num_vehicles > 0:
+                    rejection_reasons.append("objects_detected=vehicles")
+                if num_buildings:
+                    rejection_reasons.append("objects_detected=buildings_or_urban_terms")
+                if looks_painting:
+                    rejection_reasons.append("semantic=painting_terms")
+                elif looks_abstract_terms:
+                    rejection_reasons.append("semantic=abstract_terms")
+                if not (edge_deg > 0.6 or rough > 0.12):
+                    rejection_reasons.append("texture_signal_not_strong_enough")
+
+            scene_gate = {
+                "scene_type": scene_type,
+                "is_surface_study": bool(is_surface_study),
+                "surface_study_rejection_reasons": rejection_reasons,
+                "signals": {
+                    "places_scene_category": scene_category,
+                    "places_indoor_outdoor": indoor_outdoor,
+                    "yolo_objects": yolo_objs[:20],
+                    "clip_caption": caption[:200],
+                    "green_coverage": round(green_cov, 3),
+                    "edge_degradation": round(edge_deg, 3),
+                    "surface_roughness": round(rough, 3),
+                },
+                "note": (
+                    "If not surface_study: treat material_condition/organic_integration as background-only metrics; "
+                    "do not center interpretation on 'weathered stone / reclamation'."
+                ),
+            }
+            if visual_evidence is not None:
+                visual_evidence["scene_gate"] = scene_gate
+                result["visual_evidence"] = visual_evidence
+
+            # Hard guardrail: if it's clearly a scene depiction, disable organic_integration claims
+            # (These morphological heuristics are only meaningful for true surface studies.)
+            if (visual_evidence is not None) and scene_is_depiction:
+                oi2 = (visual_evidence.get("organic_integration", {}) or {}).copy()
+                if oi2.get("relationship") not in [None, "none"]:
+                    oi2["relationship"] = "none"
+                    oi2["integration_level"] = "none"
+                    oi2["confidence"] = min(float(oi2.get("confidence", 0.0) or 0.0), 0.2)
+                    ev = oi2.get("evidence", []) or []
+                    ev = list(ev) + [f"scene_gate={scene_type}: organic_integration disabled for non-surface scenes"]
+                    oi2["evidence"] = ev[-8:]
+                    visual_evidence["organic_integration"] = oi2
+                    result["visual_evidence"] = visual_evidence
+        except Exception as e:
+            logger.warning(f"Scene gate failed (non-fatal): {e}")
         
         # === INTERPRETIVE REASONER (THE BRAIN) ===
         # Phase 3: Reasoning-first architecture - interpret evidence before critique
@@ -3351,73 +3564,81 @@ def analyze_image(path, photo_id: str = "", filename: str = ""):
         # === INTELLIGENCE CORE (7-LAYER REASONING) ===
         # Phase 1: Intelligence Core - FRAMED's brain
         # This replaces rule-based synthesis with LLM-based reasoning
-        try:
-            from .intelligence_core import framed_intelligence
-            from .temporal_memory import (
-                create_pattern_signature as create_temporal_signature,
-                format_temporal_memory_for_intelligence,
-                store_interpretation as store_temporal_interpretation,
-                track_user_trajectory,
-            )
-            
-            # Prepare semantic signals for intelligence core
-            semantic_signals_for_intelligence = {
-                "objects": object_data.get("objects", []),
-                "tags": clip_data.get("tags", []),
-                "caption_keywords": clip_data.get("caption", "").split()[:20] if clip_data.get("caption") else [],
-            }
-            
-            # Create pattern signature for temporal memory
-            temporal_signature = create_temporal_signature(visual_evidence, semantic_signals_for_intelligence)
-            
-            # Query temporal memory
-            temporal_memory_data = format_temporal_memory_for_intelligence(temporal_signature, user_id=photo_id)
-            
-            # Get user history (from temporal memory)
-            user_history = temporal_memory_data.get("user_trajectory", {})
-            
-            # Run intelligence core (7-layer reasoning)
-            intelligence_output = framed_intelligence(
-                visual_evidence=visual_evidence,
-                analysis_result=result,
-                temporal_memory=temporal_memory_data,
-                user_history=user_history,
-            )
-            
-            # Store intelligence output in result
-            result["intelligence"] = intelligence_output
-            
-            # Store interpretation in temporal memory for learning
-            confidence = intelligence_output.get("meta_cognition", {}).get("confidence", 0.85)
-            store_temporal_interpretation(
-                signature=temporal_signature,
-                interpretation=intelligence_output,
-                confidence=confidence,
-            )
-            
-            # Track user trajectory
-            track_user_trajectory(
-                analysis_result=result,
-                intelligence_output=intelligence_output,
-                user_id=photo_id,
-            )
-            
-            # Implicit learning (Phase 4)
+        #
+        # Feature flag: used by regression tests to avoid API spend.
+        ENABLE_INTELLIGENCE_CORE = os.getenv("FRAMED_ENABLE_INTELLIGENCE_CORE", "true").lower() == "true"
+        if ENABLE_INTELLIGENCE_CORE:
             try:
-                from .learning_system import learn_implicitly
-                learn_implicitly(
+                from .intelligence_core import framed_intelligence
+                from .temporal_memory import (
+                    create_pattern_signature as create_temporal_signature,
+                    format_temporal_memory_for_intelligence,
+                    store_interpretation as store_temporal_interpretation,
+                    track_user_trajectory,
+                )
+
+                # Prepare semantic signals for intelligence core
+                semantic_signals_for_intelligence = {
+                    "objects": object_data.get("objects", []),
+                    "tags": clip_data.get("tags", []),
+                    "caption_keywords": clip_data.get("caption", "").split()[:20] if clip_data.get("caption") else [],
+                }
+
+                # Create pattern signature for temporal memory
+                temporal_signature = create_temporal_signature(visual_evidence, semantic_signals_for_intelligence)
+
+                # Query temporal memory
+                temporal_memory_data = format_temporal_memory_for_intelligence(temporal_signature, user_id=photo_id)
+
+                # Get user history (from temporal memory)
+                user_history = temporal_memory_data.get("user_trajectory", {})
+
+                # Run intelligence core (7-layer reasoning)
+                intelligence_output = framed_intelligence(
+                    visual_evidence=visual_evidence,
+                    analysis_result=result,
+                    temporal_memory=temporal_memory_data,
+                    user_history=user_history,
+                    pattern_signature=temporal_signature,
+                )
+
+                # Store intelligence output in result
+                result["intelligence"] = intelligence_output
+                result["pattern_signature"] = temporal_signature  # For HITL feedback injection
+
+                # Store interpretation in temporal memory for learning
+                confidence = intelligence_output.get("meta_cognition", {}).get("confidence", 0.85)
+                store_temporal_interpretation(
+                    signature=temporal_signature,
+                    interpretation=intelligence_output,
+                    confidence=confidence,
+                )
+
+                # Track user trajectory
+                track_user_trajectory(
                     analysis_result=result,
                     intelligence_output=intelligence_output,
-                    user_history=user_history,
+                    user_id=photo_id,
                 )
+
+                # Implicit learning (Phase 4)
+                try:
+                    from .learning_system import learn_implicitly
+                    learn_implicitly(
+                        analysis_result=result,
+                        intelligence_output=intelligence_output,
+                        user_history=user_history,
+                    )
+                except Exception as e:
+                    logger.warning(f"Implicit learning failed (non-fatal): {e}")
+
+                logger.info(f"Intelligence core completed: confidence={confidence:.2f}")
             except Exception as e:
-                logger.warning(f"Implicit learning failed (non-fatal): {e}")
-            
-            logger.info(f"Intelligence core completed: confidence={confidence:.2f}")
-            
-        except Exception as e:
-            logger.warning(f"Intelligence core failed (non-fatal): {e}")
-            # Don't add error - intelligence core is optional for backward compatibility
+                logger.warning(f"Intelligence core failed (non-fatal): {e}")
+                # Don't add error - intelligence core is optional for backward compatibility
+                result["intelligence"] = {}
+        else:
+            # Useful for regression tests that must not spend API credits.
             result["intelligence"] = {}
         
         # Cache the result

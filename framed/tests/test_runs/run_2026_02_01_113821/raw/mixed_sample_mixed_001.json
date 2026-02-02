@@ -1,0 +1,90 @@
+{
+  "image_id": "mixed_sample_mixed_001",
+  "category": "mixed",
+  "failed": false,
+  "error": null,
+  "visual_evidence": {
+    "organic_growth": {
+      "green_coverage": 1.0,
+      "green_locations": "vertical_surfaces",
+      "green_clusters": 1,
+      "salience": "structural",
+      "evidence": [
+        "green_coverage=1.000",
+        "green_clusters=1",
+        "spatial_distribution=vertical_surfaces"
+      ],
+      "confidence": 0.95
+    },
+    "material_condition": {
+      "surface_roughness": 1.0439816336707856e-08,
+      "edge_degradation": 1.0,
+      "texture_variance": 1.0439816336707856e-08,
+      "color_uniformity": 1.0,
+      "condition": "degraded",
+      "evidence": [
+        "texture_variance=0.000",
+        "edge_degradation=1.000",
+        "condition=degraded",
+        "color_uniformity=1.000"
+      ],
+      "confidence": 0.8
+    },
+    "organic_integration": {
+      "overlap_ratio": 0.0,
+      "proximity_ratio": 0.0,
+      "relationship": "none",
+      "integration_level": "none",
+      "evidence": [
+        "overlap_ratio=0.000",
+        "proximity_ratio=0.000",
+        "relationship=none"
+      ],
+      "confidence": 0.7
+    },
+    "overall_confidence": 0.8166666666666668,
+    "validation": {
+      "is_valid": true,
+      "warnings": [],
+      "issues": []
+    },
+    "negative_evidence": {
+      "no_human_presence": false,
+      "no_motion_detected": true,
+      "no_artificial_surface_uniformity": false,
+      "evidence": "temporal: static, CLIP: no motion terms"
+    }
+  },
+  "core_interpretation": {
+    "confidence": 0.78,
+    "primary": "I see a weathered vertical surface with organic growth on it, consistent with moss/lichen or similar plant growth clinging to a degraded wall.",
+    "uncertainty_acknowledged": true,
+    "alternatives": []
+  },
+  "evidence_alignment": {
+    "hallucination_detected": false,
+    "visual_evidence_used": true
+  },
+  "learning_impact": {
+    "memory_updated": true,
+    "new_pattern_stored": true
+  },
+  "mentor_integrity": {
+    "mentor_drift": false
+  },
+  "reflection_diagnostics": {
+    "contradiction_score": 1.0,
+    "invented_facts_score": 1.0,
+    "uncertainty_acknowledged": true,
+    "generic_language_score": 1.45,
+    "overconfidence_score": 1.0,
+    "mentor_drift_score": 1.0,
+    "hypothesis_suppression_score": 1.0,
+    "confidence_language_score": 1.0,
+    "quality_score": 1.05625,
+    "requires_regeneration": false
+  },
+  "critique": "I see a weathered vertical plane \u2014 stone or concrete made soft by time \u2014 its face traced with moss and lichen, edges crumbled into a patient ruin. The growth does not attack; it settles, a thin green veil that names duration rather than violence. Even absent your file, the marks read like handwriting: weather, pause, slow accrual.\n\nThis is not mere texture. It is a proposition about time: endurance as quiet agency. Where once you might have solved the frame \u2014 named the object, arrested the geometry \u2014 you now let atmosphere be the subject. Your habitual bottom-weight and asymmetry no longer feel like compositional tricks but like moral choices: they carry recession, inevitability, a kind of humble insistence. You\u2019ve resolved something you used to struggle with \u2014 releasing the need to clarify every element so that the frame can perform feeling instead of only describing it.\n\nI used to see such frames as problems to be solved; looking at your trajectory I now see them as time-signatures. That correction matters: what was once analysis has become temperament. And temperament tolerates ambiguity without collapsing into vagueness.\n\nStill, there is a hedging here. You keep certain things deliberately indeterminate \u2014 material, scale, an explicit anchor \u2014 and that withholding is a strategy as much as it is a restraint. Which parts of the frame are you protecting from explanation because they must remain open, and which are you keeping vague out of habit?\n\nFor the next piece, choose one constraint and do not negotiate with it: either keep your low, asymmetrical mass but give it one unambiguous anchor, or raise the mass and keep every other habit the same. Notice which feels like self-betrayal and which feels like growth.\n\nIf atmosphere is now your subject, then what is the event within it \u2014 what shifts from before to after, from foreground to distance, that makes the quiet necessary?",
+  "pattern_signature": "44b433c3dd999fcf",
+  "condensed": true
+}

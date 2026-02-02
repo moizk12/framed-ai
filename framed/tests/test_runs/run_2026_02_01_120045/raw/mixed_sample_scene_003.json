@@ -1,0 +1,90 @@
+{
+  "image_id": "mixed_sample_scene_003",
+  "category": "mixed",
+  "failed": false,
+  "error": null,
+  "visual_evidence": {
+    "organic_growth": {
+      "green_coverage": 1.0,
+      "green_locations": "vertical_surfaces",
+      "green_clusters": 1,
+      "salience": "structural",
+      "evidence": [
+        "green_coverage=1.000",
+        "green_clusters=1",
+        "spatial_distribution=vertical_surfaces"
+      ],
+      "confidence": 0.95
+    },
+    "material_condition": {
+      "surface_roughness": 3.266745303878872e-07,
+      "edge_degradation": 0.3511065367986781,
+      "texture_variance": 3.266745303878872e-07,
+      "color_uniformity": 1.0,
+      "condition": "moderate",
+      "evidence": [
+        "texture_variance=0.000",
+        "edge_degradation=0.351",
+        "condition=moderate",
+        "color_uniformity=1.000"
+      ],
+      "confidence": 0.8
+    },
+    "organic_integration": {
+      "overlap_ratio": 5.208333333333334e-05,
+      "proximity_ratio": 0.0007520833333333333,
+      "relationship": "none",
+      "integration_level": "none",
+      "evidence": [
+        "overlap_ratio=0.000",
+        "proximity_ratio=0.001",
+        "relationship=none"
+      ],
+      "confidence": 0.7
+    },
+    "overall_confidence": 0.8166666666666668,
+    "validation": {
+      "is_valid": true,
+      "warnings": [],
+      "issues": []
+    },
+    "negative_evidence": {
+      "no_human_presence": true,
+      "no_motion_detected": true,
+      "no_artificial_surface_uniformity": false,
+      "evidence": "YOLO: no person, CLIP: no human terms, emotion: no human subject; temporal: static, CLIP: no motion terms"
+    }
+  },
+  "core_interpretation": {
+    "confidence": 0.66,
+    "primary": "I see a vertical man-made surface (stone or masonry) that is moderately weathered and completely covered by organic growth (moss/algae/vines) on its face, with the growth sitting on the surface rather than structurally integrating into it.",
+    "uncertainty_acknowledged": true,
+    "alternatives": []
+  },
+  "evidence_alignment": {
+    "hallucination_detected": false,
+    "visual_evidence_used": true
+  },
+  "learning_impact": {
+    "memory_updated": true,
+    "new_pattern_stored": true
+  },
+  "mentor_integrity": {
+    "mentor_drift": false
+  },
+  "reflection_diagnostics": {
+    "contradiction_score": 0.7,
+    "invented_facts_score": 1.0,
+    "uncertainty_acknowledged": true,
+    "generic_language_score": 1.5,
+    "overconfidence_score": 1.0,
+    "mentor_drift_score": 1.0,
+    "hypothesis_suppression_score": 1.0,
+    "confidence_language_score": 1.0,
+    "quality_score": 1.025,
+    "requires_regeneration": false
+  },
+  "critique": "I see weathered stone, a vertical face entirely claimed by green\u2014moss and algae settling like a slow-scripted handwriting across mortar. The growth sits on the surface; it warms the wall without ever becoming the wall. Edges are softened by time, but not surrendered.\n\nYou\u2019ve resolved something here you used to struggle with. That low, bottom-weighted tension no longer reads as compositional trickery; it reads as care\u2014an image built to bear time rather than to tidy it. Your tolerance for indeterminacy has widened: air, asymmetry, the absence of a single dominant subject. The frame feels inevitable, as if the picture were waiting for the viewer to meet it on its own terms. Yet the warmth is capped\u2014a pristine restraint that keeps intimacy at arm\u2019s length. Life is present but politely excluded from belonging.\n\nThere is a quiet contradiction. The organic coverage speaks of endurance and patient accumulation; the explicit non\u2011integration\u2014life hovering on the surface\u2014turns that endurance into something controlled. It\u2019s not reclamation so much as careful preservation: the world aging under supervision. That restraint reads as ethics as much as aesthetics. Once I would have collapsed this into formal resolution\u2014bottom-weight solves the frame. Looking at your work now, I read it as an ethical stance: weight as holding, imbalance as duration, restraint as a deliberate boundary.\n\nWhat boundary are you protecting in this tighter restraint \u2014 the subject, the viewer, or yourself? If the warmth is intentionally capped, what would \u201ctoo close\u201d look like in your language, and what are you avoiding by staying just outside it? What does this firmer control give you that your earlier, softer ambiguity didn\u2019t \u2014 and what does it cost?\n\nMake the next frame choose: either let a single vulnerability breach the boundary, or let the control become visibly authoritarian\u2014don\u2019t linger in the safe middle where both are only implied. Which one will you risk?",
+  "pattern_signature": "dc37898804fc858b",
+  "condensed": true
+}

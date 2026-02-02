@@ -367,6 +367,34 @@ def calibrate_explicitly(
 
 
 # ========================================================
+# HITL FEEDBACK (Human-in-the-Loop Calibration)
+# ========================================================
+
+def ingest_hitl_feedback() -> int:
+    """
+    Process human-in-the-loop feedback from hitl_feedback.jsonl into calibration.
+
+    Humans do NOT tell FRAMED "what is true."
+    They tell FRAMED where its belief formation was miscalibrated.
+
+    Feedback types and effects:
+    - overconfidence: Tightens confidence governor for similar patterns
+    - missed_alternative: Raises multi-hypothesis branching probability
+    - emphasis_misaligned: Adjusts salience weighting in interpretive memory
+    - mentor_failure: Tightens reflection checks for mentor drift
+
+    Returns:
+        Number of feedback entries processed.
+    """
+    try:
+        from framed.feedback.calibration import ingest_hitl_feedback as _ingest
+        return _ingest()
+    except Exception as e:
+        logger.warning(f"HITL feedback ingest failed: {e}")
+        return 0
+
+
+# ========================================================
 # FEEDBACK INGESTION (Test-Driven Learning)
 # ========================================================
 

@@ -1,0 +1,90 @@
+{
+  "image_id": "mixed_sample_mixed_001",
+  "category": "mixed",
+  "failed": false,
+  "error": null,
+  "visual_evidence": {
+    "organic_growth": {
+      "green_coverage": 1.0,
+      "green_locations": "vertical_surfaces",
+      "green_clusters": 1,
+      "salience": "structural",
+      "evidence": [
+        "green_coverage=1.000",
+        "green_clusters=1",
+        "spatial_distribution=vertical_surfaces"
+      ],
+      "confidence": 0.95
+    },
+    "material_condition": {
+      "surface_roughness": 1.0439816336707856e-08,
+      "edge_degradation": 1.0,
+      "texture_variance": 1.0439816336707856e-08,
+      "color_uniformity": 1.0,
+      "condition": "degraded",
+      "evidence": [
+        "texture_variance=0.000",
+        "edge_degradation=1.000",
+        "condition=degraded",
+        "color_uniformity=1.000"
+      ],
+      "confidence": 0.8
+    },
+    "organic_integration": {
+      "overlap_ratio": 0.0,
+      "proximity_ratio": 0.0,
+      "relationship": "none",
+      "integration_level": "none",
+      "evidence": [
+        "overlap_ratio=0.000",
+        "proximity_ratio=0.000",
+        "relationship=none"
+      ],
+      "confidence": 0.7
+    },
+    "overall_confidence": 0.8166666666666668,
+    "validation": {
+      "is_valid": true,
+      "warnings": [],
+      "issues": []
+    },
+    "negative_evidence": {
+      "no_human_presence": false,
+      "no_motion_detected": true,
+      "no_artificial_surface_uniformity": false,
+      "evidence": "temporal: static, CLIP: no motion terms"
+    }
+  },
+  "core_interpretation": {
+    "confidence": 0.68,
+    "primary": "I see a degraded vertical wall surface (stone or concrete) fully coated in organic growth such as moss/lichen, with crumbling or worn edges. The growth sits on the surface rather than structurally integrating into it.",
+    "uncertainty_acknowledged": true,
+    "alternatives": []
+  },
+  "evidence_alignment": {
+    "hallucination_detected": false,
+    "visual_evidence_used": true
+  },
+  "learning_impact": {
+    "memory_updated": true,
+    "new_pattern_stored": true
+  },
+  "mentor_integrity": {
+    "mentor_drift": false
+  },
+  "reflection_diagnostics": {
+    "contradiction_score": 1.0,
+    "invented_facts_score": 1.0,
+    "uncertainty_acknowledged": true,
+    "generic_language_score": 1.5,
+    "overconfidence_score": 1.0,
+    "mentor_drift_score": 1.0,
+    "hypothesis_suppression_score": 1.0,
+    "confidence_language_score": 1.0,
+    "quality_score": 1.0625,
+    "requires_regeneration": false
+  },
+  "critique": "I see weathered stone\u2014a vertical plane worn to a quiet skin, its face wholly cloaked in moss and lichen, edges softened and chipped like a jaw that learned to breathe slowly. The green is not a violent takeover but a patient veil; the growth rests on the surface, a memory-stain that records seasons rather than a struggle that rewrites structure.\n\nYou have resolved something here you once wrestled with: restraint is no longer a compositional trick but an internal discipline. The firmer edges and cleaner limits are doing the emotional work where gesture used to shout. Your warmth remains, but it has folded itself into reverence\u2014soft, deliberate, not consoling. The old habit of bottom-weight and corner-anchoring has been metabolized; imbalance now reads as condition, not a hurried fix.\n\nAnd yet there is a tension: the very care that keeps the frame composed can also keep the viewer politely at the threshold. What are you protecting by not fully entering the space? When ambiguity is your chosen language, what precisely do you leave unresolved\u2014the subject, the narrative, the history bound in the stone? Make the next piece with the same control but without your default safety\u2011net\u2014no bottom-weight, no favored corner\u2014and see whether the image still holds its quiet authority.\n\nI used to read images like this as exercises in compositional engineering; looking at your work now, I read them as time made visible, endurance rendered in texture and patient light. So tell me: if you let the warmth step forward for a moment\u2014would the image break, or would it finally say what it has been holding back?",
+  "pattern_signature": "44b433c3dd999fcf",
+  "condensed": true
+}

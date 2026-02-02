@@ -16,8 +16,11 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
-def reflect_on_critique(critique_text: str,
-                       reasoner_output: Dict[str, Any]) -> Dict[str, Any]:
+def reflect_on_critique(
+    critique_text: str,
+    reasoner_output: Dict[str, Any],
+    hitl_mentor_drift_penalty: float = 0.0,
+) -> Dict[str, Any]:
     """
     Reflection Pass: Check if critique contradicts reasoner or has quality issues.
     
@@ -46,9 +49,15 @@ def reflect_on_critique(critique_text: str,
         recognition = reasoner_output.get("recognition", {})
         primary_conclusion = recognition.get("what_i_see", "").lower()
         
-        # Extract uncertainty from recognition layer
+        # Extract uncertainty: confidence < 0.65 OR disagreement OR require_multiple_hypotheses
         confidence = recognition.get("confidence", 1.0)
-        requires_uncertainty = confidence < 0.65
+        disagreement_exists = reasoner_output.get("disagreement_state", {}).get("exists", False)
+        require_multiple_hypotheses = reasoner_output.get("require_multiple_hypotheses", False)
+        requires_uncertainty = (
+            confidence < 0.65
+            or disagreement_exists
+            or require_multiple_hypotheses
+        )
         
         # Extract evidence from recognition
         evidence_chain = recognition.get("evidence", [])
@@ -57,12 +66,11 @@ def reflect_on_critique(critique_text: str,
         else:
             evidence_chain = [str(evidence_chain)]
         
-        # For alternatives, check meta_cognition layer
-        alternatives = []
+        # For alternatives, check recognition and meta_cognition layers
+        alternatives = recognition.get("rejected_alternatives", []) or recognition.get("alternatives", [])
         meta_cognition = reasoner_output.get("meta_cognition", {})
-        if meta_cognition:
-            rejected_alternatives = meta_cognition.get("rejected_alternatives", [])
-            alternatives = rejected_alternatives
+        if not alternatives and meta_cognition:
+            alternatives = meta_cognition.get("rejected_alternatives", [])
     else:
         # Old format: Extract from interpretive_conclusions
         primary = reasoner_output.get("primary_interpretation", {})
@@ -89,20 +97,48 @@ def reflect_on_critique(critique_text: str,
     
     # === CHECK 6: Drift from Mentor Philosophy ===
     mentor_drift_score = check_mentor_philosophy_drift(critique_lower)
+
+    # === CHECK 7: Hypothesis Suppression (multi-hypothesis required but only one in output) ===
+    hypothesis_suppression_score = 1.0
+    if is_intelligence_format:
+        require_multi = reasoner_output.get("require_multiple_hypotheses", False)
+        penalize_diversity = reasoner_output.get("hypothesis_diversity", {}).get("penalize_hypothesis_diversity", False)
+        if require_multi:
+            # Check if critique mentions alternatives, tension, or multiple readings
+            tension_phrases = ["alternative", "another reading", "could also be", "or perhaps", "either...or", "tension", "ambiguity", "both", "plausible", "tentative"]
+            mentions_alternatives = any(p in critique_lower for p in tension_phrases)
+            hypothesis_suppression_score = 1.0 if mentions_alternatives else 0.3  # Fail if no acknowledgment
+            # If alternatives were semantic variants, soften penalty (less bad to not mention rephrasings)
+            if penalize_diversity and not mentions_alternatives:
+                hypothesis_suppression_score = max(hypothesis_suppression_score, 0.55)
+
+    # === CHECK 8: Confidence-Language Mismatch (low conf + definitive language) ===
+    confidence_language_score = 1.0
+    if is_intelligence_format:
+        rec = reasoner_output.get("recognition", {})
+        conf_val = rec.get("confidence", 1.0)
+        definitive_phrases = ["this image shows", "clearly", "undeniably", "what we see here is", "obviously", "definitely", "without question"]
+        uses_definitive = any(p in critique_lower for p in definitive_phrases)
+        if conf_val < 0.6 and uses_definitive:
+            confidence_language_score = 0.2  # Major violation
     
     # Calculate quality score (inverted - lower scores = worse quality)
     scores = [
-        contradiction_score,  # Lower = more contradiction
-        invented_facts_score,  # Lower = more invented facts
-        1.0 if uncertainty_acknowledged else 0.0,  # 0 if uncertainty ignored
-        generic_score,  # Lower = more generic
-        overconfidence_score,  # Lower = more overconfident
-        mentor_drift_score  # Lower = more drift from mentor philosophy
+        contradiction_score,
+        invented_facts_score,
+        1.0 if uncertainty_acknowledged else 0.0,
+        generic_score,
+        overconfidence_score,
+        mentor_drift_score,
+        hypothesis_suppression_score,
+        confidence_language_score,
     ]
     quality_score = sum(scores) / len(scores)
-    
+
     # Require regeneration if quality is below threshold
-    requires_regeneration = quality_score < 0.70
+    # HITL: mentor_failure feedback tightens reflection (raise threshold)
+    quality_threshold = 0.70 + hitl_mentor_drift_penalty
+    requires_regeneration = quality_score < quality_threshold
     
     reflection = {
         "contradiction_score": contradiction_score,
@@ -111,6 +147,8 @@ def reflect_on_critique(critique_text: str,
         "generic_language_score": generic_score,
         "overconfidence_score": overconfidence_score,
         "mentor_drift_score": mentor_drift_score,
+        "hypothesis_suppression_score": hypothesis_suppression_score,
+        "confidence_language_score": confidence_language_score,
         "quality_score": quality_score,
         "requires_regeneration": requires_regeneration
     }

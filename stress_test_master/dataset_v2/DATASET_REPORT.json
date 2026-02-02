@@ -1,15 +1,15 @@
 {
   "categories": {
-    "ambiguous": 4,
-    "portraits": 5,
-    "mixed": 4,
-    "interiors": 4,
-    "nature": 5,
-    "artistic": 4,
     "architecture": 5,
-    "street": 5
+    "interiors": 4,
+    "street": 5,
+    "nature": 5,
+    "portraits": 5,
+    "ambiguous": 4,
+    "mixed": 4,
+    "artistic": 4
   },
   "total": 36,
-  "source": "picsum.photos",
+  "source": "unsplash.com (curated, category-matched)",
   "version": "v2"
 }

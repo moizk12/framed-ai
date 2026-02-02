@@ -1,0 +1,94 @@
+{
+  "image_id": "mixed_v2_mixed_002",
+  "category": "mixed",
+  "failed": false,
+  "error": null,
+  "visual_evidence": {
+    "organic_growth": {
+      "green_coverage": 5.208333333333334e-05,
+      "green_locations": "minimal",
+      "green_clusters": 0,
+      "salience": "minimal",
+      "evidence": [
+        "green_coverage=0.000",
+        "green_clusters=0",
+        "spatial_distribution=minimal"
+      ],
+      "confidence": 0.5
+    },
+    "material_condition": {
+      "surface_roughness": 0.005160256590764369,
+      "edge_degradation": 0.7826419950602093,
+      "texture_variance": 0.005160256590764369,
+      "color_uniformity": 0.9563870429992676,
+      "condition": "degraded",
+      "evidence": [
+        "texture_variance=0.005",
+        "edge_degradation=0.783",
+        "condition=degraded",
+        "color_uniformity=0.956"
+      ],
+      "confidence": 0.8
+    },
+    "organic_integration": {
+      "overlap_ratio": 0.28,
+      "proximity_ratio": 1.0,
+      "relationship": "reclamation",
+      "integration_level": "high",
+      "evidence": [
+        "overlap_ratio=0.280",
+        "proximity_ratio=1.000",
+        "relationship=reclamation"
+      ],
+      "confidence": 0.7
+    },
+    "overall_confidence": 0.6666666666666666,
+    "validation": {
+      "is_valid": true,
+      "warnings": [
+        "Contradiction: Reclamation relationship but minimal green coverage"
+      ],
+      "issues": []
+    },
+    "negative_evidence": {
+      "no_human_presence": false,
+      "no_motion_detected": true,
+      "no_artificial_surface_uniformity": false,
+      "evidence": "temporal: static, CLIP: no motion terms"
+    }
+  },
+  "core_interpretation": {
+    "confidence": 0.5,
+    "primary": "A severely degraded surface; it could be environmental/organic reclamation integrated into the structure, or purely erosion/staining without real organic growth.",
+    "uncertainty_acknowledged": true,
+    "alternatives": [
+      "I see a degraded, rough artificial surface with no meaningful organic growth; the 'reclamation' signal is likely false-positive from erosion patterns, debris, staining, or texture contrast"
+    ]
+  },
+  "evidence_alignment": {
+    "hallucination_detected": false,
+    "visual_evidence_used": true
+  },
+  "learning_impact": {
+    "memory_updated": true,
+    "new_pattern_stored": true
+  },
+  "mentor_integrity": {
+    "mentor_drift": false
+  },
+  "reflection_diagnostics": {
+    "contradiction_score": 1.0,
+    "invented_facts_score": 1.0,
+    "uncertainty_acknowledged": false,
+    "generic_language_score": 1.0,
+    "overconfidence_score": 1.0,
+    "mentor_drift_score": 1.0,
+    "hypothesis_suppression_score": 0.3,
+    "confidence_language_score": 1.0,
+    "quality_score": 0.7875,
+    "requires_regeneration": false
+  },
+  "critique": "[Critique generation returned empty response]",
+  "pattern_signature": "60f6ac1ca82714f9",
+  "condensed": true
+}

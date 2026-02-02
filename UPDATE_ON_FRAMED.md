@@ -4,8 +4,8 @@
 
 This document details all changes made to FRAMED since fixing the GPT critique generation issue. This represents a comprehensive evolution of FRAMED from a working ML application to a production-grade reasoning-first visual intelligence system that "sees → understands → decides → speaks."
 
-**Last Updated:** 2026-01-24  
-**Version:** Reasoning-First Architecture v1.0
+**Last Updated:** 2026-01-31  
+**Version:** Reasoning-First Architecture v1.1
 
 ---
 
@@ -1083,5 +1083,24 @@ The system now "sees → understands → decides → speaks," with visual eviden
 
 ---
 
-*Last Updated: 2026-01-24*  
-*Version: Reasoning-First Architecture v1.0*
+### Recovery & Stress Test (2026-01-29 to 2026-01-31)
+
+**OneDrive Recovery & Forensics:** Local files lost/overwritten; forensics classified `framed/analysis/` into Bucket A (aligned), C (legacy fallback). Reference: FRAMED_CONSTITUTION, FRAMED_INTELLIGENCE_MASTER_PLAN.
+
+**Git LFS:** `stress_test_master/images.zip` (~9.1 GB) migrated to LFS; `*.zip` in `.gitattributes`.
+
+**Vision.py:** Explicit comment—`interpret_scene` and `interpretive_memory` are legacy fallbacks only when `FRAMED_USE_INTELLIGENCE_CORE` is enabled.
+
+**Dataset (`scripts/dataset_download_and_categorize.py`):** Places365 val_256 → architecture, interiors, street; Open Images V7 → portraits, mixed; Unsplash Lite → nature, ambiguous, artistic. SHA256 zero-overlap verified.
+
+**Stress test (run_2026_01_29_020225):** 2,000 images, 19h 27m 40s, 0 failures. Output: `framed/tests/test_runs/run_YYYY_MM_DD_HHMMSS/`.
+
+**Model A (Reasoning):** gpt-5.2 — reasoning.effort: medium, text.verbosity: low, temperature omitted.  
+**Model B (Expression):** gpt-5-mini — text.verbosity: medium, temp 0.7.
+
+**Other changes:** `disable_cache` in `analyze_image()`, `--disable_cache` flag, expression model log, `.env` + dotenv, `framed/tests/` (datasets.py, test_intelligence_pipeline, metrics, reporting), `scripts/dataset_download_and_categorize.py`, 17 redundant docs deleted.
+
+---
+
+*Last Updated: 2026-01-31*  
+*Version: Reasoning-First Architecture v1.1*

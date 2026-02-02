@@ -1,42 +1,12 @@
-# ===================================
-# FRAMED Requirements - Fixed
-# ===================================
-
-# Web Framework
-flask==3.0.0
-flask-cors==4.0.0
-Werkzeug==3.0.1
-
-# Computer Vision
-opencv-python-headless==4.8.1.78
-
-# Core ML/Data Science
-numpy==1.24.3
-pillow==10.1.0
-scikit-learn==1.3.2
-
-# Deep Learning
-torch==2.1.0
-torchvision==0.16.0
-transformers==4.35.2
-
-# Object Detection
-ultralytics==8.0.220
-
-# Image Analysis
-colorthief==0.2.1
-
-# Web Server
-gunicorn==21.2.0
-
-# AI Integration - FIXED VERSION
-openai==1.54.3
-
-# OpenAI SDK currently passes `proxies=` into httpx.Client; httpx>=0.28 removed it.
-httpx==0.27.2
-
-# Utilities
-requests==2.31.0
-
-# Places365 Scene Recognition
-places365==0.1.0
+flask
+openai
+Pillow
+torch
+transformers
+ultralytics
+colorthief
+opencv-python-headless
+scikit-learn
+requests
+python-dotenv
+fiftyone>=0.23.0

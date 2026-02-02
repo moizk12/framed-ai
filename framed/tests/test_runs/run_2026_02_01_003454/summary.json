@@ -1,0 +1,32 @@
+{
+  "test_config": {
+    "dataset_path": "stress_test_master/dataset_v1_ext",
+    "max_images": 20,
+    "shuffle": true,
+    "seed": 42,
+    "disable_expression": false,
+    "disable_cache": true,
+    "run_dir": null,
+    "ingest_feedback": true
+  },
+  "total_images": 20,
+  "completed": 20,
+  "failed": 0,
+  "pass_fail_report": {
+    "passed": true,
+    "failures": [],
+    "warnings": [
+      "Uncertainty acknowledged in only 0.0% of cases - may be too confident",
+      "Multiple hypotheses generated in only 0.0% of cases - may be too single-minded"
+    ],
+    "timestamp": "2026-02-01T00:47:06.729456Z"
+  },
+  "timestamp": "2026-02-01T00:47:06.729464Z",
+  "elapsed_ms": 732177,
+  "elapsed_seconds": 732.178,
+  "elapsed_human": "0h 12m 12s",
+  "images_per_hour": 98.3,
+  "run_id": "run_2026_02_01_003454",
+  "started_at": "2026-02-01T00:34:54.550917+00:00",
+  "ended_at": "2026-02-01T00:47:06.728418+00:00"
+}

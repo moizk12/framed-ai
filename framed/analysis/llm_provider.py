@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 # ========================================================
 
 # Model selection via environment variables
-MODEL_A_TYPE = os.getenv("FRAMED_MODEL_A", "PLACEHOLDER")  # Reasoning model
-MODEL_B_TYPE = os.getenv("FRAMED_MODEL_B", "PLACEHOLDER")  # Expression model
+MODEL_A_TYPE = os.getenv("FRAMED_MODEL_A", "GPT_5_2")   # Reasoning model (brain)
+MODEL_B_TYPE = os.getenv("FRAMED_MODEL_B", "GPT_5_MINI")  # Expression model (voice)
 
-# Model-specific configurations (to be set when models are chosen)
+# Model-specific configurations
 MODEL_CONFIGS = {
     "PLACEHOLDER": {
         "provider": "placeholder",
@@ -37,22 +37,23 @@ MODEL_CONFIGS = {
         "max_tokens": 4000,
         "temperature": 0.7,
     },
-    # Add actual model configs here when models are chosen
-    # Example:
-    # "CLAUDE_3_5_SONNET": {
-    #     "provider": "anthropic",
-    #     "model_name": "claude-3-5-sonnet-20241022",
-    #     "api_key_env": "ANTHROPIC_API_KEY",
-    #     "max_tokens": 4096,
-    #     "temperature": 0.7,
-    # },
-    # "GPT4_O1_MINI": {
-    #     "provider": "openai",
-    #     "model_name": "o1-mini",
-    #     "api_key_env": "OPENAI_API_KEY",
-    #     "max_tokens": 16384,
-    #     "temperature": None,  # o1 doesn't use temperature
-    # },
+    "GPT_5_2": {
+        "provider": "openai",
+        "model_name": "gpt-5.2",
+        "api_key_env": "OPENAI_API_KEY",
+        "max_tokens": 8192,
+        "temperature": None,
+        "reasoning": {"effort": "medium"},
+        "text": {"verbosity": "low"},
+    },
+    "GPT_5_MINI": {
+        "provider": "openai",
+        "model_name": "gpt-5-mini",
+        "api_key_env": "OPENAI_API_KEY",
+        "max_tokens": 2048,
+        "temperature": 1,  # Model only supports default (1); other values cause 400
+        "text": {"verbosity": "medium"},
+    },
 }
 
 # ========================================================
@@ -122,6 +123,135 @@ class LLMProvider(ABC):
     def is_available(self) -> bool:
         """Check if provider is available (API key, etc.)"""
         pass
+
+
+# ========================================================
+# OPENAI PROVIDER (MODEL A & B)
+# ========================================================
+
+
+def _extract_text_from_responses_output(output: Any) -> str:
+    """Extract text from Responses API output array."""
+    if not output:
+        return ""
+    for item in output:
+        if hasattr(item, "content") and item.content:
+            for part in item.content:
+                if hasattr(part, "text") and part.text:
+                    return part.text
+        if hasattr(item, "type") and item.type == "message":
+            if hasattr(item, "content") and item.content:
+                for part in item.content:
+                    if getattr(part, "type", None) == "output_text" and hasattr(part, "text"):
+                        return part.text
+    return ""
+
+
+class OpenAIProvider(LLMProvider):
+    """OpenAI provider for Model A (gpt-5.2 reasoning) and Model B (gpt-5-mini expression)."""
+    
+    def __init__(self, config: Dict[str, Any], role: Literal["reasoning", "expression"]):
+        self.config = config
+        self.role = role
+        self.model_name = config["model_name"]
+        self._api_key_env = config.get("api_key_env", "OPENAI_API_KEY")
+        self._client = None
+    
+    def _get_client(self):
+        api_key = os.getenv(self._api_key_env, "").strip()
+        # Fallback: load .env if key is missing (e.g. when run from different entry point)
+        if not api_key:
+            try:
+                from pathlib import Path
+                from dotenv import load_dotenv
+                for d in (Path(__file__).resolve().parents[2], Path.cwd()):
+                    env_path = d / ".env"
+                    if env_path.exists():
+                        load_dotenv(env_path)
+                        api_key = os.getenv(self._api_key_env, "").strip()
+                        break
+            except ImportError:
+                pass
+        if not api_key:
+            return None
+        if self._client is None:
+            try:
+                from openai import OpenAI
+                self._client = OpenAI()
+            except Exception as e:
+                logger.error(f"OpenAI client init failed: {e}")
+                return None
+        return self._client
+    
+    def is_available(self) -> bool:
+        api_key = os.getenv(self._api_key_env, "").strip()
+        if not api_key:
+            return False
+        return self._get_client() is not None
+    
+    def call(self, prompt: str, system_prompt: Optional[str] = None, max_tokens: Optional[int] = None,
+             temperature: Optional[float] = None, response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        client = self._get_client()
+        if not client:
+            return {"content": "", "usage": {}, "model": self.model_name, "error": "OpenAI client not available"}
+        max_tokens = max_tokens or self.config.get("max_tokens", 4096)
+        if self.role == "reasoning":
+            return self._call_reasoning(client, prompt, system_prompt, max_tokens, response_format)
+        return self._call_expression(client, prompt, system_prompt, max_tokens,
+                                     temperature if temperature is not None else self.config.get("temperature"))
+    
+    def _call_reasoning(self, client, prompt: str, system_prompt: Optional[str], max_tokens: int,
+                        response_format: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if hasattr(client, "responses") and hasattr(client.responses, "create"):
+            try:
+                kwargs = {"model": self.model_name, "input": [{"role": "user", "content": prompt}], "max_output_tokens": max_tokens}
+                if system_prompt:
+                    kwargs["input"] = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+                kwargs["reasoning"] = self.config.get("reasoning", {"effort": "medium"})
+                kwargs["text"] = self.config.get("text", {"verbosity": "low"})
+                # Note: Responses API does not support response_format; JSON request in prompt if needed
+                resp = client.responses.create(**kwargs)
+                text = getattr(resp, "output_text", None) or ""
+                if not text and hasattr(resp, "output") and resp.output:
+                    text = _extract_text_from_responses_output(resp.output)
+                usage = {}
+                if hasattr(resp, "usage") and resp.usage:
+                    usage = {"prompt_tokens": getattr(resp.usage, "input_tokens", 0),
+                             "completion_tokens": getattr(resp.usage, "output_tokens", 0),
+                             "total_tokens": getattr(resp.usage, "total_tokens", 0)}
+                return {"content": text, "usage": usage, "model": self.model_name, "error": None}
+            except Exception as e:
+                logger.warning(f"Responses API failed, falling back to Chat: {e}")
+        messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+        messages.append({"role": "user", "content": prompt})
+        kwargs = {"model": self.model_name, "messages": messages, "max_completion_tokens": max_tokens, "temperature": 0.3}
+        if response_format and response_format.get("type") == "json_object":
+            kwargs["response_format"] = {"type": "json_object"}
+        resp = client.chat.completions.create(**kwargs)
+        msg = resp.choices[0].message if resp.choices else None
+        content = msg.content if msg else ""
+        usage = {"prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
+                 "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
+                 "total_tokens": resp.usage.total_tokens if resp.usage else 0}
+        return {"content": content or "", "usage": usage, "model": self.model_name, "error": None}
+    
+    def _call_expression(self, client, prompt: str, system_prompt: Optional[str], max_tokens: int,
+                         temperature: Optional[float]) -> Dict[str, Any]:
+        messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+        messages.append({"role": "user", "content": prompt})
+        # gpt-5-mini only supports temperature=1; ignore caller's temperature for that model
+        if "gpt-5-mini" in (self.model_name or ""):
+            temp = 1
+        else:
+            temp = temperature if temperature is not None else self.config.get("temperature", 0.7)
+        resp = client.chat.completions.create(model=self.model_name, messages=messages, max_completion_tokens=max_tokens,
+                                              temperature=temp)
+        msg = resp.choices[0].message if resp.choices else None
+        content = msg.content if msg else ""
+        usage = {"prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
+                 "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
+                 "total_tokens": resp.usage.total_tokens if resp.usage else 0}
+        return {"content": content or "", "usage": usage, "model": self.model_name, "error": None}
 
 
 # ========================================================
@@ -245,20 +375,12 @@ def create_provider(model_type: str, role: Literal["reasoning", "expression"]) -
     
     provider_name = config["provider"]
     
-    # Placeholder implementation
     if provider_name == "placeholder":
         return PlaceholderProvider(model_name=f"placeholder-{role}")
     
-    # TODO: Add actual provider implementations when models are chosen
-    # Example:
-    # if provider_name == "anthropic":
-    #     return AnthropicProvider(config, role)
-    # elif provider_name == "openai":
-    #     return OpenAIProvider(config, role)
-    # else:
-    #     raise ValueError(f"Unknown provider: {provider_name}")
+    if provider_name == "openai":
+        return OpenAIProvider(config, role)
     
-    # Fallback to placeholder
     logger.warning(f"Provider {provider_name} not implemented. Using placeholder.")
     return PlaceholderProvider(model_name=f"placeholder-{role}")
 

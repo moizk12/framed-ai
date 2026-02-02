@@ -1,0 +1,95 @@
+{
+  "image_id": "street_v2_street_002",
+  "category": "street",
+  "failed": false,
+  "error": null,
+  "visual_evidence": {
+    "organic_growth": {
+      "green_coverage": 7.291666666666667e-05,
+      "green_locations": "minimal",
+      "green_clusters": 0,
+      "salience": "minimal",
+      "evidence": [
+        "green_coverage=0.000",
+        "green_clusters=0",
+        "spatial_distribution=minimal"
+      ],
+      "confidence": 0.5
+    },
+    "material_condition": {
+      "surface_roughness": 0.004672753943795655,
+      "edge_degradation": 0.7865220534759727,
+      "texture_variance": 0.004672753943795655,
+      "color_uniformity": 0.9957042932510376,
+      "condition": "degraded",
+      "evidence": [
+        "texture_variance=0.005",
+        "edge_degradation=0.787",
+        "condition=degraded",
+        "color_uniformity=0.996"
+      ],
+      "confidence": 0.8
+    },
+    "organic_integration": {
+      "overlap_ratio": 1.0,
+      "proximity_ratio": 1.0,
+      "relationship": "reclamation",
+      "integration_level": "high",
+      "evidence": [
+        "overlap_ratio=1.000",
+        "proximity_ratio=1.000",
+        "relationship=reclamation"
+      ],
+      "confidence": 0.95
+    },
+    "overall_confidence": 0.75,
+    "validation": {
+      "is_valid": true,
+      "warnings": [
+        "Contradiction: Reclamation relationship but minimal green coverage"
+      ],
+      "issues": []
+    },
+    "negative_evidence": {
+      "no_human_presence": true,
+      "no_motion_detected": true,
+      "no_artificial_surface_uniformity": false,
+      "evidence": "YOLO: no person, CLIP: no human terms, emotion: no human subject; temporal: static, CLIP: no motion terms"
+    }
+  },
+  "core_interpretation": {
+    "confidence": 0.46,
+    "primary": "A heavily degraded surface with strong edge breakdown that appears fully overlapped by an environmental layer; most consistent with a weathered man-made material being reclaimed (but plausible as natural rock with lichen/soil film, or as staining/deposits on a built surface).",
+    "uncertainty_acknowledged": true,
+    "alternatives": [
+      "A natural rock/outcrop face that looks like a deteriorated structure, with soil/lichen film integrated into the surface (reclamation-like integration without obvious vegetation)",
+      "A man-made surface (painted/plastered/treated) where the 'reclamation' signal is actually grime, algae staining, or mineral deposits fully overlaying the material rather than true plant growth"
+    ]
+  },
+  "evidence_alignment": {
+    "hallucination_detected": false,
+    "visual_evidence_used": true
+  },
+  "learning_impact": {
+    "memory_updated": true,
+    "new_pattern_stored": true
+  },
+  "mentor_integrity": {
+    "mentor_drift": false
+  },
+  "reflection_diagnostics": {
+    "contradiction_score": 1.0,
+    "invented_facts_score": 1.0,
+    "uncertainty_acknowledged": false,
+    "generic_language_score": 1.0,
+    "overconfidence_score": 1.0,
+    "mentor_drift_score": 1.0,
+    "hypothesis_suppression_score": 0.3,
+    "confidence_language_score": 1.0,
+    "quality_score": 0.7875,
+    "requires_regeneration": false
+  },
+  "critique": "[Critique generation returned empty response]",
+  "pattern_signature": "f7f65f123b082d08",
+  "condensed": true
+}

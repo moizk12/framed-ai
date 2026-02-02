@@ -1,0 +1,32 @@
+{
+  "test_config": {
+    "dataset_path": "calibration_micro_set",
+    "max_images": null,
+    "shuffle": true,
+    "seed": 42,
+    "disable_expression": false,
+    "disable_cache": true,
+    "run_dir": null,
+    "ingest_feedback": true
+  },
+  "total_images": 14,
+  "completed": 14,
+  "failed": 0,
+  "pass_fail_report": {
+    "passed": true,
+    "failures": [],
+    "warnings": [
+      "Uncertainty acknowledged in only 0.0% of cases - may be too confident",
+      "Multiple hypotheses generated in only 0.0% of cases - may be too single-minded"
+    ],
+    "timestamp": "2026-02-01T11:28:01.339432Z"
+  },
+  "timestamp": "2026-02-01T11:28:01.339446Z",
+  "elapsed_ms": 391245,
+  "elapsed_seconds": 391.245,
+  "elapsed_human": "0h 6m 31s",
+  "images_per_hour": 128.8,
+  "run_id": "run_2026_02_01_112130",
+  "started_at": "2026-02-01T11:21:30.090705+00:00",
+  "ended_at": "2026-02-01T11:28:01.335809+00:00"
+}

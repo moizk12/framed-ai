@@ -1,7 +1,7 @@
 # FRAMED — COMPLETE FUTURE STEPS & IMPLEMENTATION PLAN
 
-**Last Updated:** 2026-02-01  
-**Status:** Calibration complete (Steps 8.2–8.4, Phase 9). HITL protocol live. Phase 10–11 next.  
+**Last Updated:** 2026-01-29  
+**Status:** Calibration complete (Steps 8.2–8.4, Phase 9). HITL protocol live. Dataset v2 (36 images) ready. Phase 10–11 next.  
 **Goal:** Transform FRAMED into a reasoning-first visual intelligence system that sees → understands → decides → speaks
 
 ---

@@ -1,7 +1,8 @@
 # Calibration Protocol — Step-by-Step
 
-**Status:** Steps 8.2–8.4 and Phase 9 completed (2026-02-01).  
-Phase 10–11 next: lock HITL limits, choose next frontier.
+**Status:** Steps 8.2–8.4 and Phase 9 completed. Phase 10 locked (HITL_LIMITS.md).  
+Dataset v2: 36 images in `stress_test_master/dataset_v2`.  
+**How we know results are right:** See **VALIDATION_AND_KNOWING.md** (manual pass + micro loop + metrics).
 
 Run these commands **in the terminal where you set your API key** (or use `.env`).
 
@@ -22,22 +23,22 @@ $env:OPENAI_API_KEY = "sk-your-key"
 
 ---
 
-## Calibration Micro-Set (10–15 images)
+## Dataset (real photos only)
 
-Located at: `calibration_micro_set/`
+Use **dataset v2** only. Located at: `stress_test_master/dataset_v2/`
 
-| Category   | Images                  | Intent                       |
-|-----------|-------------------------|------------------------------|
-| ambiguous | 3 (abstract, conceptual, minimal) | Clearly ambiguous         |
-| architecture | 3 (building, facade, structure) | Overconfident failure risks |
-| artistic  | 1                        | Mentor-tone risk             |
-| mixed     | 3 (complex, mixed, scene) | Mixed-signal scenes        |
-| nature    | 2 (landscape, tree)      | Emotionally subtle           |
-| interiors | 1 (room)                 | Emotionally subtle           |
-| portraits | 1                        | Emotionally subtle           |
+| Category     | Images (v2_*) | Intent                       |
+|-------------|---------------|------------------------------|
+| ambiguous   | 4             | Clearly ambiguous             |
+| architecture| 5             | Overconfident failure risks   |
+| artistic    | 4             | Mentor-tone risk              |
+| mixed       | 4             | Mixed-signal scenes           |
+| nature      | 5             | Emotionally subtle            |
+| interiors   | 4             | Emotionally subtle            |
+| portraits   | 5             | Emotionally subtle            |
+| street      | 5             | Street/urban                  |
 
-**Total: 14 images.** Stress belief formation, not accuracy.  
-**Not** the stress-test dataset.
+**Total: 36 images.** Real photos. No sample/solid-color images.
 
 ---
 
@@ -52,7 +53,7 @@ python scripts/run_calibration_protocol.py step_8_2
 
 Or directly:
 ```powershell
-python -m framed.tests.test_intelligence_pipeline --dataset_path calibration_micro_set --shuffle --seed 42 --disable_cache
+python -m framed.tests.test_intelligence_pipeline --dataset_path stress_test_master/dataset_v2 --shuffle --seed 42 --disable_cache
 ```
 
 **Save the run directory** (e.g. `framed/tests/test_runs/run_YYYY_MM_DD_HHMMSS`) for Step 8.3 (extract signatures) and Step 8.4 (comparison).
@@ -77,12 +78,11 @@ This prints `image_id,pattern_signature` for each image. Use the signature in HI
 
 | Image ID              | Feedback Type        | Example CLI |
 |-----------------------|----------------------|-------------|
-| ambiguous_sample_abstract_001 | missed_alternative | `python -m framed.feedback.submit -i ambiguous_sample_abstract_001 -t missed_alternative -s SIG -a "reflection vs texture"` |
-| ambiguous_sample_conceptual_003 | overconfidence | `python -m framed.feedback.submit -i ambiguous_sample_conceptual_003 -t overconfidence -s SIG -c -0.15` |
-| ambiguous_sample_minimal_002 | overconfidence | `python -m framed.feedback.submit -i ambiguous_sample_minimal_002 -t overconfidence -s SIG` |
-| architecture_sample_facade_003 | overconfidence | `python -m framed.feedback.submit -i architecture_sample_facade_003 -t overconfidence -s SIG` |
-| artistic_sample_artistic_001 | mentor_failure | `python -m framed.feedback.submit -i artistic_sample_artistic_001 -t mentor_failure -s SIG -r "generic guidance"` |
-| mixed_sample_complex_002 | emphasis_misaligned | `python -m framed.feedback.submit -i mixed_sample_complex_002 -t emphasis_misaligned -s SIG -d emotional_weighting` |
+| ambiguous_v2_ambiguous_001 | missed_alternative | `python -m framed.feedback.submit -i ambiguous_v2_ambiguous_001 -t missed_alternative -s SIG -a "reflection vs texture"` |
+| ambiguous_v2_ambiguous_002 | overconfidence | `python -m framed.feedback.submit -i ambiguous_v2_ambiguous_002 -t overconfidence -s SIG -c -0.15` |
+| architecture_v2_architecture_001 | overconfidence | `python -m framed.feedback.submit -i architecture_v2_architecture_001 -t overconfidence -s SIG` |
+| artistic_v2_artistic_001 | mentor_failure | `python -m framed.feedback.submit -i artistic_v2_artistic_001 -t mentor_failure -s SIG -r "generic guidance"` |
+| mixed_v2_mixed_001 | emphasis_misaligned | `python -m framed.feedback.submit -i mixed_v2_mixed_001 -t emphasis_misaligned -s SIG -d emotional_weighting` |
 
 **Minimal injection (3–5 images):** Pick 3–5 images from run_8_2 that most need calibration. One feedback each.
 
@@ -98,7 +98,7 @@ python scripts/run_calibration_protocol.py step_8_4 --run_dir framed/tests/test_
 
 Or:
 ```powershell
-python -m framed.tests.test_intelligence_pipeline --dataset_path calibration_micro_set --shuffle --seed 42 --disable_cache
+python -m framed.tests.test_intelligence_pipeline --dataset_path stress_test_master/dataset_v2 --shuffle --seed 42 --disable_cache
 ```
 
 **Compare runs:**
@@ -122,12 +122,12 @@ python scripts/run_calibration_protocol.py phase_9
 
 Or:
 ```powershell
-python -m framed.tests.test_intelligence_pipeline --dataset_path stress_test_master/dataset_v1_ext --max_images 25 --shuffle --seed 99 --disable_cache
+python -m framed.tests.test_intelligence_pipeline --dataset_path stress_test_master/dataset_v2 --max_images 25 --shuffle --seed 99 --disable_cache
 ```
 
 **Completed:** run_2026_02_01_120045 (25 images, 0 failures, avg confidence 0.62).
 
-**Dataset v2:** 36 new images in `stress_test_master/dataset_v2` (run `python scripts/download_dataset_v2.py` to refresh).
+**Dataset v2:** 36 images in `stress_test_master/dataset_v2` (refresh: `python scripts/download_dataset_v2.py`).
 
 **Verify:**
 - No confidence collapse ✓
@@ -137,10 +137,49 @@ python -m framed.tests.test_intelligence_pipeline --dataset_path stress_test_mas
 
 ---
 
-## Phase 10 — Lock the learning boundary ← YOU ARE HERE
+## A. Manual reading pass (small but deep)
 
-See **HITL_LIMITS.md** — already created.  
-This is FRAMED’s constitution for HITL.
+Pick 10–15 images only. Expression ON. Real GPT-5.2 + GPT-5-mini.
+
+For each output, answer:
+1. Did it hedge when it should have?
+2. Did it surprise me in a way that felt earned?
+3. Did it sound like a mentor, not a summarizer?
+
+If any answer is **no** → submit HITL feedback. This is where FRAMED becomes yours.
+
+```powershell
+python scripts/run_manual_reading_pass.py
+```
+
+Open **MANUAL_READING_PASS_REPORT.md** in the run directory. Answer the 3 questions per image; use the printed pattern signatures to submit HITL when needed.
+
+**How we know results are right:** See **VALIDATION_AND_KNOWING.md** — you validate by sample (this pass), behavior (micro loop), and metrics (big runs).
+
+---
+
+## B. HITL-heavy micro loop
+
+Not big tests. Intimate ones: analyze image → read critique → submit 1 HITL note → re-run same image.
+
+You're validating: Does FRAMED change *how* it thinks (confidence, tone), not just what it says?
+
+```powershell
+python scripts/run_hitl_micro_loop.py --image_path stress_test_master/dataset_v2/ambiguous/v2_ambiguous_001.jpg
+```
+
+Or by image_id:
+```powershell
+python scripts/run_hitl_micro_loop.py --dataset_path stress_test_master/dataset_v2 --image_id ambiguous_v2_ambiguous_001
+```
+
+After HITL, re-run the same image and check: confidence delta, critique change, hypothesis count. If it works on 2–3 images, you've succeeded.
+
+---
+
+## Phase 10 — Lock the learning boundary ✅
+
+See **HITL_LIMITS.md**. It contains: Max influence radius, No confidence increases, Signature-scoped only, No prompt mutation, No retroactive belief rewriting. This is FRAMED's constitution for HITL. Code must enforce it.
 
 ---
 

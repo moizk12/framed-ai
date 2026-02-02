@@ -1,0 +1,95 @@
+{
+  "image_id": "street_v2_street_004",
+  "category": "street",
+  "failed": false,
+  "error": null,
+  "visual_evidence": {
+    "organic_growth": {
+      "green_coverage": 0.000125,
+      "green_locations": "minimal",
+      "green_clusters": 0,
+      "salience": "minimal",
+      "evidence": [
+        "green_coverage=0.000",
+        "green_clusters=0",
+        "spatial_distribution=minimal"
+      ],
+      "confidence": 0.5
+    },
+    "material_condition": {
+      "surface_roughness": 0.00624075062776336,
+      "edge_degradation": 0.7644536737059,
+      "texture_variance": 0.00624075062776336,
+      "color_uniformity": 0.907478928565979,
+      "condition": "degraded",
+      "evidence": [
+        "texture_variance=0.006",
+        "edge_degradation=0.764",
+        "condition=degraded",
+        "color_uniformity=0.907"
+      ],
+      "confidence": 0.8
+    },
+    "organic_integration": {
+      "overlap_ratio": 0.9,
+      "proximity_ratio": 1.0,
+      "relationship": "reclamation",
+      "integration_level": "high",
+      "evidence": [
+        "overlap_ratio=0.900",
+        "proximity_ratio=1.000",
+        "relationship=reclamation"
+      ],
+      "confidence": 0.95
+    },
+    "overall_confidence": 0.75,
+    "validation": {
+      "is_valid": true,
+      "warnings": [
+        "Contradiction: Reclamation relationship but minimal green coverage"
+      ],
+      "issues": []
+    },
+    "negative_evidence": {
+      "no_human_presence": true,
+      "no_motion_detected": false,
+      "no_artificial_surface_uniformity": false,
+      "evidence": "YOLO: no person, CLIP: no human terms, emotion: no human subject"
+    }
+  },
+  "core_interpretation": {
+    "confidence": 0.55,
+    "primary": "A degraded man-made surface with strong edge breakdown; either subtle biological reclamation (lichen/moss/roots) or non-organic peeling/coating failure producing similar patterns.",
+    "uncertainty_acknowledged": true,
+    "alternatives": [
+      "A degraded painted or coated surface where peeling, cracking, and edge breakdown create patterns that mimic organic reclamation (false positive organic integration)",
+      "A rough, crumbling surface with soil/dust/grime accumulation in cracks and edges, misread as 'organic reclamation' due to where debris collects"
+    ]
+  },
+  "evidence_alignment": {
+    "hallucination_detected": false,
+    "visual_evidence_used": true
+  },
+  "learning_impact": {
+    "memory_updated": true,
+    "new_pattern_stored": true
+  },
+  "mentor_integrity": {
+    "mentor_drift": false
+  },
+  "reflection_diagnostics": {
+    "contradiction_score": 1.0,
+    "invented_facts_score": 1.0,
+    "uncertainty_acknowledged": false,
+    "generic_language_score": 1.0,
+    "overconfidence_score": 1.0,
+    "mentor_drift_score": 1.0,
+    "hypothesis_suppression_score": 0.3,
+    "confidence_language_score": 1.0,
+    "quality_score": 0.7875,
+    "requires_regeneration": false
+  },
+  "critique": "[Critique generation returned empty response]",
+  "pattern_signature": "311d665723791d17",
+  "condensed": true
+}

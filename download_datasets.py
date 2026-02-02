@@ -129,7 +129,7 @@ def download_unsplash_sample(output_dir: str, category: str, count: int = 10):
         "street": [
             "https://images.unsplash.com/photo-1449824913935-59a10b8d2000",  # Street
             "https://images.unsplash.com/photo-1514565131-fce0801e5785",  # Urban
-            "https://images.unsplash.com/photo-1449824913935-59a10b8d2000",  # City
+            "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df",  # City
         ],
         "portraits": [
             "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d",  # Portrait
@@ -213,21 +213,29 @@ def create_sample_images(output_dir: str):
     
     categories = {
         "architecture": ["building", "structure", "facade"],
+        "interiors": ["room", "indoor", "hall"],
         "nature": ["forest", "landscape", "tree"],
         "street": ["street", "urban", "city"],
         "portraits": ["person", "face", "portrait"],
         "ambiguous": ["abstract", "minimal", "conceptual"],
-        "mixed": ["mixed", "complex", "scene"]
+        "mixed": ["mixed", "complex", "scene"],
+        "artistic": ["artistic", "creative", "expressive"],
     }
     
     created = 0
-    for category, keywords in categories.items():
+    for cat_idx, (category, keywords) in enumerate(categories.items()):
         cat_path = output_path / category
         cat_path.mkdir(parents=True, exist_ok=True)
         
         for i, keyword in enumerate(keywords, 1):
-            # Create a simple colored image
-            img = Image.new('RGB', (800, 600), color=(100 + i*50, 150 + i*30, 200 - i*20))
+            # Unique pixel pattern per image to guarantee different SHA256
+            r = 50 + (cat_idx * 37 + i * 11) % 200
+            g = 50 + (cat_idx * 53 + i * 17) % 200
+            b = 50 + (cat_idx * 71 + i * 23) % 200
+            img = Image.new('RGB', (800, 600), color=(r, g, b))
+            # Add unique marker pixel to prevent any collision
+            px = img.load()
+            px[cat_idx * 10 % 800, i * 10 % 600] = (255 - r, 255 - g, 255 - b)
             filename = f"sample_{keyword}_{i:03d}.jpg"
             img.save(cat_path / filename, "JPEG")
             created += 1
@@ -255,7 +263,7 @@ def main():
     output_path.mkdir(parents=True, exist_ok=True)
     
     # Create category directories
-    categories = ["architecture", "street", "nature", "portraits", "ambiguous", "mixed"]
+    categories = ["architecture", "interiors", "street", "nature", "portraits", "ambiguous", "mixed", "artistic"]
     for category in categories:
         (output_path / category).mkdir(exist_ok=True)
     
@@ -279,9 +287,13 @@ def main():
         print("\n--- Option 3: LFW Full Dataset ---")
         lfw_count = download_lfw_full(output_dir)
     
-    # Option 3: Create sample images (fallback)
+    # Option 4: Create sample images (fallback or to fill missing categories)
     if coco_count == 0 and unsplash_total == 0 and lfw_count == 0:
         print("\n--- Option 4: Creating Sample Images (Fallback) ---")
+        create_sample_images(output_dir)
+    else:
+        # Fill missing categories (interiors, ambiguous, mixed, artistic) with samples
+        print("\n--- Filling Missing Categories with Sample Images ---")
         create_sample_images(output_dir)
     
     # Summary
