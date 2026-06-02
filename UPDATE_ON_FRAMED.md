@@ -1102,5 +1102,28 @@ The system now "sees → understands → decides → speaks," with visual eviden
 
 ---
 
-*Last Updated: 2026-01-31*  
+## Phase D — Comment hygiene (engineering checklist)
+
+**Scope:** `#` comments and docstrings in `.py` files. Do not edit LLM prompt string literals here unless product asks for copy changes.
+
+**Remove or shorten:** roadmap filler (`Phase N:`, `STEP 4.x:`, `Fix #N:`) when it adds no invariant; tutorial voice; first-person *we* in comments; redundant `====` banners that only repeat the next symbol name.
+
+**Keep:** short *what* / *why* for non-obvious behavior (lazy clients, GPU caps, schema invariants, deployment constraints).
+
+**Grep helpers (run from repo root):**
+
+```text
+rg "#.*Phase [0-9]" framed/
+rg "STEP [0-9]|Fix #" framed/
+rg "#.*\bwe\b" framed/ -i
+rg "CRITICAL|⚠️|✅" framed/ --glob "*.py"
+```
+
+**File priority for passes:** `framed/analysis/vision.py`, `framed/analysis/intelligence_core.py`, then `routes.py`, `expression_layer.py`, `critique.py`, remaining `framed/analysis/*.py`, `scripts/*.py`.
+
+**Stage timings (optional):** set `FRAMED_LOG_STAGE_TIMINGS=true` to log `run_full_analysis` and `critique_expression_reflection` durations from `/analyze` (see `framed/analysis/stage_timing.py`, `SPEED_AND_EFFICIENCY_ACTION_STEPS.md`).
+
+---
+
+*Last Updated: 2026-04-04*  
 *Version: Reasoning-First Architecture v1.1*

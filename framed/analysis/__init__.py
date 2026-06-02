@@ -1,9 +1,4 @@
-"""
-FRAMED Analysis Module
-Computer vision and AI analysis tools
-
-⚠️ CRITICAL FILE - Makes 'analysis' a proper Python package
-"""
+"""FRAMED analysis package: vision pipeline, schema, intelligence, expression."""
 
 from .vision import (
     analyze_image,
@@ -22,10 +17,8 @@ from .schema import (
     normalize_to_schema
 )
 
-# Intelligence Core (Phase 1)
 from .intelligence_core import framed_intelligence
 
-# Temporal Memory (Phase 2)
 from .temporal_memory import (
     create_pattern_signature,
     store_interpretation,
@@ -36,14 +29,12 @@ from .temporal_memory import (
     format_temporal_memory_for_intelligence,
 )
 
-# Expression Layer (Phase 3)
 from .expression_layer import (
     generate_poetic_critique,
     apply_mentor_hierarchy,
     integrate_self_correction,
 )
 
-# Learning System (Phase 4)
 from .learning_system import (
     recognize_patterns,
     learn_implicitly,
@@ -62,9 +53,7 @@ __all__ = [
     'generate_merged_critique',
     'generate_remix_prompt',
     'ensure_directories',
-    # Intelligence Core
     'framed_intelligence',
-    # Temporal Memory
     'create_pattern_signature',
     'store_interpretation',
     'query_memory_patterns',
@@ -72,11 +61,9 @@ __all__ = [
     'format_evolution_history_for_prompt',
     'track_user_trajectory',
     'format_temporal_memory_for_intelligence',
-    # Expression Layer
     'generate_poetic_critique',
     'apply_mentor_hierarchy',
     'integrate_self_correction',
-    # Learning System
     'recognize_patterns',
     'learn_implicitly',
     'calibrate_explicitly',

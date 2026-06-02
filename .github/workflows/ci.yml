@@ -18,6 +18,6 @@ jobs:
       - name: Lint (ruff - non-blocking initially)
         run: ruff check . --output-format=github || true
       - name: Security (bandit)
-        run: bandit -r app || true
+        run: bandit -r framed -q || true
       - name: Tests
         run: pytest -q

@@ -1,27 +1,4 @@
-"""
-FRAMED Temporal Memory System
-
-Memory that learns and evolves over time.
-Stores reasoning patterns, not just results.
-Tracks evolution of both FRAMED and the user.
-
-🔒 CRITICAL INVARIANT:
-Learning must NEVER happen inside the LLM.
-All learning, memory, and evolution must land in this memory layer.
-
-This ensures:
-- Models are swappable
-- Progress is permanent
-- Evolution is cumulative
-
-Key Functions:
-- create_pattern_signature: Create hashable signature from evidence
-- store_interpretation: Store interpretation in temporal memory (with confidence decay, evolution tracking, correction ingestion)
-- query_memory_patterns: Find similar past interpretations
-- get_evolution_history: Get "I used to think X, now I think Y" records
-- format_evolution_history_for_prompt: Format evolution for LLM prompts
-- track_user_trajectory: Track user's themes, patterns, evolution
-"""
+"""Temporal memory and user trajectory (no learning inside the LLM)."""
 
 import os
 import json
@@ -32,10 +9,6 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
-
-# ========================================================
-# MEMORY STORAGE CONFIGURATION
-# ========================================================
 
 # Memory file path (under centralized runtime directory)
 DEFAULT_BASE_DATA_DIR = os.path.join(tempfile.gettempdir(), "framed")
@@ -49,10 +22,6 @@ MAX_INTERPRETATIONS_PER_PATTERN = 1000
 # Maximum patterns to keep in memory
 MAX_PATTERNS = 10000
 
-
-# ========================================================
-# PATTERN SIGNATURE CREATION
-# ========================================================
 
 def create_pattern_signature(
     visual_evidence: Dict[str, Any],
@@ -107,10 +76,6 @@ def create_pattern_signature(
         # Return a fallback signature based on timestamp
         return hashlib.sha256(str(datetime.now().isoformat()).encode()).hexdigest()[:16]
 
-
-# ========================================================
-# MEMORY STORAGE AND LOADING
-# ========================================================
 
 def load_temporal_memory() -> Dict[str, Any]:
     """
@@ -245,7 +210,7 @@ def store_interpretation(
         pattern = memory["patterns"][signature]
         past_interpretations = pattern.get("interpretations", [])
         
-        # === EVOLUTION TRACKING: "I Used to Think X, Now I Think Y" ===
+        # Track changes in recognition text over time.
         if past_interpretations:
             # Get the most recent interpretation
             latest = past_interpretations[-1]
@@ -279,7 +244,7 @@ def store_interpretation(
                 
                 logger.info(f"Evolution recorded: '{old_what_i_see[:50]}...' -> '{new_what_i_see[:50]}...'")
         
-        # === CONFIDENCE DECAY: Apply decay to old interpretations ===
+        # Apply light time decay to older confidences.
         # Decay factor: 0.95 per month (5% decay per month)
         # Applied when storing new interpretation
         current_date = datetime.now()
@@ -301,7 +266,7 @@ def store_interpretation(
                     # Invalid date, skip decay
                     pass
         
-        # === CORRECTION INGESTION: Apply user feedback if present ===
+        # Apply explicit user feedback adjustment.
         if user_feedback:
             # User feedback recalibrates confidence
             if user_feedback.get("missed_the_point"):
@@ -339,10 +304,6 @@ def store_interpretation(
         logger.error(f"Failed to store interpretation: {e}", exc_info=True)
         return False
 
-
-# ========================================================
-# EVOLUTION HISTORY RETRIEVAL
-# ========================================================
 
 def get_evolution_history(signature: str) -> List[Dict[str, Any]]:
     """
@@ -708,10 +669,6 @@ def track_user_trajectory(
             "last_updated": datetime.now().isoformat()
         }
 
-
-# ========================================================
-# MEMORY FORMATTING FOR INTELLIGENCE CORE
-# ========================================================
 
 def format_temporal_memory_for_intelligence(
     signature: str,

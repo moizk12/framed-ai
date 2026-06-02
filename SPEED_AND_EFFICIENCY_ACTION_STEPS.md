@@ -68,6 +68,10 @@
 
 ## Tier 2 — Good Impact, Low Risk
 
+### Request-stage logging (measurement)
+
+Set **`FRAMED_LOG_STAGE_TIMINGS=true`** on the host to emit structured log lines for major stages on `POST /analyze` (full analysis vs. critique/expression/reflection), via `framed/analysis/stage_timing.py`. Use this to confirm parallel perception and combined layers behavior in production without adding profiler overhead.
+
 ### 4. Ensure analysis cache is used on HF
 
 **Current:** Cache key is file hash; `disable_cache` is not set in routes, so cache is used when the same image bytes are seen again. On HF, the first upload of an image is always cold.

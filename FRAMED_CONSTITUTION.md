@@ -238,16 +238,16 @@ All LLM prompts must:
 ## 🧪 Regression Test Reference
 
 When testing FRAMED, verify:
-1. ✅ No learning happens in LLM prompts
-2. ✅ Visual evidence > text inference > stylistic voice
-3. ✅ Uncertainty is acknowledged when confidence < 0.65
-4. ✅ No historical claims without evidence
-5. ✅ No human presence invented
-6. ✅ No emotional temperature contradictions
-7. ✅ No generic language
-8. ✅ Evolution is tracked in memory, not LLM
-9. ✅ Reflection loop catches contradictions
-10. ✅ Mentor voice principles are followed
+1. No learning happens in LLM prompts
+2. Visual evidence > text inference > stylistic voice
+3. Uncertainty is acknowledged when confidence < 0.65
+4. No historical claims without evidence
+5. No human presence invented
+6. No emotional temperature contradictions
+7. No generic language
+8. Evolution is tracked in memory, not LLM
+9. Reflection loop catches contradictions
+10. Mentor voice principles are followed
 
 ---
 

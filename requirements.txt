@@ -1,4 +1,6 @@
 flask
+flask-cors
+gunicorn
 openai
 Pillow
 torch

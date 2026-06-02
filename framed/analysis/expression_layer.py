@@ -1,17 +1,4 @@
-"""
-FRAMED Expression Layer (Model B)
-
-Transforms structured intelligence output into poetic critique.
-Uses Model B (Expression) - warm, articulate, human.
-
-Key Functions:
-- generate_poetic_critique: Transform intelligence output into poetic critique
-- apply_mentor_hierarchy: Determine observations, questions, or challenges
-- integrate_self_correction: Integrate evolutionary self-correction into critique
-
-Expression cache: keyed by (intelligence_output, mentor_mode, HITL calibration state).
-Bump EXPRESSION_CACHE_VERSION or change HITL calibration to invalidate cache.
-"""
+"""Model B: intelligence JSON to poetic critique. Cache keyed by intelligence hash + mentor_mode + HITL calibration mtime; bump EXPRESSION_CACHE_VERSION to invalidate."""
 
 import json
 import logging

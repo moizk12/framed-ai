@@ -1,0 +1,6 @@
+{
+    "chat.mcp.discovery.enabled": {
+        "cursor-global": true
+    },
+    "chat.renderRelatedFiles": true
+}

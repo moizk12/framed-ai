@@ -2,9 +2,6 @@
 """
 Calibration Protocol Runner
 
-Step 8.2 / 8.4: Run FRAMED on calibration micro-set (expression ON).
-Phase 9: Run stability test on fresh batch (no HITL).
-
 Usage:
   python scripts/run_calibration_protocol.py step_8_2
   python scripts/run_calibration_protocol.py step_8_4 --run_dir path/to/run_8_2
@@ -29,7 +26,7 @@ def run_step_8_2():
         "--shuffle", "--seed", "42",
         "--disable_cache",
     ]
-    print("Step 8.2 — Run FRAMED normally (expression ON)")
+    print("Run calibration micro-set (expression ON)")
     print(f"  Dataset: {CALIBRATION_SET}")
     print(f"  Command: {' '.join(cmd)}\n")
     return subprocess.call(cmd, cwd=str(PROJECT_ROOT))
@@ -43,7 +40,7 @@ def run_step_8_4(run_dir: str = None):
         "--shuffle", "--seed", "42",
         "--disable_cache",
     ]
-    print("Step 8.4 — Re-run same images (post-HITL)")
+    print("Re-run calibration micro-set (post-feedback)")
     print(f"  Dataset: {CALIBRATION_SET}")
     if run_dir:
         print(f"  Compare with: {run_dir}\n")
@@ -52,7 +49,7 @@ def run_step_8_4(run_dir: str = None):
 
 
 def run_phase_9():
-    """Phase 9 — HITL stability test: fresh 20–30 image batch, NO HITL feedback."""
+    """Stability test: fresh batch (no feedback)."""
     cmd = [
         sys.executable, "-m", "framed.tests.test_intelligence_pipeline",
         "--dataset_path", str(STRESS_SET),
@@ -60,7 +57,7 @@ def run_phase_9():
         "--shuffle", "--seed", "99",
         "--disable_cache",
     ]
-    print("Phase 9 — HITL stability test (fresh batch, no feedback)")
+    print("Stability test (fresh batch, no feedback)")
     print(f"  Dataset: {STRESS_SET} (25 images)")
     print(f"  Command: {' '.join(cmd)}\n")
     return subprocess.call(cmd, cwd=str(PROJECT_ROOT))

@@ -1,7 +1,8 @@
-# top of routes.py
 from flask import Blueprint, render_template, request, jsonify, current_app
-import os, uuid
+import os, uuid, time
 from werkzeug.utils import secure_filename
+
+from framed.analysis.stage_timing import log_stage_done
 
 from framed.analysis.vision import (
     run_full_analysis,
@@ -9,7 +10,7 @@ from framed.analysis.vision import (
     save_echo_memory,
     update_echo_memory,
     ask_echo,
-    generate_merged_critique,   # ✅ was missing
+    generate_merged_critique,
     client
 )
 
@@ -21,13 +22,8 @@ def allowed_file(filename: str) -> bool:
 
 def clean_result_for_ui(result: dict) -> dict:
     """
-    Phase II: Reads from canonical schema structure.
-    
-    Presentation-only sanitizer that builds a gentle, UI-focused view
-    from the canonical schema without mutating the core analysis output.
-
-    - Never modifies `result` in-place
-    - Omits internal error/debug structures
+    Presentation-only sanitizer: UI-focused view from canonical schema without mutating `result`.
+    Omits internal error/debug structures
     - Reads from canonical schema structure
     - Provides evidence annotations (measured values) instead of interpretations
     """
@@ -125,7 +121,7 @@ main = Blueprint(
     __name__,
     template_folder="../templates",
     static_folder="../static",
-    static_url_path="/static"  # ✅ consistent static URL
+    static_url_path="/static",
 )
 
 @main.route("/")
@@ -138,7 +134,6 @@ def upload():
 
 @main.post("/analyze")
 def analyze():
-    # Debug: Log incoming request data
     current_app.logger.info(f"FILES: {list(request.files.keys())}")
     current_app.logger.info(f"FORM: {dict(request.form)}")
     
@@ -147,11 +142,10 @@ def analyze():
 
     if not file or file.filename == "":
         current_app.logger.warning(f"No file uploaded. Available keys: {list(request.files.keys())}")
-        return jsonify({"error": "No file was received. Try choosing an image and letting FRAMED breathe with it again."}), 400
+        return jsonify({"error": "No file received."}), 400
     if not allowed_file(file.filename):
-        return jsonify({"error": "FRAMED can only read common image formats (JPEG, PNG, WEBP, TIFF, BMP)."}), 400
+        return jsonify({"error": "Unsupported file type. Use JPEG, PNG, WEBP, TIFF, or BMP."}), 400
 
-    # ✅ Use centralized runtime directory from vision.py
     from framed.analysis.vision import UPLOAD_DIR
     upload_dir = UPLOAD_DIR
     os.makedirs(upload_dir, exist_ok=True)
@@ -162,18 +156,17 @@ def analyze():
 
     try:
         file.save(image_path)
-        
-        # Generate photo_id and pass filename for canonical schema
-        photo_id = str(uuid.uuid4())
-        analysis_result = run_full_analysis(image_path, photo_id=photo_id, filename=safe_name)
 
-        # Build a presentation-friendly view without mutating the core result
+        photo_id = str(uuid.uuid4())
+        t_request = time.perf_counter()
+        t_pipeline = time.perf_counter()
+        analysis_result = run_full_analysis(image_path, photo_id=photo_id, filename=safe_name)
+        log_stage_done("run_full_analysis", t_request, t_pipeline)
+
         ui_view = clean_result_for_ui(analysis_result)
         response_payload = dict(analysis_result)
-        
-        # === EXPRESSION LAYER (Model B) ===
-        # Phase 3: Expression Layer - Transform intelligence output into poetic critique
-        # Use new expression layer if intelligence output is available, otherwise fallback to legacy
+
+        t_critique = time.perf_counter()
         intelligence_output = analysis_result.get("intelligence", {})
         
         if intelligence_output and intelligence_output.get("recognition", {}).get("what_i_see"):
@@ -223,7 +216,6 @@ def analyze():
             if ui_view:
                 ui_view["critique"] = critique
         
-        # Phase 5: Reflection loop (self-validation)
         try:
             from framed.analysis.reflection import reflect_on_critique
             
@@ -283,12 +275,12 @@ def analyze():
                     response_payload["reflection_report"] = {**reflection, "requires_regeneration": False, "downgraded_to_tentative": True}
         except Exception as e:
             current_app.logger.warning(f"Reflection loop failed (non-fatal): {e}")
-            # Don't fail the request - reflection is optional
-        
+
+        log_stage_done("critique_expression_reflection", t_request, t_critique)
+
         if ui_view:
             response_payload["_ui"] = ui_view
-        
-        # Note: update_echo_memory is now called inside run_full_analysis
+
         return jsonify(response_payload)
     except Exception as e:
         current_app.logger.exception("Analysis failed")
@@ -304,7 +296,7 @@ def analyze():
 @main.post("/reset")
 def reset():
     save_echo_memory([])
-    return jsonify({"ok": True, "message":"ECHO history cleared"})
+    return jsonify({"ok": True, "message": "History cleared"})
 
 @main.post("/ask-echo")
 def ask_echo_route():
@@ -312,10 +304,10 @@ def ask_echo_route():
         payload = request.get_json(force=True) or {}
         question = payload.get("question","").strip()
         if not question:
-            return jsonify({"error":"Missing 'question'"}), 400
+            return jsonify({"error": "Missing 'question'"}), 400
         mem = load_echo_memory()
         answer = ask_echo(question, mem, client)
         return jsonify({"answer": answer})
     except Exception as e:
         current_app.logger.exception("ECHO failed")
-        return jsonify({"error": f"ECHO error: {e}"}), 500
+        return jsonify({"error": f"Echo error: {e}"}), 500

@@ -1,14 +1,4 @@
-"""
-FRAMED Learning System
-
-Implicit learning with explicit calibration.
-Learns by observation, calibrates with explicit feedback.
-
-Key Functions:
-- recognize_patterns: Identify patterns in user's work and FRAMED's interpretations
-- learn_implicitly: Learn from observation (no explicit feedback needed)
-- calibrate_explicitly: Calibrate from explicit feedback (rare but powerful)
-"""
+"""Learning utilities: pattern summaries, implicit updates, explicit calibration hooks."""
 
 import logging
 from typing import Dict, Any, Optional, List
@@ -24,10 +14,6 @@ from .temporal_memory import (
 
 logger = logging.getLogger(__name__)
 
-
-# ========================================================
-# PATTERN RECOGNITION
-# ========================================================
 
 def recognize_patterns(
     analysis_history: List[Dict[str, Any]],
@@ -211,10 +197,6 @@ def identify_growth_edges(
     return growth_edges[:5]  # Limit to top 5
 
 
-# ========================================================
-# IMPLICIT LEARNING
-# ========================================================
-
 def learn_implicitly(
     analysis_result: Dict[str, Any],
     intelligence_output: Dict[str, Any],
@@ -276,10 +258,6 @@ def learn_implicitly(
         logger.error(f"Implicit learning failed: {e}", exc_info=True)
         return False
 
-
-# ========================================================
-# EXPLICIT CALIBRATION
-# ========================================================
 
 def calibrate_explicitly(
     user_feedback: Dict[str, Any],
@@ -366,10 +344,6 @@ def calibrate_explicitly(
         return False
 
 
-# ========================================================
-# HITL FEEDBACK (Human-in-the-Loop Calibration)
-# ========================================================
-
 def ingest_hitl_feedback() -> int:
     """
     Process human-in-the-loop feedback from hitl_feedback.jsonl into calibration.
@@ -394,10 +368,6 @@ def ingest_hitl_feedback() -> int:
         return 0
 
 
-# ========================================================
-# FEEDBACK INGESTION (Test-Driven Learning)
-# ========================================================
-
 def ingest_test_feedback(
     evidence_signature: str,
     issue_type: str,
@@ -408,11 +378,7 @@ def ingest_test_feedback(
     """
     Ingest feedback from test failures without training models.
     
-    Golden Rule:
-    ❌ Never teach FRAMED "what the image is"
-    ✅ Teach FRAMED "when it should be less confident"
-    
-    This calibrates confidence, not content.
+    Golden rule: calibrate confidence, not content.
     
     Args:
         evidence_signature: Pattern signature from create_pattern_signature()
@@ -609,37 +575,13 @@ def ingest_human_correction(
         return False
 
 
-# ========================================================
-# PATTERN MEMORY UPDATES
-# ========================================================
-
 def update_pattern_memory(
     analysis_result: Dict[str, Any],
     intelligence_output: Dict[str, Any],
     user_history: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    """
-    Update pattern memory with new patterns learned.
-    
-    This is called implicitly during learning to update
-    the pattern memory with new insights.
-    
-    Args:
-        analysis_result: Current analysis result
-        intelligence_output: Current intelligence output
-        user_history: User trajectory and patterns
-    
-    Returns:
-        bool: True on success, False on error
-    """
+    """Reserved for future pattern-memory updates (currently handled by temporal_memory)."""
     try:
-        # This is handled by temporal_memory.store_interpretation()
-        # This function is a placeholder for future pattern memory enhancements
-        
-        # For now, pattern memory is updated via:
-        # - temporal_memory.store_interpretation() (stores interpretations)
-        # - temporal_memory.track_user_trajectory() (tracks user patterns)
-        
         return True
     
     except Exception as e:

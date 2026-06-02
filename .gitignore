@@ -20,6 +20,8 @@ static/uploads/
 # Build
 dist/
 build/
-r e p o _ a u d i t . p s 1 
- 
+
+# Local eval artifacts
+eval_outputs/
+
  

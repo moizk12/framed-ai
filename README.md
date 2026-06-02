@@ -93,6 +93,15 @@ python run.py
 
 The application will be available at `http://127.0.0.1:7860`
 
+#### Performance knobs (HF + local)
+
+- **FRAMED_DATA_DIR**: Base writable data dir (caches, uploads, memory). On Hugging Face Spaces use `/data/framed`.
+- **FRAMED_PERCEPTION_WORKERS**: Parallel perception worker cap (lower if you hit GPU/CPU pressure).
+- **FRAMED_LOG_STAGE_TIMINGS**: Set to `true` to log per-request stage timings.
+- **FRAMED_COMBINED_LAYERS_2_7**: Set to `true` (default) to combine layers 2–7 into one reasoning call; falls back to separate calls if needed.
+
+Cold-start invariant: `/health` should not trigger model weight loads (CLIP/YOLO/NIMA) or OpenAI client initialization.
+
 #### Sample Images
 
 Try these types of images for interesting results:
@@ -222,6 +231,13 @@ The constraint: simple hosting, no user API keys, low RAM targets; evolve into s
 | `UPLOAD_DIR` | Directory for uploaded images | No | `/data/uploads` |
 | `SECRET_KEY` | Flask secret key (change in production!) | No | `dev-secret-key-change-in-production` |
 
+### LM Studio (default local LLM)
+
+1. Open **LM Studio**, download/load **Qwen2.5-VL-7B-Instruct** (or align `MODEL_CONFIGS` / `FRAMED_LOCAL_MODEL_*` with the exact id shown under **Local Server**).
+2. Start the local server (default **http://localhost:1234**).
+3. Defaults: `FRAMED_MODEL_A` and `FRAMED_MODEL_B` are `LOCAL_QWEN25_VL_7B` (see `.env.example`). Optional: set both to `LOCAL_GEMMA4_E4B` for Gemma, or override model id strings with `FRAMED_LOCAL_MODEL_A` / `FRAMED_LOCAL_MODEL_B`.
+4. `FRAMED_STRICT_LOCAL=true` makes missing server/model a hard error (no silent fallback).
+
 ### Feature Flags
 
 - **DeepFace**: Set `DEEPFACE_ENABLE=true` to enable facial emotion analysis (requires `deepface` package)
@@ -257,17 +273,25 @@ framed-ai/
 
 ## 🧪 Testing
 
-Run the import test to verify all dependencies are correctly installed:
-
 ```bash
-python test_imports.py
+pytest -q
 ```
 
-Run the basic sanity test:
+Health check only:
 
 ```bash
-pytest tests/test_sanity.py
+pytest tests/test_health.py -q
 ```
+
+### Local model A/B (optional)
+
+With LM Studio running and a vision model loaded:
+
+```bash
+python scripts/ab_test_local_models.py --image path/to/your.jpg
+```
+
+Outputs are saved under `eval_outputs/`.
 
 ---
 
@@ -301,21 +325,14 @@ docker run -p 7860:7860 -e OPENAI_API_KEY=your_key framed-ai
 
 ---
 
-## 🗺️ Roadmap
+## Future ideas
 
-### Phase 2 (Planned)
-- **ECHO Graph**: Unsupervised learning with UMAP/K-Means to cluster photos and discover patterns
-- **Intent Lens → Assignment Cards**: Generate PDF assignment cards with signed ProofLens manifests
-- **Remix Lab 3.0**: Enhanced shoot plans with PDF export
-- **Mentor Selector**: Choose from different mentor personalities (Balanced/Gentle/Radical/Philosopher/Curator)
-- **Rate Limits & Caching**: Hosted protections and performance optimizations
-
-### Phase 3 (Future)
-- Team/community features
-- Mobile/PWA capture assistant
-- Plugin system for custom analyzers
-- Personal model adaptation
-- Anonymized usage statistics
+- ECHO clustering/graph view
+- Assignment cards + export
+- Remix improvements
+- More mentor voices
+- Hosted protections (rate limits, caching)
+- Mobile/PWA helper, plugins
 
 ---
 

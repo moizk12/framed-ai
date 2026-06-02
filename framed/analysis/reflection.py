@@ -1,14 +1,4 @@
-"""
-FRAMED Reflection Loop (Self-Validation)
-
-This module implements post-critique self-validation to catch:
-- Contradictions with reasoner conclusions
-- Invented facts
-- Ignored uncertainty
-- Generic language
-
-Key Principle: "Validate before output" - catch mistakes before they reach the user.
-"""
+"""Post-critique validation: contradictions, invented facts, uncertainty, generic language."""
 
 import logging
 from typing import Dict, Any
@@ -80,39 +70,29 @@ def reflect_on_critique(
         evidence_chain = primary.get("evidence_chain", [])
         alternatives = reasoner_output.get("alternatives", [])
     
-    # === CHECK 1: Contradiction with Reasoner ===
     contradiction_score = check_contradiction(critique_lower, primary_conclusion, reasoner_output, is_intelligence_format)
     
-    # === CHECK 2: Invented Facts ===
     invented_facts_score = check_invented_facts(critique_lower, reasoner_output, evidence_chain, is_intelligence_format)
     
-    # === CHECK 3: Ignored Uncertainty ===
     uncertainty_acknowledged = check_uncertainty_acknowledgment(critique_lower, requires_uncertainty)
     
-    # === CHECK 4: Generic Language ===
     generic_score = check_generic_language(critique_lower, primary_conclusion)
     
-    # === CHECK 5: Overconfidence Detection ===
     overconfidence_score = check_overconfidence(critique_lower, reasoner_output, is_intelligence_format)
     
-    # === CHECK 6: Drift from Mentor Philosophy ===
     mentor_drift_score = check_mentor_philosophy_drift(critique_lower)
 
-    # === CHECK 7: Hypothesis Suppression (multi-hypothesis required but only one in output) ===
     hypothesis_suppression_score = 1.0
     if is_intelligence_format:
         require_multi = reasoner_output.get("require_multiple_hypotheses", False)
         penalize_diversity = reasoner_output.get("hypothesis_diversity", {}).get("penalize_hypothesis_diversity", False)
         if require_multi:
-            # Check if critique mentions alternatives, tension, or multiple readings
             tension_phrases = ["alternative", "another reading", "could also be", "or perhaps", "either...or", "tension", "ambiguity", "both", "plausible", "tentative"]
             mentions_alternatives = any(p in critique_lower for p in tension_phrases)
-            hypothesis_suppression_score = 1.0 if mentions_alternatives else 0.3  # Fail if no acknowledgment
-            # If alternatives were semantic variants, soften penalty (less bad to not mention rephrasings)
+            hypothesis_suppression_score = 1.0 if mentions_alternatives else 0.3
             if penalize_diversity and not mentions_alternatives:
                 hypothesis_suppression_score = max(hypothesis_suppression_score, 0.55)
 
-    # === CHECK 8: Confidence-Language Mismatch (low conf + definitive language) ===
     confidence_language_score = 1.0
     if is_intelligence_format:
         rec = reasoner_output.get("recognition", {})
