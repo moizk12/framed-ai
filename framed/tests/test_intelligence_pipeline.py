@@ -147,6 +147,7 @@ class IntelligencePipelineTester:
                     result["finalization_diagnostics"] = {
                         "regen_count": finalized["regen_count"],
                         "downgraded_to_tentative": finalized["downgraded_to_tentative"],
+                        "vocab_guard_triggered": finalized.get("vocab_guard_triggered", False),
                     }
 
             result["critique"] = critique

@@ -2,7 +2,10 @@
 
 from unittest.mock import patch
 
-from framed.analysis.critique_finalization import finalize_critique_with_reflection
+from framed.analysis.critique_finalization import (
+    check_vocab_guard,
+    finalize_critique_with_reflection,
+)
 
 _REASONER = {
     "recognition": {"what_i_see": "weathered stone surface", "confidence": 0.7, "evidence": ["stone"]},
@@ -60,3 +63,31 @@ def test_skips_when_no_reasoner():
     out = finalize_critique_with_reflection("text", {})
     assert out["reflection_report"] is None
     assert out["regen_count"] == 0
+
+
+def test_vocab_guard_detects_banned_terms():
+    rules = ["Do not over-poeticize this."]
+    assert check_vocab_guard("the soil whisper of winter", rules) is True
+    assert check_vocab_guard("a tapestry of time", rules) is True
+    assert check_vocab_guard("a silent symphony of nature", rules) is True
+    assert check_vocab_guard("plain factual description", rules) is False
+
+
+def test_vocab_guard_downgrades_when_rules_active():
+    rules = ["Do not over-poeticize this."]
+    with patch("framed.analysis.critique_finalization._reflect") as mock_reflect:
+        mock_reflect.return_value = {"requires_regeneration": False, "quality_score": 0.9}
+        with patch("framed.analysis.critique_finalization._active_correction_rules", return_value=rules):
+            out = finalize_critique_with_reflection("earthy tones whisper across stone", _REASONER)
+    assert out["vocab_guard_triggered"] is True
+    assert out["downgraded_to_tentative"] is True
+    assert out["critique"].startswith("One plausible reading is:")
+
+
+def test_vocab_guard_inactive_without_rules():
+    with patch("framed.analysis.critique_finalization._reflect") as mock_reflect:
+        mock_reflect.return_value = {"requires_regeneration": False, "quality_score": 0.9}
+        with patch("framed.analysis.critique_finalization._active_correction_rules", return_value=[]):
+            out = finalize_critique_with_reflection("earthy tones whisper across stone", _REASONER)
+    assert out["vocab_guard_triggered"] is False
+    assert "whisper" in out["critique"]

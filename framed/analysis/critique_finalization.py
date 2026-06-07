@@ -4,9 +4,67 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable, Dict, Optional
+import re
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+_BANNED_OVER_POETIC = re.compile(
+    r"\b(whispers?|tapestry|symphony|soul|ethereal|silent conversation)\b", re.I
+)
+
+
+def _active_correction_rules() -> List[str]:
+    try:
+        from framed.analysis.interpretive_memory import get_active_rules
+        return list(get_active_rules() or [])
+    except Exception as exc:
+        logger.debug("correction rules unavailable: %s", exc)
+        return []
+
+
+def _rules_want_anti_poetic(rules: List[str]) -> bool:
+    for rule in rules:
+        lower = rule.lower()
+        if "over-poetic" in lower or "over_poetic" in lower or "over poetic" in lower:
+            return True
+    return False
+
+
+def check_vocab_guard(critique: str, rules: Optional[List[str]] = None) -> bool:
+    """Return True if critique violates anti-over-poetic guard when rules are active."""
+    rules = rules if rules is not None else _active_correction_rules()
+    if not _rules_want_anti_poetic(rules):
+        return False
+    return bool(_BANNED_OVER_POETIC.search(critique))
+
+
+def _tentative_critique(
+    intelligence_output: Dict[str, Any],
+    interpretive_conclusions: Dict[str, Any],
+) -> str:
+    primary = (
+        intelligence_output.get("recognition", {}).get("what_i_see")
+        or interpretive_conclusions.get("primary_interpretation", {}).get("conclusion", "")
+    )
+    return (
+        f"One plausible reading is: {primary[:200]}... "
+        "This interpretation remains tentative; the evidence supports multiple readings."
+    )
+
+
+def _apply_downgrade(
+    intelligence_output: Dict[str, Any],
+    interpretive_conclusions: Dict[str, Any],
+    reflection: Dict[str, Any],
+    *,
+    vocab_guard: bool = False,
+) -> Tuple[str, Dict[str, Any], bool]:
+    critique = _tentative_critique(intelligence_output, interpretive_conclusions)
+    report = {**reflection, "requires_regeneration": False, "downgraded_to_tentative": True}
+    if vocab_guard:
+        report["vocab_guard_triggered"] = True
+    return critique, report, True
 
 
 def _reflect(critique: str, intelligence_output: Dict[str, Any], interpretive_conclusions: Optional[Dict[str, Any]], hitl_penalty: float):
@@ -40,6 +98,7 @@ def finalize_critique_with_reflection(
             "reflection_report": None,
             "regen_count": 0,
             "downgraded_to_tentative": False,
+            "vocab_guard_triggered": False,
         }
 
     if intelligence_output.get("recognition", {}).get("what_i_see"):
@@ -78,21 +137,21 @@ def finalize_critique_with_reflection(
         regen_count += 1
 
     downgraded_to_tentative = False
+    vocab_guard_triggered = False
     if reflection.get("requires_regeneration", False) and regen_count >= max_regenerations:
-        primary = (
-            intelligence_output.get("recognition", {}).get("what_i_see")
-            or interpretive_conclusions.get("primary_interpretation", {}).get("conclusion", "")
+        critique, reflection, downgraded_to_tentative = _apply_downgrade(
+            intelligence_output, interpretive_conclusions, reflection
         )
-        critique = (
-            f"One plausible reading is: {primary[:200]}... "
-            "This interpretation remains tentative; the evidence supports multiple readings."
+    elif check_vocab_guard(critique):
+        vocab_guard_triggered = True
+        critique, reflection, downgraded_to_tentative = _apply_downgrade(
+            intelligence_output, interpretive_conclusions, reflection, vocab_guard=True
         )
-        reflection = {**reflection, "requires_regeneration": False, "downgraded_to_tentative": True}
-        downgraded_to_tentative = True
 
     return {
         "critique": critique,
         "reflection_report": reflection,
         "regen_count": regen_count,
         "downgraded_to_tentative": downgraded_to_tentative,
+        "vocab_guard_triggered": vocab_guard_triggered,
     }
