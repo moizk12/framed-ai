@@ -48,19 +48,29 @@ def load_dataset(dataset_path: str, shuffle: bool = True, seed: Optional[int] = 
         raise FileNotFoundError(f"Dataset path not found: {dataset_path}")
 
     records = []
+    image_exts = (".jpg", ".jpeg", ".png", ".webp", ".avif")
     categories = ["architecture", "interiors", "street", "portraits", "nature", "mixed", "ambiguous", "artistic"]
-    for cat in categories:
-        cat_path = base / cat
-        if not cat_path.exists():
-            continue
+
+    def _scan_folder(cat: str, cat_path: Path) -> None:
         for f in cat_path.iterdir():
-            if f.suffix.lower() in (".jpg", ".jpeg", ".png"):
+            if f.is_file() and f.suffix.lower() in image_exts:
                 image_id = f"{cat}_{f.stem}"
                 records.append({
                     "image_id": image_id,
                     "image_path": str(f),
                     "category": cat,
                 })
+
+    for cat in categories:
+        cat_path = base / cat
+        if cat_path.exists():
+            _scan_folder(cat, cat_path)
+
+    # Fallback: eval sets with custom category subfolders (e.g. memory_consolidation_v1)
+    if not records:
+        for cat_path in sorted(base.iterdir()):
+            if cat_path.is_dir() and cat_path.name not in ("corrections", "baseline_runs", "post_patch_runs"):
+                _scan_folder(cat_path.name, cat_path)
 
     if shuffle and seed is not None:
         random.seed(seed)

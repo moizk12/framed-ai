@@ -485,6 +485,72 @@ def get_pattern_statistics(signature: str) -> Dict[str, Any]:
 
 
 # ========================================================
+# CONSOLIDATION (IC_0013)
+# ========================================================
+
+SEMANTIC_SUMMARY_CAP = 3
+
+
+def _feedback_weight(entry: Dict[str, Any]) -> float:
+    fb = entry.get("user_feedback") or {}
+    if isinstance(fb, dict):
+        if fb.get("felt_exactly_right"):
+            return 2.0
+        if fb.get("missed_the_point"):
+            return 0.5
+    return 1.0
+
+
+def consolidate_pattern_history(signature: str, dry_run: bool = False) -> Dict[str, Any]:
+    """
+    Merge episodic temporal interpretations into capped semantic summaries.
+    Marks superseded entries status=consolidated (non-destructive).
+    """
+    result = {"consolidated": False, "disagreements_resolved": 0, "signature": signature}
+    try:
+        memory = load_temporal_memory()
+        pattern = memory.get("patterns", {}).get(signature)
+        if not pattern:
+            return result
+
+        interpretations = pattern.get("interpretations", [])
+        active = [e for e in interpretations if e.get("status") != "consolidated"]
+        if len(active) <= SEMANTIC_SUMMARY_CAP:
+            return result
+
+        # Rank by feedback weight then confidence
+        ranked = sorted(
+            active,
+            key=lambda e: (_feedback_weight(e), e.get("confidence", 0.0)),
+            reverse=True,
+        )
+        keepers = ranked[:SEMANTIC_SUMMARY_CAP]
+        keeper_ids = {id(e) for e in keepers}
+
+        distinct = set()
+        for e in keepers:
+            interp = e.get("interpretation", {})
+            rec = interp.get("recognition", {})
+            distinct.add(rec.get("what_i_see", "")[:100])
+        result["disagreements_resolved"] = max(0, len(active) - len(distinct) - 1)
+
+        for e in interpretations:
+            if id(e) in keeper_ids:
+                e["status"] = "semantic_summary"
+            elif e.get("status") != "consolidated":
+                e["status"] = "consolidated"
+
+        result["consolidated"] = True
+        if not dry_run:
+            save_temporal_memory(memory)
+        return result
+    except Exception as e:
+        logger.error(f"consolidate_pattern_history failed for {signature}: {e}", exc_info=True)
+        result["error"] = str(e)
+        return result
+
+
+# ========================================================
 # USER TRAJECTORY TRACKING
 # ========================================================
 

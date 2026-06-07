@@ -22,6 +22,7 @@ DEFAULT_BASE_DATA_DIR = os.path.join(tempfile.gettempdir(), "framed")
 BASE_DATA_DIR = os.getenv("FRAMED_DATA_DIR", DEFAULT_BASE_DATA_DIR)
 MEMORY_DIR = os.path.join(BASE_DATA_DIR, "interpretive_memory")
 MEMORY_FILE = os.path.join(MEMORY_DIR, "pattern_memory.json")
+RULES_FILE = os.path.join(MEMORY_DIR, "correction_rules.json")
 
 # Ensure memory directory exists
 os.makedirs(MEMORY_DIR, exist_ok=True)
@@ -165,7 +166,8 @@ def query_memory_patterns(pattern_signature: Dict[str, Any],
 def store_interpretation(pattern_signature: Dict[str, Any],
                         chosen_interpretation: str,
                         confidence: float,
-                        user_feedback: Optional[str] = None):
+                        user_feedback: Optional[str] = None,
+                        failure_mode_tag: Optional[str] = None):
     """
     Store an interpretation decision in memory.
     
@@ -182,8 +184,11 @@ def store_interpretation(pattern_signature: Dict[str, Any],
         "chosen_interpretation": chosen_interpretation,
         "confidence": confidence,
         "user_feedback": user_feedback,
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "status": "episodic",
     }
+    if failure_mode_tag:
+        entry["failure_mode_tag"] = failure_mode_tag
     
     memory.append(entry)
     save_memory(memory)
@@ -279,3 +284,73 @@ def update_pattern_confidence(pattern_signature: Dict[str, Any],
         logger.info(f"Updated {updated} memory entries with feedback: {user_feedback}")
     else:
         logger.warning(f"No matching patterns found for feedback update")
+
+
+def _load_correction_rules() -> List[Dict[str, Any]]:
+    if not os.path.exists(RULES_FILE):
+        return []
+    try:
+        with open(RULES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else data.get("rules", [])
+    except Exception as e:
+        logger.warning(f"Failed to load correction rules: {e}")
+        return []
+
+
+def _save_correction_rules(rules: List[Dict[str, Any]]) -> None:
+    os.makedirs(MEMORY_DIR, exist_ok=True)
+    with open(RULES_FILE, "w", encoding="utf-8") as f:
+        json.dump({"rules": rules, "last_updated": datetime.utcnow().isoformat() + "Z"}, f, indent=2)
+
+
+def promote_correction_rule(
+    failure_mode: str,
+    correction_note: str,
+    pattern_signature: Dict[str, Any],
+    image_id: Optional[str] = None,
+) -> bool:
+    """Promote a Moiz correction to a durable, inspectable rule."""
+    if not correction_note:
+        return False
+    rules = _load_correction_rules()
+    rule = {
+        "failure_mode": failure_mode,
+        "correction_note": correction_note,
+        "pattern_signature": pattern_signature,
+        "image_id": image_id,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "status": "active",
+    }
+    rules.append(rule)
+    _save_correction_rules(rules)
+    store_interpretation(
+        pattern_signature,
+        chosen_interpretation=correction_note,
+        confidence=0.9,
+        user_feedback="moiz_correction",
+        failure_mode_tag=failure_mode,
+    )
+    logger.info("Promoted correction rule: %s (%s)", failure_mode, image_id)
+    return True
+
+
+def list_unconsolidated_entries(limit: int = 200) -> List[Dict[str, Any]]:
+    memory = load_memory()
+    out = [e for e in memory if e.get("status") not in ("consolidated", "semantic_summary")]
+    return out[:limit]
+
+
+def get_active_rules(failure_mode: Optional[str] = None) -> List[str]:
+    """Return active correction notes, optionally filtered by failure_mode."""
+    rules = _load_correction_rules()
+    notes = []
+    for r in rules:
+        if r.get("status") != "active":
+            continue
+        if failure_mode and r.get("failure_mode") != failure_mode:
+            continue
+        note = r.get("correction_note")
+        if note:
+            notes.append(note)
+    return notes
