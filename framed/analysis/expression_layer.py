@@ -244,6 +244,17 @@ def generate_poetic_critique(
 - You MUST acknowledge uncertainty. Do not smooth over ambiguity.
 - If disagreement exists between visual and semantic signals, name it.
 """
+
+        rules_section = ""
+        try:
+            from framed.analysis.interpretive_memory import get_active_rules
+            active_rules = get_active_rules()
+            if active_rules:
+                rules_section = "\n**CORRECTION RULES (must follow):**\n" + "\n".join(
+                    f"- {rule}" for rule in active_rules[:20]
+                )
+        except Exception as exc:
+            logger.debug("correction rules unavailable: %s", exc)
         
         prompt = f"""
 You are FRAMED's mentor voice. You speak with wisdom, warmth, and poetry.
@@ -256,6 +267,7 @@ DESCRIPTION: {mode_config["description"]}
 TONE: {mode_config["tone"]}
 VOICE: {mode_config["voice"]}
 {constraints_section}
+{rules_section}
 
 MENTOR INSTRUCTION:
 Transform this reasoning into a poetic critique. Speak as a mentor, not a tool.

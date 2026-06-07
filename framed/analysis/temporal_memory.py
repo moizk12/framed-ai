@@ -484,10 +484,6 @@ def get_pattern_statistics(signature: str) -> Dict[str, Any]:
         }
 
 
-# ========================================================
-# CONSOLIDATION (IC_0013)
-# ========================================================
-
 SEMANTIC_SUMMARY_CAP = 3
 
 
@@ -502,10 +498,6 @@ def _feedback_weight(entry: Dict[str, Any]) -> float:
 
 
 def consolidate_pattern_history(signature: str, dry_run: bool = False) -> Dict[str, Any]:
-    """
-    Merge episodic temporal interpretations into capped semantic summaries.
-    Marks superseded entries status=consolidated (non-destructive).
-    """
     result = {"consolidated": False, "disagreements_resolved": 0, "signature": signature}
     try:
         memory = load_temporal_memory()
@@ -518,7 +510,6 @@ def consolidate_pattern_history(signature: str, dry_run: bool = False) -> Dict[s
         if len(active) <= SEMANTIC_SUMMARY_CAP:
             return result
 
-        # Rank by feedback weight then confidence
         ranked = sorted(
             active,
             key=lambda e: (_feedback_weight(e), e.get("confidence", 0.0)),

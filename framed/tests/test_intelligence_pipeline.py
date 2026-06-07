@@ -49,7 +49,7 @@ def load_dataset(dataset_path: str, shuffle: bool = True, seed: Optional[int] = 
 
     records = []
     image_exts = (".jpg", ".jpeg", ".png", ".webp", ".avif")
-    categories = ["architecture", "interiors", "street", "portraits", "nature", "mixed", "ambiguous", "artistic"]
+    skip_dirs = {"corrections", "baseline_runs", "post_patch_runs"}
 
     def _scan_folder(cat: str, cat_path: Path) -> None:
         for f in cat_path.iterdir():
@@ -61,16 +61,9 @@ def load_dataset(dataset_path: str, shuffle: bool = True, seed: Optional[int] = 
                     "category": cat,
                 })
 
-    for cat in categories:
-        cat_path = base / cat
-        if cat_path.exists():
-            _scan_folder(cat, cat_path)
-
-    # Fallback: eval sets with custom category subfolders (e.g. memory_consolidation_v1)
-    if not records:
-        for cat_path in sorted(base.iterdir()):
-            if cat_path.is_dir() and cat_path.name not in ("corrections", "baseline_runs", "post_patch_runs"):
-                _scan_folder(cat_path.name, cat_path)
+    for cat_path in sorted(base.iterdir()):
+        if cat_path.is_dir() and cat_path.name not in skip_dirs:
+            _scan_folder(cat_path.name, cat_path)
 
     if shuffle and seed is not None:
         random.seed(seed)

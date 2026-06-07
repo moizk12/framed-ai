@@ -112,8 +112,8 @@ class LocalOpenAICompatProvider(LLMProvider):
             "max_tokens": max_tokens,
             "temperature": temp,
         }
-        if response_format and response_format.get("type") == "json_object":
-            kwargs["response_format"] = {"type": "json_object"}
+        if response_format and response_format.get("type") not in (None, "json_object"):
+            kwargs["response_format"] = response_format
 
         try:
             resp = client.chat.completions.create(**kwargs)

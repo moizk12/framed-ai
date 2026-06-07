@@ -22,7 +22,6 @@ def load_echo_memory() -> List[Dict[str, Any]]:
 
 
 def tag_echo_entry(entry: Dict[str, Any], tag: str) -> Dict[str, Any]:
-    """Tag an echo entry for consolidation promotion."""
     tags = entry.setdefault("tags", [])
     if tag not in tags:
         tags.append(tag)
@@ -30,7 +29,6 @@ def tag_echo_entry(entry: Dict[str, Any], tag: str) -> Dict[str, Any]:
 
 
 def extract_promotion_candidates() -> List[Dict[str, Any]]:
-    """Entries tagged correction/moiz_rule that should survive truncation."""
     candidates = []
     for entry in load_echo_memory():
         tags = set(entry.get("tags", []))
@@ -45,7 +43,6 @@ def extract_promotion_candidates() -> List[Dict[str, Any]]:
 
 
 def store_correction_echo(image_id: str, correction_note: str, failure_mode: str) -> None:
-    """Store a correction in echo memory with promotion tags."""
     entry = tag_echo_entry({
         "image_id": image_id,
         "correction_note": correction_note,
@@ -75,7 +72,6 @@ def save_echo_memory(memory: List[Dict[str, Any]]) -> None:
     regular = [e for e in memory if e not in promoted]
     trimmed = regular[-ECHO_KEEP:]
     combined = promoted + trimmed
-    # Preserve order: promoted first, then recent regular
     seen = set()
     deduped = []
     for e in combined:

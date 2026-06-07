@@ -1,9 +1,4 @@
-"""
-IC_0013 — episodic → semantic memory consolidation orchestrator.
-
-Merges interpretive, temporal, and echo memory stores; promotes correction rules
-from eval manifests. Writes inspectable consolidation_log.json.
-"""
+"""Merge memory stores and promote correction rules from eval manifests."""
 
 from __future__ import annotations
 
@@ -21,7 +16,6 @@ from .runtime_paths import BASE_DATA_DIR
 logger = logging.getLogger(__name__)
 
 CONSOLIDATION_LOG_PATH = os.path.join(BASE_DATA_DIR, "consolidation_log.json")
-SEMANTIC_SUMMARY_CAP = 3
 
 
 @dataclass
@@ -93,13 +87,6 @@ def run_consolidation_pass(
     correction_manifest: Optional[Path] = None,
     dry_run: bool = False,
 ) -> ConsolidationReport:
-    """
-    1. Load interpretive + temporal + echo stores
-    2. Group by pattern signature / failure_mode tag
-    3. Merge duplicate episodic entries → semantic summaries
-    4. Promote Moiz correction_note entries to durable rules
-    5. Write consolidation_log.json under FRAMED_DATA_DIR
-    """
     from . import echo_memory as em
     from . import interpretive_memory as im
     from . import temporal_memory as tm
@@ -119,7 +106,6 @@ def run_consolidation_pass(
 
     promoted_ids: set[str] = set()
 
-    # Promote correction rules from manifest
     if correction_manifest and correction_manifest.exists():
         for slot in _load_correction_manifest(correction_manifest):
             note = slot.get("correction_note", "")
@@ -149,9 +135,7 @@ def run_consolidation_pass(
                 promoted_ids.add(image_id)
                 em.store_correction_echo(image_id, note, failure_mode)
 
-    # Echo promotion before truncation (skip ids already promoted from manifest)
-    candidates = em.extract_promotion_candidates()
-    for cand in candidates:
+    for cand in em.extract_promotion_candidates():
         image_id = cand.get("image_id") or ""
         if image_id in promoted_ids:
             continue
@@ -168,7 +152,6 @@ def run_consolidation_pass(
             report.echo_promoted += 1
             promoted_ids.add(image_id)
 
-    # Temporal pattern consolidation
     memory = tm.load_temporal_memory()
     for signature in list(memory.get("patterns", {}).keys()):
         result = tm.consolidate_pattern_history(signature, dry_run=dry_run)
@@ -176,7 +159,6 @@ def run_consolidation_pass(
             report.temporal_patterns_consolidated += 1
             report.contradictions_resolved += int(result.get("disagreements_resolved", 0))
 
-    # Interpretive duplicate merge
     merged, contradictions = _merge_interpretive_duplicates(dry_run)
     report.merged_groups = merged
     report.contradictions_resolved += contradictions

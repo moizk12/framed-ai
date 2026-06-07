@@ -310,7 +310,6 @@ def promote_correction_rule(
     pattern_signature: Dict[str, Any],
     image_id: Optional[str] = None,
 ) -> bool:
-    """Promote a Moiz correction to a durable, inspectable rule."""
     if not correction_note:
         return False
     rules = _load_correction_rules()
@@ -342,7 +341,6 @@ def list_unconsolidated_entries(limit: int = 200) -> List[Dict[str, Any]]:
 
 
 def get_active_rules(failure_mode: Optional[str] = None) -> List[str]:
-    """Return active correction notes, optionally filtered by failure_mode."""
     rules = _load_correction_rules()
     notes = []
     for r in rules:

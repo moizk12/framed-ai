@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""IC_0013 — memory consolidation smoke + manifest injection tests."""
+"""CLI tests for memory consolidation."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import tempfile
+import types
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,9 +17,6 @@ from pathlib import Path
 _project_root = Path(__file__).resolve().parents[2]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
-
-# Stub framed package so tests skip Flask app factory in framed/__init__.py
-import types
 
 if "framed" not in sys.modules:
     _framed_pkg = types.ModuleType("framed")
@@ -32,22 +30,23 @@ if "framed.analysis" not in sys.modules:
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+_CONSOLIDATION_MODULES = (
+    "framed.analysis.runtime_paths",
+    "framed.analysis.interpretive_memory",
+    "framed.analysis.temporal_memory",
+    "framed.analysis.echo_memory",
+    "framed.analysis.memory_consolidation",
+)
+
 
 def _isolated_data_dir() -> str:
-    d = tempfile.mkdtemp(prefix="framed_ic0013_")
+    d = tempfile.mkdtemp(prefix="framed_consolidation_")
     os.environ["FRAMED_DATA_DIR"] = d
     return d
 
 
 def _import_consolidation():
-    """Import after FRAMED_DATA_DIR is set (runtime_paths reads env at import)."""
-    for mod in (
-        "framed.analysis.runtime_paths",
-        "framed.analysis.interpretive_memory",
-        "framed.analysis.temporal_memory",
-        "framed.analysis.echo_memory",
-        "framed.analysis.memory_consolidation",
-    ):
+    for mod in _CONSOLIDATION_MODULES:
         sys.modules.pop(mod, None)
     from framed.analysis.memory_consolidation import run_consolidation_pass
     return run_consolidation_pass
@@ -90,34 +89,25 @@ def run_manifest(manifest_path: Path, output_dir: Path) -> dict:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    out_file = output_dir / f"ic_0013_consolidation_{ts}.json"
+    out_file = output_dir / f"consolidation_run_{ts}.json"
     out_file.write_text(json.dumps(result, indent=2), encoding="utf-8")
     logger.info("Wrote results: %s", out_file)
-    logger.info(
-        "Promoted %d rules in %.3fs",
-        len(report.promoted_rules),
-        report.duration_sec,
-    )
+    logger.info("Promoted %d rules in %.3fs", len(report.promoted_rules), report.duration_sec)
     return result
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="IC_0013 memory consolidation test")
+    default_out = Path(__file__).parent / "test_runs" / "consolidation"
+    parser = argparse.ArgumentParser(description="Memory consolidation test runner")
     parser.add_argument("--dry-run", action="store_true", help="Smoke test without writes")
     parser.add_argument("--correction-manifest", type=str, default=None)
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=r"C:\Users\moizk\Music\FRAMED_AGI_Research_Starter\FRAMED_AGI_Research_Starter\local_lab\archdaemon\status\ic_0013_results",
-        help="Directory for JSON result artifacts",
-    )
+    parser.add_argument("--output-dir", type=str, default=str(default_out))
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
 
     if args.dry_run:
-        result = run_dry_run()
-        print(json.dumps(result, indent=2))
+        print(json.dumps(run_dry_run(), indent=2))
         return
 
     if args.correction_manifest:
@@ -128,7 +118,7 @@ def main() -> None:
         result = run_manifest(manifest, output_dir)
         print(json.dumps({"status": "ok", "promoted": len(result["report"]["promoted_rules"])}, indent=2))
         if result["report"]["duration_sec"] > 60:
-            logger.warning("FAIL metric: consolidation exceeded 60s")
+            logger.warning("consolidation exceeded 60s")
             sys.exit(2)
         return
 
