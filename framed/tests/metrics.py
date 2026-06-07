@@ -16,6 +16,8 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     multi_hyp_count = 0
     disagreement_count = 0
     reflection_regeneration_count = 0
+    finalization_regen_count = 0
+    downgrade_count = 0
     plausibility_low_count = 0
     hypothesis_diversity_penalized_count = 0
 
@@ -41,6 +43,11 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         rd = r.get("reflection_diagnostics") or {}
         if rd.get("requires_regeneration"):
             reflection_regeneration_count += 1
+        fd = r.get("finalization_diagnostics") or {}
+        if fd.get("regen_count", 0) > 0:
+            finalization_regen_count += 1
+        if fd.get("downgraded_to_tentative"):
+            downgrade_count += 1
 
     avg_conf = sum(confidences) / n if confidences else 0.0
     var = sum((c - avg_conf) ** 2 for c in confidences) / n if n else 0.0
@@ -75,6 +82,9 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         "reflection_metrics": {
             "regeneration_required_percent": round(100.0 * reflection_regeneration_count / n, 2),
             "regeneration_count": reflection_regeneration_count,
+            "finalization_regen_percent": round(100.0 * finalization_regen_count / n, 2),
+            "finalization_regen_count": finalization_regen_count,
+            "downgrade_count": downgrade_count,
         },
         "failure_metrics": {
             "hallucination_rate": 0.0,

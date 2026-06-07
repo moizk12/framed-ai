@@ -217,62 +217,31 @@ def analyze():
                 ui_view["critique"] = critique
         
         try:
-            from framed.analysis.reflection import reflect_on_critique
-            
-            # Prefer intelligence output over old interpretive conclusions
+            from framed.analysis.critique_finalization import finalize_critique_with_reflection
+
             intelligence_output = analysis_result.get("intelligence", {})
             interpretive_conclusions = analysis_result.get("interpretive_conclusions", {})
-            
-            # Use intelligence output if available, otherwise fallback to old conclusions
-            if intelligence_output and intelligence_output.get("recognition", {}).get("what_i_see"):
-                hitl_penalty = 0.0
-                try:
-                    from framed.feedback.calibration import get_hitl_calibration
-                    hitl_penalty = get_hitl_calibration(None).get("mentor_drift_penalty", 0)
-                except Exception:
-                    pass
-                reflection = reflect_on_critique(critique, intelligence_output, hitl_mentor_drift_penalty=hitl_penalty)
-            elif interpretive_conclusions:
-                # Fallback to old interpretive conclusions
-                reflection = reflect_on_critique(critique, interpretive_conclusions)
-            else:
-                reflection = None
-            
-            if reflection:
-                response_payload["reflection_report"] = reflection
-                # Store self-assessment for governor calibration (Option 2)
-                if intelligence_output:
-                    try:
-                        from framed.analysis.self_assessment import store_self_assessment
-                        store_self_assessment(intelligence_output, reflection)
-                    except Exception:
-                        pass
+            hitl_penalty = 0.0
+            try:
+                from framed.feedback.calibration import get_hitl_calibration
+                hitl_penalty = get_hitl_calibration(None).get("mentor_drift_penalty", 0)
+            except Exception:
+                pass
 
-                # Regenerate if quality is too low (configurable; default 1). Set FRAMED_MAX_REGENERATIONS=2 to allow a second attempt.
-                max_regenerations = int(os.environ.get("FRAMED_MAX_REGENERATIONS", "1"))
-                regen_count = 0
-                while reflection.get("requires_regeneration", False) and regen_count < max_regenerations:
-                    _logger = current_app.logger
-                    _logger.warning(f"Reflection: Regenerating critique (attempt {regen_count + 1}/{max_regenerations}, quality: {reflection.get('quality_score', 0.0):.2f})")
-                    if intelligence_output and intelligence_output.get("recognition", {}).get("what_i_see"):
-                        from framed.analysis.expression_layer import generate_poetic_critique, integrate_self_correction
-                        critique = generate_poetic_critique(intelligence_output=intelligence_output, mentor_mode=mentor_mode)
-                        critique = integrate_self_correction(critique, intelligence_output.get("self_critique", {}))
-                    else:
-                        critique = generate_merged_critique(analysis_result, mentor_mode)
-                    response_payload["critique"] = critique
-                    if ui_view:
-                        ui_view["critique"] = critique
-                    reflection = reflect_on_critique(critique, intelligence_output or interpretive_conclusions, hitl_mentor_drift_penalty=hitl_penalty)
-                    response_payload["reflection_report"] = reflection
-                    regen_count += 1
-                # Kill-switch: if still failing after max_regenerations, downgrade to tentative
-                if reflection.get("requires_regeneration", False) and regen_count >= max_regenerations:
-                    primary = (intelligence_output or {}).get("recognition", {}).get("what_i_see") or (interpretive_conclusions or {}).get("primary_interpretation", {}).get("conclusion", "")
-                    response_payload["critique"] = f"One plausible reading is: {primary[:200]}... This interpretation remains tentative; the evidence supports multiple readings."
-                    if ui_view:
-                        ui_view["critique"] = response_payload["critique"]
-                    response_payload["reflection_report"] = {**reflection, "requires_regeneration": False, "downgraded_to_tentative": True}
+            finalized = finalize_critique_with_reflection(
+                critique,
+                intelligence_output,
+                interpretive_conclusions=interpretive_conclusions,
+                analysis_result=analysis_result,
+                mentor_mode=mentor_mode,
+                hitl_mentor_drift_penalty=hitl_penalty,
+            )
+            if finalized.get("reflection_report"):
+                critique = finalized["critique"]
+                response_payload["critique"] = critique
+                response_payload["reflection_report"] = finalized["reflection_report"]
+                if ui_view:
+                    ui_view["critique"] = critique
         except Exception as e:
             current_app.logger.warning(f"Reflection loop failed (non-fatal): {e}")
 

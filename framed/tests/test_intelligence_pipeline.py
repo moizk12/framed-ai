@@ -90,8 +90,8 @@ class IntelligencePipelineTester:
 
         try:
             from framed.analysis.vision import analyze_image
-            from framed.analysis.expression_layer import generate_poetic_critique
-            from framed.analysis.reflection import reflect_on_critique
+            from framed.analysis.critique_finalization import finalize_critique_with_reflection
+            from framed.analysis.expression_layer import generate_poetic_critique, integrate_self_correction
 
             disable_cache = self.config.get("disable_cache", False)
 
@@ -125,24 +125,31 @@ class IntelligencePipelineTester:
 
             critique = None
             if not self.config.get("disable_expression", False) and intelligence:
-                critique = generate_poetic_critique(intelligence_output=intelligence, mentor_mode="Balanced Mentor")
+                mentor_mode = self.config.get("mentor_mode", "Balanced Mentor")
+                critique = generate_poetic_critique(intelligence_output=intelligence, mentor_mode=mentor_mode)
                 if critique:
+                    critique = integrate_self_correction(critique, intelligence.get("self_critique", {}))
                     hitl_penalty = 0.0
                     try:
                         from framed.feedback.calibration import get_hitl_calibration
                         hitl_penalty = get_hitl_calibration(None).get("mentor_drift_penalty", 0)
                     except Exception:
                         pass
-                    reflection = reflect_on_critique(critique, intelligence, hitl_mentor_drift_penalty=hitl_penalty)
-                    result["reflection_diagnostics"] = reflection
-                    # Store self-assessment for governor calibration (Option 2)
-                    try:
-                        from framed.analysis.self_assessment import store_self_assessment
-                        store_self_assessment(intelligence, reflection)
-                    except Exception:
-                        pass
+                    finalized = finalize_critique_with_reflection(
+                        critique,
+                        intelligence,
+                        analysis_result=analysis_result,
+                        mentor_mode=mentor_mode,
+                        hitl_mentor_drift_penalty=hitl_penalty,
+                    )
+                    critique = finalized["critique"]
+                    result["reflection_diagnostics"] = finalized["reflection_report"]
+                    result["finalization_diagnostics"] = {
+                        "regen_count": finalized["regen_count"],
+                        "downgraded_to_tentative": finalized["downgraded_to_tentative"],
+                    }
 
-            result["critique"] = critique  # Include gpt-5-mini output in saved results
+            result["critique"] = critique
             result["full_analysis"] = analysis_result
             result["pattern_signature"] = analysis_result.get("pattern_signature", "")  # For HITL feedback
             result["condensed"] = True
