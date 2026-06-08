@@ -80,8 +80,8 @@ def test_vocab_guard_downgrades_when_rules_active():
         with patch("framed.analysis.critique_finalization._active_correction_rules", return_value=rules):
             out = finalize_critique_with_reflection("earthy tones whisper across stone", _REASONER)
     assert out["vocab_guard_triggered"] is True
-    assert out["downgraded_to_tentative"] is True
-    assert out["critique"].startswith("One plausible reading is:")
+    assert out["downgraded_to_tentative"] is False
+    assert "whisper" not in out["critique"].lower()
 
 
 def test_vocab_guard_inactive_without_rules():

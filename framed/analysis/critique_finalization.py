@@ -10,7 +10,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 _BANNED_OVER_POETIC = re.compile(
-    r"\b(whispers?|tapestry|symphony|soul|ethereal|silent conversation)\b", re.I
+    r"\b(whisper(?:s|ing|ed)?|tapestry|symphony|soul|ethereal|silent conversation)\b",
+    re.I,
 )
 
 
@@ -39,6 +40,47 @@ def check_vocab_guard(critique: str, rules: Optional[List[str]] = None) -> bool:
     return bool(_BANNED_OVER_POETIC.search(critique))
 
 
+def _is_inside_quotes(text: str, start_idx: int) -> bool:
+    # Straight quotes: inside if odd number of `"` before the match.
+    straight_inside = (text[:start_idx].count('"') % 2) == 1
+    # Curly quotes: inside if we've seen an opening “ without its closing ”.
+    curly_inside = text[:start_idx].count("“") > text[:start_idx].count("”")
+    return straight_inside or curly_inside
+
+
+def sanitize_banned_vocab(critique: str) -> Tuple[str, bool]:
+    """Replace banned terms with non-banned alternatives.
+
+    Returns: (sanitized_critique, changed)
+    """
+    replacements = {
+        "tapestry": "pattern",
+        "symphony": "composition",
+        "soul": "inner presence",
+        "ethereal": "delicate",
+        "silent conversation": "quiet exchange",
+    }
+
+    changed = False
+
+    def _repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        if _is_inside_quotes(critique, match.start()):
+            return match.group(0)
+
+        term = match.group(0).lower()
+        if term.startswith("whisper"):
+            changed = True
+            return "subtle suggestion"
+        if term in replacements:
+            changed = True
+            return replacements[term]
+        return match.group(0)
+
+    out = _BANNED_OVER_POETIC.sub(_repl, critique)
+    return out, changed
+
+
 def _tentative_critique(
     intelligence_output: Dict[str, Any],
     interpretive_conclusions: Dict[str, Any],
@@ -62,8 +104,6 @@ def _apply_downgrade(
 ) -> Tuple[str, Dict[str, Any], bool]:
     critique = _tentative_critique(intelligence_output, interpretive_conclusions)
     report = {**reflection, "requires_regeneration": False, "downgraded_to_tentative": True}
-    if vocab_guard:
-        report["vocab_guard_triggered"] = True
     return critique, report, True
 
 
@@ -144,9 +184,12 @@ def finalize_critique_with_reflection(
         )
     elif check_vocab_guard(critique):
         vocab_guard_triggered = True
-        critique, reflection, downgraded_to_tentative = _apply_downgrade(
-            intelligence_output, interpretive_conclusions, reflection, vocab_guard=True
-        )
+        critique, changed = sanitize_banned_vocab(critique)
+        # If terms were quoted and left intact, fall back to downgrade.
+        if not changed or _BANNED_OVER_POETIC.search(critique):
+            critique, reflection, downgraded_to_tentative = _apply_downgrade(
+                intelligence_output, interpretive_conclusions, reflection
+            )
 
     return {
         "critique": critique,
