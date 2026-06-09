@@ -6,6 +6,12 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+# IC_0015-A: domain guard thresholds (reclamation leak fix)
+MIN_GREEN_FOR_RECLAMATION = 0.05
+MIN_GREEN_FOR_ORGANIC_SALIENCE = 0.03
+EDGE_DEGRADED_THRESHOLD = 0.60
+LOW_TEXTURE_THRESHOLD = 0.02
+
 def detect_organic_growth(image_path):
     """
     Detect organic growth (vegetation, ivy, moss, plants) using HSV color thresholds.
@@ -222,6 +228,8 @@ def detect_material_condition(image_path):
             condition = "weathered"  # Rough texture + degraded edges
         elif surface_roughness < 0.05 and edge_degradation < 0.2:
             condition = "pristine"  # Smooth texture + sharp edges
+        elif edge_degradation > EDGE_DEGRADED_THRESHOLD and surface_roughness < LOW_TEXTURE_THRESHOLD:
+            condition = "neutral"  # IC_0015-A: edge density alone is not weathering
         elif surface_roughness > 0.2 or edge_degradation > 0.6:
             condition = "degraded"  # Very rough or very degraded
         else:
@@ -353,19 +361,36 @@ def detect_organic_integration(image_path, green_mask=None, structure_edges=None
         
         green_pixels = np.sum(green_mask > 0)
         overlap_pixels = np.sum(overlap > 0)
-        
+        total_pixels = h * w
+        green_coverage = green_pixels / total_pixels if total_pixels > 0 else 0.0
+
         if green_pixels > 0:
             overlap_ratio = overlap_pixels / green_pixels
         else:
             overlap_ratio = 0.0
-        
+
+        # IC_0015-A: insufficient green — no reclamation/integration inference
+        if green_coverage < MIN_GREEN_FOR_RECLAMATION:
+            return {
+                "overlap_ratio": float(overlap_ratio),
+                "proximity_ratio": 0.0,
+                "relationship": "none",
+                "integration_level": "none",
+                "green_coverage": float(green_coverage),
+                "evidence": [
+                    f"green_coverage={green_coverage:.3f}",
+                    "domain_guard:integration_suppressed",
+                ],
+                "confidence": 0.3,
+            }
+
         # Also check proximity (green near structure, even if not directly overlapping)
         # Dilate structure edges to create a "nearby" zone
         dilated_edges = cv2.dilate(structure_edges, np.ones((15, 15), np.uint8), iterations=1)
         proximity_mask = cv2.bitwise_and(green_mask, dilated_edges)
         proximity_pixels = np.sum(proximity_mask > 0)
         proximity_ratio = proximity_pixels / green_pixels if green_pixels > 0 else 0.0
-        
+
         # Relationship inference
         if overlap_ratio > 0.6 or proximity_ratio > 0.8:
             relationship = "reclamation"  # Organic on/around structure
@@ -523,6 +548,55 @@ def extract_places365_signals(image_path):
         return {}
 
 
+def apply_domain_guard(visual_evidence):
+    """
+    IC_0015-A: Suppress organic-growth / reclamation signals when domain cues are absent.
+    Prevents edge-density and sparse-green noise from becoming default interpretation.
+    """
+    og = dict(visual_evidence.get("organic_growth") or {})
+    mc = dict(visual_evidence.get("material_condition") or {})
+    oi = dict(visual_evidence.get("organic_integration") or {})
+
+    gc = float(og.get("green_coverage", 0.0) or 0.0)
+    rel = oi.get("relationship", "none")
+
+    if gc < MIN_GREEN_FOR_ORGANIC_SALIENCE:
+        og["applicable"] = False
+        og["salience"] = "minimal"
+        og["suppressed_reason"] = "green_coverage_below_threshold"
+    else:
+        og["applicable"] = True
+
+    if gc < MIN_GREEN_FOR_RECLAMATION and rel in ("reclamation", "integration"):
+        oi["relationship"] = "none"
+        oi["integration_level"] = "none"
+        oi["confidence"] = min(float(oi.get("confidence", 0.5)), 0.3)
+        evidence = list(oi.get("evidence") or [])
+        if "domain_guard:integration_suppressed" not in evidence:
+            evidence.append("domain_guard:integration_suppressed")
+        oi["evidence"] = evidence
+        oi["suppressed_reason"] = "green_coverage_below_threshold"
+
+    cond = mc.get("condition", "unknown")
+    edge_deg = float(mc.get("edge_degradation", 0.0) or 0.0)
+    rough = float(mc.get("surface_roughness", 0.0) or 0.0)
+
+    if gc < MIN_GREEN_FOR_ORGANIC_SALIENCE:
+        if cond == "degraded" and edge_deg > EDGE_DEGRADED_THRESHOLD and rough < LOW_TEXTURE_THRESHOLD:
+            mc["condition"] = "not_applicable"
+            mc["confidence"] = min(float(mc.get("confidence", 0.8)), 0.4)
+            mc["suppressed_reason"] = "edge_density_not_weathering"
+        elif cond in ("degraded", "weathered") and gc < 0.01:
+            mc["condition"] = "neutral"
+            mc["suppressed_reason"] = "no_organic_context_for_material"
+
+    visual_evidence["organic_growth"] = og
+    visual_evidence["material_condition"] = mc
+    visual_evidence["organic_integration"] = oi
+    visual_evidence["domain_guard_applied"] = True
+    return visual_evidence
+
+
 def validate_visual_evidence(visual_evidence, min_confidence=0.60):
     """
     Validate visual evidence quality and detect potential issues.
@@ -577,9 +651,12 @@ def validate_visual_evidence(visual_evidence, min_confidence=0.60):
     if green_coverage > 0.3 and condition == "pristine":
         validation["warnings"].append("Contradiction: High organic growth but pristine condition - may indicate error")
     
-    if green_coverage < 0.05 and organic_integration.get("relationship") == "reclamation":
-        validation["warnings"].append("Contradiction: Reclamation relationship but minimal green coverage")
-    
+    if green_coverage < MIN_GREEN_FOR_RECLAMATION and organic_integration.get("relationship") == "reclamation":
+        validation["issues"].append(
+            "Contradiction: Reclamation relationship but minimal green coverage (domain guard should have suppressed)"
+        )
+        validation["is_valid"] = False
+
     return validation
 
 
@@ -735,8 +812,10 @@ def extract_visual_features(image_path):
             "organic_integration": organic_integration,
             "overall_confidence": overall_confidence
         }
-        
-        # Validate visual evidence
+
+        visual_evidence = apply_domain_guard(visual_evidence)
+
+        # Validate visual evidence (post-guard)
         validation = validate_visual_evidence(visual_evidence)
         visual_evidence["validation"] = validation
         
