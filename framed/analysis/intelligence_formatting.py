@@ -1,7 +1,84 @@
 # REF:D3 JSON parse + evidence strings for Model A prompts (split from intelligence_core.py)
 import json
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+_UI_YOLO_OBJECTS = frozenset({"tv", "laptop", "mouse", "keyboard", "monitor", "cell phone"})
+
+_BANNED_WHEN_SUPPRESSED = re.compile(
+    r"\b(organic growth|reclamation|ivy|weathered stone|surface weathering|weathering)\b",
+    re.I,
+)
+
+
+def organic_evidence_suppressed(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """True when IC_0015-A domain guard marked organic evidence not applicable."""
+    if not visual_evidence or not visual_evidence.get("domain_guard_applied"):
+        return False
+    og = visual_evidence.get("organic_growth") or {}
+    oi = visual_evidence.get("organic_integration") or {}
+    return og.get("applicable") is False and oi.get("relationship") in (None, "none")
+
+
+def ui_screen_scene_hint(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """Route toward screen/UI/code interpretation when signals suggest digital content."""
+    if not visual_evidence:
+        return False
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    signals = scene_gate.get("signals") or {}
+    yolo_objects = {str(o).lower() for o in (signals.get("yolo_objects") or [])}
+    if yolo_objects & _UI_YOLO_OBJECTS:
+        return True
+    places_cat = str(signals.get("places_scene_category", "")).lower()
+    green_cov = float((visual_evidence.get("organic_growth") or {}).get("green_coverage", 1.0))
+    color_uniformity = float((visual_evidence.get("material_condition") or {}).get("color_uniformity", 0.0))
+    scene_type = str(scene_gate.get("scene_type", "")).lower()
+    if places_cat == "artificial" and green_cov < 0.05:
+        return True
+    if scene_type == "interior_scene" and color_uniformity > 0.9 and green_cov < 0.05:
+        return True
+    return False
+
+
+def domain_guard_prompt_block(visual_evidence: Optional[Dict[str, Any]]) -> str:
+    """Prompt constraints when organic evidence is suppressed downstream of domain guard."""
+    if not organic_evidence_suppressed(visual_evidence):
+        return ""
+    lines: List[str] = [
+        "CONSTRAINT (domain guard):",
+        "- Do NOT interpret this image as weathered stone, ivy reclamation, or organic growth narrative.",
+        "- Do NOT mention: organic growth, reclamation, ivy, weathered stone, surface weathering unless visibly supported.",
+        "- Base primary recognition on scene_gate.scene_type and visible objects only.",
+    ]
+    if ui_screen_scene_hint(visual_evidence):
+        lines.extend(
+            [
+                "- Prefer interpretation: screen, UI, code editor, digital display, or photo-of-screen.",
+                "- Discuss layout, text readability, contrast, glare, crop — not nature or material weathering.",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def sanitize_primary_when_suppressed(primary: str, visual_evidence: Optional[Dict[str, Any]]) -> str:
+    """Safety net: strip banned organic/weathering terms from Layer 1 primary when guard active."""
+    if not primary or not organic_evidence_suppressed(visual_evidence):
+        return primary
+    if not _BANNED_WHEN_SUPPRESSED.search(primary):
+        return primary
+    cleaned = _BANNED_WHEN_SUPPRESSED.sub("", primary)
+    cleaned = re.sub(r"\b(with|and|no)\s+(significant\s+)?\s*", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,.;")
+    if len(cleaned) < 25:
+        if ui_screen_scene_hint(visual_evidence):
+            return (
+                "I see a screen or digital display showing UI or code content — "
+                "layout, text readability, contrast, and crop are the primary subjects."
+            )
+        scene_gate = visual_evidence.get("scene_gate") or {}
+        scene_type = str(scene_gate.get("scene_type", "a scene")).replace("_", " ")
+        return f"I see {scene_type} based on visible objects and scene context."
+    return cleaned
 
 
 def _safe_parse_layer_json(content: str) -> Optional[Dict[str, Any]]:
@@ -44,43 +121,81 @@ def format_visual_evidence(visual_evidence: Dict[str, Any]) -> str:
         return "No visual evidence available."
 
     lines = []
+    suppressed = organic_evidence_suppressed(visual_evidence)
 
     scene_gate = visual_evidence.get("scene_gate", {}) if isinstance(visual_evidence, dict) else {}
     if isinstance(scene_gate, dict) and scene_gate:
         scene_type = scene_gate.get("scene_type", "unknown")
         is_surface_study = bool(scene_gate.get("is_surface_study", False))
         lines.append(f"- Scene Gate: scene_type={scene_type}, is_surface_study={is_surface_study}")
-        if not is_surface_study:
+        signals = scene_gate.get("signals") or {}
+        yolo_objects = signals.get("yolo_objects") or []
+        if yolo_objects:
+            lines.append(f"- Visible objects: {', '.join(str(o) for o in yolo_objects[:8])}")
+        clip_caption = signals.get("clip_caption")
+        if clip_caption:
+            lines.append(f"- CLIP scene caption: \"{clip_caption}\"")
+        if suppressed:
+            if ui_screen_scene_hint(visual_evidence):
+                lines.append(
+                    "- SCENE ROUTING: screen/UI/code-like content — interpret layout, readability, glare, crop, contrast."
+                )
+            else:
+                lines.append(
+                    "- IMPORTANT: Scene depiction — do NOT center recognition on weathered stone, reclamation, or organic growth."
+                )
+        elif not is_surface_study:
             lines.append(
                 "- IMPORTANT: This appears to be a scene depiction. Treat material_condition / organic_integration as background-only metrics; "
                 "do NOT center recognition on 'weathered stone / reclamation'."
             )
 
-    organic_growth = visual_evidence.get("organic_growth", {})
-    if organic_growth:
-        green_coverage = organic_growth.get("green_coverage", 0.0)
-        salience = organic_growth.get("salience", "minimal")
-        green_locations = organic_growth.get("green_locations", "none")
-        confidence = organic_growth.get("confidence", 0.0)
-        lines.append(f"- Organic Growth: coverage={green_coverage:.3f}, salience={salience}, locations={green_locations} (confidence: {confidence:.2f})")
+    if suppressed:
+        material_condition = visual_evidence.get("material_condition", {}) or {}
+        condition = material_condition.get("condition", "neutral")
+        lines.extend(
+            [
+                "Visual evidence (domain guard active):",
+                "- Organic growth: NOT APPLICABLE (insufficient visible green; do not infer ivy/reclamation)",
+                f"- Material surface: {condition} / not a weathering study",
+                "- Scene focus: use scene_gate and visible objects, not surface-reclamation narrative",
+            ]
+        )
+    else:
+        organic_growth = visual_evidence.get("organic_growth", {})
+        if organic_growth:
+            green_coverage = organic_growth.get("green_coverage", 0.0)
+            salience = organic_growth.get("salience", "minimal")
+            green_locations = organic_growth.get("green_locations", "none")
+            confidence = organic_growth.get("confidence", 0.0)
+            lines.append(
+                f"- Organic Growth: coverage={green_coverage:.3f}, salience={salience}, "
+                f"locations={green_locations} (confidence: {confidence:.2f})"
+            )
 
-    is_surface_study = bool(scene_gate.get("is_surface_study", True)) if isinstance(scene_gate, dict) else True
-    if is_surface_study:
-        material_condition = visual_evidence.get("material_condition", {})
-        if material_condition:
-            condition = material_condition.get("condition", "unknown")
-            surface_roughness = material_condition.get("surface_roughness", 0.0)
-            edge_degradation = material_condition.get("edge_degradation", 0.0)
-            confidence = material_condition.get("confidence", 0.0)
-            lines.append(f"- Material Condition: {condition}, roughness={surface_roughness:.3f}, edge_degradation={edge_degradation:.3f} (confidence: {confidence:.2f})")
+        is_surface_study = bool(scene_gate.get("is_surface_study", True)) if isinstance(scene_gate, dict) else True
+        if is_surface_study:
+            material_condition = visual_evidence.get("material_condition", {})
+            if material_condition:
+                condition = material_condition.get("condition", "unknown")
+                surface_roughness = material_condition.get("surface_roughness", 0.0)
+                edge_degradation = material_condition.get("edge_degradation", 0.0)
+                confidence = material_condition.get("confidence", 0.0)
+                lines.append(
+                    f"- Material Condition: {condition}, roughness={surface_roughness:.3f}, "
+                    f"edge_degradation={edge_degradation:.3f} (confidence: {confidence:.2f})"
+                )
 
-        organic_integration = visual_evidence.get("organic_integration", {})
-        if organic_integration:
-            relationship = organic_integration.get("relationship", "none")
-            integration_level = organic_integration.get("integration_level", "none")
-            overlap_ratio = organic_integration.get("overlap_ratio", 0.0)
-            confidence = organic_integration.get("confidence", 0.0)
-            lines.append(f"- Organic Integration: relationship={relationship}, level={integration_level}, overlap={overlap_ratio:.3f} (confidence: {confidence:.2f})")
+            organic_integration = visual_evidence.get("organic_integration", {})
+            if organic_integration:
+                relationship = organic_integration.get("relationship", "none")
+                integration_level = organic_integration.get("integration_level", "none")
+                overlap_ratio = organic_integration.get("overlap_ratio", 0.0)
+                confidence = organic_integration.get("confidence", 0.0)
+                lines.append(
+                    f"- Organic Integration: relationship={relationship}, level={integration_level}, "
+                    f"overlap={overlap_ratio:.3f} (confidence: {confidence:.2f})"
+                )
 
     overall_confidence = visual_evidence.get("overall_confidence", 0.0)
     if overall_confidence > 0:

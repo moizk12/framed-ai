@@ -8,9 +8,11 @@ from typing import Dict, Any, Optional, List
 from .llm_provider import call_model_a
 from .intelligence_formatting import (
     _safe_parse_layer_json,
+    domain_guard_prompt_block,
     format_visual_evidence,
     format_temporal_memory,
     format_user_history,
+    sanitize_primary_when_suppressed,
 )
 from .ambiguity import (
     compute_plausibility,
@@ -42,13 +44,16 @@ def reason_about_recognition(
     or with hypotheses: {"hypotheses": [...], "what_i_see": primary, "alternatives": [...]}
     """
     try:
+        domain_guard_block = domain_guard_prompt_block(visual_evidence)
+        domain_guard_section = f"\n{domain_guard_block}\n" if domain_guard_block else ""
+
         if require_multiple_hypotheses:
             prompt = f"""
 You are FRAMED's recognition engine. This image has conflicting or weak signals—you MUST consider multiple interpretations.
 
 VISUAL EVIDENCE (ground truth from pixels):
 {format_visual_evidence(visual_evidence)}
-
+{domain_guard_section}
 REASONING TASK:
 Generate AT LEAST 2 plausible interpretations. Do not collapse to one. Each hypothesis must include:
 - conclusion: What you might be seeing
@@ -87,7 +92,7 @@ You are FRAMED's recognition engine. You see images with certainty, not tentativ
 
 VISUAL EVIDENCE (ground truth from pixels):
 {format_visual_evidence(visual_evidence)}
-
+{domain_guard_section}
 REASONING TASK:
 What are you seeing? Be certain, not tentative. Provide evidence for your recognition.
 
@@ -144,6 +149,16 @@ OUTPUT FORMAT (JSON):
             recognition["evidence"] = []
         if "confidence" not in recognition:
             recognition["confidence"] = 0.0
+
+        recognition["what_i_see"] = sanitize_primary_when_suppressed(
+            recognition.get("what_i_see", ""), visual_evidence
+        )
+        if require_multiple_hypotheses and recognition.get("hypotheses"):
+            for hyp in recognition["hypotheses"]:
+                if isinstance(hyp, dict) and hyp.get("conclusion"):
+                    hyp["conclusion"] = sanitize_primary_when_suppressed(
+                        hyp["conclusion"], visual_evidence
+                    )
 
         # Extract alternatives from hypotheses for reflection
         if require_multiple_hypotheses and recognition.get("hypotheses"):
