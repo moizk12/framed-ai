@@ -8,10 +8,12 @@ from typing import Dict, Any, Optional, List
 from .llm_provider import call_model_a
 from .intelligence_formatting import (
     _safe_parse_layer_json,
-    domain_guard_prompt_block,
     format_visual_evidence,
     format_temporal_memory,
     format_user_history,
+    is_screenshot_ui_scene,
+    routing_prompt_blocks,
+    sanitize_primary_screenshot,
     sanitize_primary_when_suppressed,
 )
 from .ambiguity import (
@@ -44,8 +46,8 @@ def reason_about_recognition(
     or with hypotheses: {"hypotheses": [...], "what_i_see": primary, "alternatives": [...]}
     """
     try:
-        domain_guard_block = domain_guard_prompt_block(visual_evidence)
-        domain_guard_section = f"\n{domain_guard_block}\n" if domain_guard_block else ""
+        routing_block = routing_prompt_blocks(visual_evidence)
+        domain_guard_section = f"\n{routing_block}\n" if routing_block else ""
 
         if require_multiple_hypotheses:
             prompt = f"""
@@ -106,6 +108,10 @@ SCENE ROUTING (IC_0016):
 - scene_type=interior_scene → room/interior/abandoned space; NEVER default to digital display/UI unless monitor, code, or UI elements are visibly described in evidence.
 - scene_type=street_scene → requires outdoor public-space cues (road, sidewalk, vehicles, pedestrians); mention foreground/midground/background when eval_bucket expects layered composition.
 
+SCENE ROUTING (IC_0017):
+- scene_type=screenshot_ui → screen/UI/code/webpage screenshot/photo-of-screen; primary MUST name display/UI/text/code.
+- Mentor observations for screenshot_ui MUST cover layout, readability, hierarchy, contrast, glare, crop, text density — NOT mood, symbolism, or outdoor/street/room photography.
+
 REQUIREMENTS:
 - State what you see clearly and concretely (e.g. "I see a bright living room interior with a blue sofa and plants by the window").
 - NOT tentative: "I think I see..." or "This might be..."
@@ -155,9 +161,14 @@ OUTPUT FORMAT (JSON):
         if "confidence" not in recognition:
             recognition["confidence"] = 0.0
 
-        recognition["what_i_see"] = sanitize_primary_when_suppressed(
-            recognition.get("what_i_see", ""), visual_evidence
+        recognition["what_i_see"] = sanitize_primary_screenshot(
+            sanitize_primary_when_suppressed(
+                recognition.get("what_i_see", ""), visual_evidence
+            ),
+            visual_evidence,
         )
+        if is_screenshot_ui_scene(visual_evidence):
+            recognition["_screenshot_ui"] = True
         if require_multiple_hypotheses and recognition.get("hypotheses"):
             for hyp in recognition["hypotheses"]:
                 if isinstance(hyp, dict) and hyp.get("conclusion"):
@@ -846,6 +857,12 @@ def reason_about_layers_2_7(
         user_text = format_user_history(user_history) if user_history else "No user history available."
         rec_text = recognition.get("what_i_see", "No recognition available")
         evidence_text = json.dumps(recognition.get("evidence", []), indent=2)
+        screenshot_section = ""
+        if recognition.get("_screenshot_ui"):
+            screenshot_section = """
+SCREENSHOT/UI MODE (IC_0017): mentor.observations MUST include layout, readability, text hierarchy,
+contrast, glare, crop, and screen-capture quality. Do NOT write street, room, or fine-art observations.
+"""
 
         prompt = f"""
 You are FRAMED's reasoning engine. Output layers 2–7 in one JSON. RECOGNITION IS READ-ONLY EVIDENCE. Do not modify it.
@@ -854,7 +871,7 @@ CURRENT RECOGNITION (read-only):
 "{rec_text}"
 EVIDENCE: {evidence_text}
 CONFIDENCE: {recognition.get('confidence', 0.0):.2f}
-
+{screenshot_section}
 PAST INTERPRETATIONS: {past_text}
 USER HISTORY: {user_text}
 

@@ -245,6 +245,16 @@ def generate_poetic_critique(
 - If disagreement exists between visual and semantic signals, name it.
 """
 
+        screenshot_section = ""
+        if (intelligence_output.get("recognition") or {}).get("_screenshot_ui"):
+            screenshot_section = """
+**SCREENSHOT/UI CRITIQUE MODE (IC_0017 — overrides default poetry):**
+- Write practical screen/UI critique: layout, readability, text hierarchy, contrast, glare, crop, screen-capture quality.
+- Use terms: screen, UI, interface, layout, readability, text, contrast, hierarchy, display, navigation.
+- FORBIDDEN: souls, whisper, ethereal, weathered stone, organic growth, street scene, interior mood, fine-art symbolism.
+- Tone: direct UX/design mentor reviewing a screenshot — warm but specific, not gallery placard poetry.
+"""
+
         rules_section = ""
         try:
             from framed.analysis.interpretive_memory import get_active_rules
@@ -267,6 +277,7 @@ DESCRIPTION: {mode_config["description"]}
 TONE: {mode_config["tone"]}
 VOICE: {mode_config["voice"]}
 {constraints_section}
+{screenshot_section}
 {rules_section}
 
 MENTOR INSTRUCTION:

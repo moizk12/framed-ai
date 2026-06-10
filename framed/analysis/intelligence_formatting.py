@@ -26,6 +26,16 @@ _UI_CAPTION_HINT = re.compile(
 )
 
 
+def is_screenshot_ui_scene(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """True when scene_gate or signals indicate screenshot/UI/code content (IC_0017)."""
+    if not visual_evidence:
+        return False
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    if str(scene_gate.get("scene_type", "")).lower() == "screenshot_ui":
+        return True
+    return ui_screen_scene_hint(visual_evidence)
+
+
 def ui_screen_scene_hint(visual_evidence: Optional[Dict[str, Any]]) -> bool:
     """Route toward screen/UI/code interpretation when signals suggest digital content."""
     if not visual_evidence:
@@ -46,6 +56,30 @@ def ui_screen_scene_hint(visual_evidence: Optional[Dict[str, Any]]) -> bool:
     if scene_type == "interior_scene" and yolo_objects & {"tv", "laptop", "keyboard", "mouse"}:
         return True
     return False
+
+
+def screenshot_critique_prompt_block(visual_evidence: Optional[Dict[str, Any]]) -> str:
+    """IC_0017: screenshot/UI critique routing — always when scene is screen-like."""
+    if not is_screenshot_ui_scene(visual_evidence):
+        return ""
+    return "\n".join(
+        [
+            "SCREEN/UI CRITIQUE ROUTING (IC_0017):",
+            "- Primary: screen, UI, code editor, webpage screenshot, or photo-of-screen.",
+            "- Critique MUST discuss: layout, text readability, hierarchy, contrast, glare, crop, text density, screen/photo quality.",
+            "- FORBIDDEN: fine-art mood, street/room photography framing, organic growth, weathered stone, poetic symbolism.",
+            "- Use terms: screen, UI, interface, layout, readability, text, contrast, hierarchy, crop, display, navigation.",
+        ]
+    )
+
+
+def routing_prompt_blocks(visual_evidence: Optional[Dict[str, Any]]) -> str:
+    """Combined domain-guard + screenshot routing prompt constraints."""
+    parts = [
+        domain_guard_prompt_block(visual_evidence),
+        screenshot_critique_prompt_block(visual_evidence),
+    ]
+    return "\n".join(p for p in parts if p)
 
 
 def domain_guard_prompt_block(visual_evidence: Optional[Dict[str, Any]]) -> str:
@@ -87,6 +121,25 @@ def sanitize_primary_when_suppressed(primary: str, visual_evidence: Optional[Dic
         scene_type = str(scene_gate.get("scene_type", "a scene")).replace("_", " ")
         return f"I see {scene_type} based on visible objects and scene context."
     return cleaned
+
+
+_FINE_ART_ON_SCREEN = re.compile(
+    r"\b(street\s+scene|interior\s+room|fine\s+art|gallery|weathered\s+stone|organic\s+growth|"
+    r"reclamation|ivy|poetic|ethereal|souls?)\b",
+    re.I,
+)
+
+
+def sanitize_primary_screenshot(primary: str, visual_evidence: Optional[Dict[str, Any]]) -> str:
+    """Ensure Layer 1 primary uses screen/UI language when screenshot scene is detected."""
+    if not primary or not is_screenshot_ui_scene(visual_evidence):
+        return primary
+    if _FINE_ART_ON_SCREEN.search(primary) or not _UI_CAPTION_HINT.search(primary):
+        return (
+            "I see a screen or digital display showing UI, code, or webpage content — "
+            "layout, text readability, contrast, hierarchy, and crop are the primary subjects."
+        )
+    return primary
 
 
 def _safe_parse_layer_json(content: str) -> Optional[Dict[str, Any]]:
@@ -144,7 +197,11 @@ def format_visual_evidence(visual_evidence: Dict[str, Any]) -> str:
         if clip_caption:
             lines.append(f"- CLIP scene caption: \"{clip_caption}\"")
         scene_type = str(scene_gate.get("scene_type", "unknown"))
-        if scene_type == "object_dense":
+        if scene_type == "screenshot_ui" or is_screenshot_ui_scene(visual_evidence):
+            lines.append(
+                "- SCENE ROUTING (IC_0017): screenshot/UI/code — interpret layout, readability, glare, contrast, crop; NOT street/room/fine-art."
+            )
+        elif scene_type == "object_dense":
             lines.append(
                 "- SCENE ROUTING: object-dense/workshop/clutter wall — describe tools, shelves, wall objects; NOT a street scene."
             )

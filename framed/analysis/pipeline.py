@@ -384,11 +384,26 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
             except Exception:
                 avg_saturation = None
 
+            _ui_yolo = frozenset({"tv", "laptop", "mouse", "keyboard", "monitor", "cell phone"})
+            _ui_text_tokens = (
+                "screen", "monitor", "ui", "code", "editor", "laptop", "display",
+                "interface", "text", "keyboard", "program", "website", "webpage",
+                "browser", "terminal", "software", "application", "wikipedia", "github",
+                "news", "reddit", "arxiv", "html", "css", "javascript",
+            )
+            has_ui_yolo = bool(set(yolo_objs) & _ui_yolo)
+            has_ui_text = any(tok in text_blob for tok in _ui_text_tokens)
+            has_ui_signal = has_ui_yolo or (
+                has_ui_text and scene_category in ("artificial", "indoor", "")
+            )
+
             scene_type = "unknown"
             if looks_painting or (looks_abstract_terms and ("painting" in text_blob or "canvas" in text_blob)):
                 scene_type = "abstract_art"
             elif avg_saturation is not None and avg_saturation > 0.50 and num_people == 0 and num_vehicles == 0 and not num_buildings:
                 scene_type = "abstract_art"
+            elif has_ui_signal and not has_street_cues and num_vehicles == 0:
+                scene_type = "screenshot_ui"
             elif num_people > 0:
                 scene_type = "people_scene"
             elif (
@@ -419,6 +434,7 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 "street_scene",
                 "landscape_scene",
                 "object_dense",
+                "screenshot_ui",
             }
             is_surface_study = (not scene_is_depiction) and (edge_deg > 0.6 or rough > 0.12) and num_people == 0 and num_vehicles == 0 and not num_buildings
             if is_surface_study:

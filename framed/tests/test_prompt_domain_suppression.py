@@ -3,8 +3,12 @@
 from framed.analysis.intelligence_formatting import (
     domain_guard_prompt_block,
     format_visual_evidence,
+    is_screenshot_ui_scene,
     organic_evidence_suppressed,
+    routing_prompt_blocks,
+    sanitize_primary_screenshot,
     sanitize_primary_when_suppressed,
+    screenshot_critique_prompt_block,
     ui_screen_scene_hint,
 )
 
@@ -167,3 +171,47 @@ def test_interior_without_ui_not_screen_hint():
     assert ui_screen_scene_hint(_abandoned_interior_ve()) is False
     text = format_visual_evidence(_abandoned_interior_ve())
     assert "interior room" in text.lower() or "NOT a digital display" in text
+
+
+def _screenshot_ui_ve():
+    return {
+        "domain_guard_applied": False,
+        "organic_growth": {"green_coverage": 0.0, "applicable": True},
+        "scene_gate": {
+            "scene_type": "screenshot_ui",
+            "is_surface_study": False,
+            "signals": {
+                "places_scene_category": "artificial",
+                "yolo_objects": ["laptop"],
+                "clip_caption": "programming code on computer screen",
+            },
+        },
+    }
+
+
+def test_screenshot_ui_scene_detected():
+    assert is_screenshot_ui_scene(_screenshot_ui_ve()) is True
+    block = screenshot_critique_prompt_block(_screenshot_ui_ve())
+    assert "IC_0017" in block
+    assert "readability" in block.lower()
+    assert "layout" in block.lower()
+
+
+def test_screenshot_routing_in_visual_evidence():
+    text = format_visual_evidence(_screenshot_ui_ve())
+    assert "IC_0017" in text or "screenshot/UI" in text
+
+
+def test_sanitize_primary_screenshot_replaces_street_language():
+    ve = _screenshot_ui_ve()
+    bad = "I see a bright street scene with poetic souls wandering."
+    fixed = sanitize_primary_screenshot(bad, ve)
+    assert "screen" in fixed.lower() or "UI" in fixed
+    assert "street" not in fixed.lower()
+
+
+def test_routing_prompt_blocks_include_screenshot_without_domain_guard():
+    ve = _screenshot_ui_ve()
+    assert not organic_evidence_suppressed(ve)
+    block = routing_prompt_blocks(ve)
+    assert "SCREEN/UI" in block
