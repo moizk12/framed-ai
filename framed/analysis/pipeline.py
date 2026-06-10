@@ -402,7 +402,7 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
             looks_like_screen_capture = (
                 not has_street_cues
                 and num_vehicles == 0
-                and _edge_deg > 0.52
+                and _edge_deg > 0.47
                 and scene_category in ("artificial", "indoor", "man-made", "")
             )
 

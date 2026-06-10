@@ -67,7 +67,8 @@ def screenshot_critique_prompt_block(visual_evidence: Optional[Dict[str, Any]]) 
             "SCREEN/UI CRITIQUE ROUTING (IC_0017):",
             "- Primary: screen, UI, code editor, webpage screenshot, or photo-of-screen.",
             "- Critique MUST discuss: layout, text readability, hierarchy, contrast, glare, crop, text density, screen/photo quality.",
-            "- FORBIDDEN: fine-art mood, street/room photography framing, organic growth, weathered stone, poetic symbolism.",
+            "- FORBIDDEN: fine-art mood, street/room photography framing, organic growth, weathered stone, reclamation, poetic symbolism.",
+            "- Never describe screenshot content as weathered stone, organic growth, or interior room photography.",
             "- Use terms: screen, UI, interface, layout, readability, text, contrast, hierarchy, crop, display, navigation.",
         ]
     )

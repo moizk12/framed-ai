@@ -15,12 +15,31 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 2  # Bump to invalidate all expression cache entries (IC_0017 screenshot mode)
+EXPRESSION_CACHE_VERSION = 3  # Bump to invalidate all expression cache entries (IC_0017 screenshot mode)
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
     re.I,
 )
+_SCREENSHOT_BANNED = re.compile(
+    r"\b(organic\s+growth|weathered\s+stone|reclamation|ivy|nature'?s?\s+touch|fine\s+art|street\s+scene)\b",
+    re.I,
+)
+
+
+def _finalize_screenshot_critique(critique: str, what_i_see: str) -> str:
+    """Strip photo-poetry leakage and ensure UI critique vocabulary (IC_0017)."""
+    text = _SCREENSHOT_BANNED.sub("", critique or "")
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    if not _UI_CRITIQUE_TERMS.search(text):
+        text = (
+            f"{what_i_see}\n\n"
+            "This is a screen capture, not a street or fine-art photograph. "
+            "The interface layout sets text hierarchy and navigation density — note whether blocks compete. "
+            "Readability depends on contrast and glare; check if highlights flatten small type. "
+            "The crop may clip page chrome, and screen-photo quality limits how cleanly UI details register."
+        )
+    return text
 
 
 def _hitl_calibration_state_for_cache() -> str:
@@ -388,19 +407,11 @@ End not with advice — but with a question or unresolved pull."""
             )
             return fallback
 
-        if is_screenshot_ui and not _UI_CRITIQUE_TERMS.search(critique):
+        if is_screenshot_ui:
             what_i_see = (intelligence_output.get("recognition") or {}).get("what_i_see") or (
                 "I see a screen or UI capture."
             )
-            critique = (
-                f"{what_i_see}\n\n"
-                "This is a screen capture, not a street or fine-art photograph. "
-                "The interface layout sets a clear hierarchy — or fails to when text blocks compete. "
-                "Readability hinges on contrast and glare; check whether highlights flatten small type. "
-                "The crop may clip navigation chrome, and screen-photo quality (moire, skew, softness) "
-                "limits how cleanly UI details register.\n\n"
-                "What would you adjust first: crop, contrast, or information hierarchy?"
-            )
+            critique = _finalize_screenshot_critique(critique, what_i_see)
 
         _save_cached_expression(cache_key, critique)
         logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")
