@@ -20,6 +20,12 @@ def organic_evidence_suppressed(visual_evidence: Optional[Dict[str, Any]]) -> bo
     return og.get("applicable") is False and oi.get("relationship") in (None, "none")
 
 
+_UI_CAPTION_HINT = re.compile(
+    r"\b(screen|monitor|ui|code|editor|laptop|display|interface|text|keyboard|program)\b",
+    re.I,
+)
+
+
 def ui_screen_scene_hint(visual_evidence: Optional[Dict[str, Any]]) -> bool:
     """Route toward screen/UI/code interpretation when signals suggest digital content."""
     if not visual_evidence:
@@ -29,13 +35,15 @@ def ui_screen_scene_hint(visual_evidence: Optional[Dict[str, Any]]) -> bool:
     yolo_objects = {str(o).lower() for o in (signals.get("yolo_objects") or [])}
     if yolo_objects & _UI_YOLO_OBJECTS:
         return True
+    caption = str(signals.get("clip_caption", "") or "")
+    if _UI_CAPTION_HINT.search(caption):
+        return True
     places_cat = str(signals.get("places_scene_category", "")).lower()
     green_cov = float((visual_evidence.get("organic_growth") or {}).get("green_coverage", 1.0))
-    color_uniformity = float((visual_evidence.get("material_condition") or {}).get("color_uniformity", 0.0))
     scene_type = str(scene_gate.get("scene_type", "")).lower()
-    if places_cat == "artificial" and green_cov < 0.05:
+    if places_cat == "artificial" and green_cov < 0.05 and _UI_CAPTION_HINT.search(caption):
         return True
-    if scene_type == "interior_scene" and color_uniformity > 0.9 and green_cov < 0.05:
+    if scene_type == "interior_scene" and yolo_objects & {"tv", "laptop", "keyboard", "mouse"}:
         return True
     return False
 
@@ -135,6 +143,15 @@ def format_visual_evidence(visual_evidence: Dict[str, Any]) -> str:
         clip_caption = signals.get("clip_caption")
         if clip_caption:
             lines.append(f"- CLIP scene caption: \"{clip_caption}\"")
+        scene_type = str(scene_gate.get("scene_type", "unknown"))
+        if scene_type == "object_dense":
+            lines.append(
+                "- SCENE ROUTING: object-dense/workshop/clutter wall — describe tools, shelves, wall objects; NOT a street scene."
+            )
+        elif scene_type == "interior_scene" and not ui_screen_scene_hint(visual_evidence):
+            lines.append(
+                "- SCENE ROUTING: interior room — describe walls, shelves, windows, decay, clutter; NOT a digital display unless monitor/UI visible."
+            )
         if suppressed:
             if ui_screen_scene_hint(visual_evidence):
                 lines.append(

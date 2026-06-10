@@ -333,7 +333,47 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 1 for t in tags if "person" in t or "people" in t
             )
             num_vehicles = _count_any(["car", "truck", "bus", "taxi", "bicycle", "motorcycle"])
-            num_buildings = _count_any(["building", "tower", "skyscraper", "bridge"]) or ("city" in text_blob) or ("street" in text_blob)
+            num_buildings = _count_any(["building", "tower", "skyscraper", "bridge"]) or ("city" in text_blob)
+            num_tools = _count_any(
+                ["hammer", "wrench", "screwdriver", "pliers", "saw", "drill", "tool", "tools"]
+            ) or sum(1 for t in tags if any(tok in t for tok in ("tool", "hammer", "wrench", "screwdriver")))
+            has_street_cues = (
+                num_vehicles > 0
+                or any(
+                    k in text_blob
+                    for k in [
+                        "sidewalk",
+                        "crosswalk",
+                        "road",
+                        "asphalt",
+                        "pavement",
+                        "traffic",
+                        "intersection",
+                        "downtown",
+                        "urban street",
+                    ]
+                )
+            )
+            has_interior_cues = any(
+                k in text_blob
+                for k in [
+                    "living room",
+                    "interior",
+                    "bedroom",
+                    "room",
+                    "office",
+                    "abandoned",
+                    "shelf",
+                    "shelves",
+                    "window",
+                    "wall",
+                    "desk",
+                    "sofa",
+                    "couch",
+                    "chair",
+                    "table",
+                ]
+            )
             looks_abstract_terms = any(k in text_blob for k in ["abstract", "nonrepresentational", "non-representational"])
             looks_painting = any(k in text_blob for k in ["painting", "canvas", "acrylic", "oil painting", "artwork"])
 
@@ -351,12 +391,15 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 scene_type = "abstract_art"
             elif num_people > 0:
                 scene_type = "people_scene"
-            elif indoor_outdoor == "indoor" or any(
-                k in text_blob
-                for k in ["living room", "interior", "bedroom", "room", "sofa", "couch", "chair", "desk", "table", "tv", "window"]
+            elif (
+                (num_tools >= 2 or any(k in text_blob for k in ["tool", "tools", "workshop", "garage", "pegboard"]))
+                and not has_street_cues
+                and num_vehicles == 0
             ):
+                scene_type = "object_dense"
+            elif indoor_outdoor == "indoor" or has_interior_cues:
                 scene_type = "interior_scene"
-            elif num_buildings or num_vehicles or any(k in text_blob for k in ["downtown", "urban", "intersection", "traffic", "crosswalk"]):
+            elif has_street_cues and (indoor_outdoor != "indoor"):
                 scene_type = "street_scene"
             elif indoor_outdoor == "outdoor" and any(
                 k in text_blob for k in ["mountain", "mountains", "lake", "river", "forest", "field", "landscape", "tree", "trees", "house", "cabin"]
@@ -369,7 +412,14 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
             edge_deg = float(mc.get("edge_degradation", 0.0) or 0.0)
             rough = float(mc.get("surface_roughness", 0.0) or 0.0)
 
-            scene_is_depiction = scene_type in {"abstract_art", "people_scene", "interior_scene", "street_scene", "landscape_scene"}
+            scene_is_depiction = scene_type in {
+                "abstract_art",
+                "people_scene",
+                "interior_scene",
+                "street_scene",
+                "landscape_scene",
+                "object_dense",
+            }
             is_surface_study = (not scene_is_depiction) and (edge_deg > 0.6 or rough > 0.12) and num_people == 0 and num_vehicles == 0 and not num_buildings
             if is_surface_study:
                 scene_type = "surface_study"

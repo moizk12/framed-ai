@@ -101,6 +101,11 @@ SCENE INVARIANT:
 - For non-surface scenes (interiors, streets, landscapes, people, abstract art), your primary recognition must describe the **scene/subject** (e.g. room, city street, people at a table, lake house), not just a close-up of a weathered surface.
 - Only when scene_type == "surface_study" may your primary conclusion be "weathered stone / reclaimed surface" etc.
 
+SCENE ROUTING (IC_0016):
+- scene_type=object_dense → workshop/tool wall/object-dense interior; NEVER call it a street, road, or urban public scene without road/vehicles/sidewalk evidence.
+- scene_type=interior_scene → room/interior/abandoned space; NEVER default to digital display/UI unless monitor, code, or UI elements are visibly described in evidence.
+- scene_type=street_scene → requires outdoor public-space cues (road, sidewalk, vehicles, pedestrians); mention foreground/midground/background when eval_bucket expects layered composition.
+
 REQUIREMENTS:
 - State what you see clearly and concretely (e.g. "I see a bright living room interior with a blue sofa and plants by the window").
 - NOT tentative: "I think I see..." or "This might be..."

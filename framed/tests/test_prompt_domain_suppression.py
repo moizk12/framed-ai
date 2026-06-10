@@ -123,3 +123,47 @@ def test_sanitize_primary_strips_organic_growth():
 def test_sanitize_primary_unchanged_when_not_suppressed():
     primary = "I see weathered stone with ivy reclaiming the structure."
     assert sanitize_primary_when_suppressed(primary, _normal_ve()) == primary
+
+
+def _workshop_ve():
+    return {
+        "domain_guard_applied": True,
+        "organic_growth": {"green_coverage": 0.001, "applicable": False},
+        "material_condition": {"condition": "neutral", "color_uniformity": 0.4},
+        "organic_integration": {"relationship": "none"},
+        "scene_gate": {
+            "scene_type": "object_dense",
+            "is_surface_study": False,
+            "signals": {"yolo_objects": ["hammer", "wrench"], "clip_caption": "tools on a wall"},
+        },
+    }
+
+
+def _abandoned_interior_ve():
+    return {
+        "domain_guard_applied": False,
+        "organic_growth": {"green_coverage": 0.01, "applicable": True},
+        "material_condition": {"condition": "degraded", "color_uniformity": 0.85},
+        "organic_integration": {"relationship": "none"},
+        "scene_gate": {
+            "scene_type": "interior_scene",
+            "is_surface_study": False,
+            "signals": {
+                "places_scene_category": "indoor",
+                "yolo_objects": [],
+                "clip_caption": "abandoned office with shelves and windows",
+            },
+        },
+    }
+
+
+def test_object_dense_routing_not_street():
+    text = format_visual_evidence(_workshop_ve())
+    assert "object-dense" in text.lower() or "workshop" in text.lower()
+    assert "NOT a street" in text
+
+
+def test_interior_without_ui_not_screen_hint():
+    assert ui_screen_scene_hint(_abandoned_interior_ve()) is False
+    text = format_visual_evidence(_abandoned_interior_ve())
+    assert "interior room" in text.lower() or "NOT a digital display" in text
