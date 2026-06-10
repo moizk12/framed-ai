@@ -391,10 +391,19 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 "browser", "terminal", "software", "application", "wikipedia", "github",
                 "news", "reddit", "arxiv", "html", "css", "javascript",
             )
+            _ve_mc = (result.get("visual_evidence") or {}).get("material_condition") or {}
+            _edge_deg = float(_ve_mc.get("edge_degradation", 0.0) or 0.0)
+
             has_ui_yolo = bool(set(yolo_objs) & _ui_yolo)
             has_ui_text = any(tok in text_blob for tok in _ui_text_tokens)
             has_ui_signal = has_ui_yolo or (
-                has_ui_text and scene_category in ("artificial", "indoor", "")
+                has_ui_text and scene_category in ("artificial", "indoor", "man-made", "")
+            )
+            looks_like_screen_capture = (
+                not has_street_cues
+                and num_vehicles == 0
+                and _edge_deg > 0.52
+                and scene_category in ("artificial", "indoor", "man-made", "")
             )
 
             scene_type = "unknown"
@@ -402,9 +411,9 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 scene_type = "abstract_art"
             elif avg_saturation is not None and avg_saturation > 0.50 and num_people == 0 and num_vehicles == 0 and not num_buildings:
                 scene_type = "abstract_art"
-            elif has_ui_signal and not has_street_cues and num_vehicles == 0:
+            elif (has_ui_signal or looks_like_screen_capture) and not has_street_cues and num_vehicles == 0:
                 scene_type = "screenshot_ui"
-            elif num_people > 0:
+            elif num_people > 0 and not looks_like_screen_capture:
                 scene_type = "people_scene"
             elif (
                 (num_tools >= 2 or any(k in text_blob for k in ["tool", "tools", "workshop", "garage", "pegboard"]))

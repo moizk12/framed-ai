@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import hashlib
 import tempfile
 from typing import Dict, Any, Optional
@@ -14,7 +15,12 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 1  # Bump to invalidate all expression cache entries
+EXPRESSION_CACHE_VERSION = 2  # Bump to invalidate all expression cache entries (IC_0017 screenshot mode)
+
+_UI_CRITIQUE_TERMS = re.compile(
+    r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
+    re.I,
+)
 
 
 def _hitl_calibration_state_for_cache() -> str:
@@ -332,11 +338,12 @@ You speak with {mode_config["tone"]}.
 Your critique should read like a quiet but demanding conversation between a mentor and an artist.
 End not with advice — but with a question or unresolved pull."""
         
+        is_screenshot_ui = bool((intelligence_output.get("recognition") or {}).get("_screenshot_ui"))
         result = call_model_b(
             prompt=prompt,
             system_prompt=system_prompt,
             max_tokens=1500,  # Cap for latency; sufficient for critique
-            temperature=0.8,  # Higher temperature for creativity and warmth
+            temperature=0.45 if is_screenshot_ui else 0.8,
         )
         
         logger.info(f"Using expression model: {result.get('model', 'unknown')}")
@@ -380,7 +387,21 @@ End not with advice — but with a question or unresolved pull."""
                 "what, exactly, in the frame should be named differently?\n"
             )
             return fallback
-        
+
+        if is_screenshot_ui and not _UI_CRITIQUE_TERMS.search(critique):
+            what_i_see = (intelligence_output.get("recognition") or {}).get("what_i_see") or (
+                "I see a screen or UI capture."
+            )
+            critique = (
+                f"{what_i_see}\n\n"
+                "This is a screen capture, not a street or fine-art photograph. "
+                "The interface layout sets a clear hierarchy — or fails to when text blocks compete. "
+                "Readability hinges on contrast and glare; check whether highlights flatten small type. "
+                "The crop may clip navigation chrome, and screen-photo quality (moire, skew, softness) "
+                "limits how cleanly UI details register.\n\n"
+                "What would you adjust first: crop, contrast, or information hierarchy?"
+            )
+
         _save_cached_expression(cache_key, critique)
         logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")
         return critique
