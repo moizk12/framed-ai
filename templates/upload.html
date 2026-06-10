@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>FRAMED Upload</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    #critique { white-space: pre-wrap; background: #f4f4f4; padding: 1rem; min-height: 4rem; }
+    .fb-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+    .fb-row button { padding: 0.4rem 0.7rem; cursor: pointer; }
+    #status { color: #333; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>FRAMED</h1>
+  <form id="upload-form">
+    <input type="file" name="image" id="image" accept="image/*" required />
+    <select name="mentor_mode" id="mentor_mode">
+      <option>Balanced Mentor</option>
+      <option>Technical Mentor</option>
+      <option>Poetic Mentor</option>
+    </select>
+    <button type="submit">Analyze</button>
+  </form>
+  <h2>Critique</h2>
+  <div id="critique">Upload an image to begin.</div>
+  <div class="fb-row" id="feedback-buttons" hidden>
+    <button type="button" data-btn="good_critique">Good critique</button>
+    <button type="button" data-btn="wrong_image_type">Wrong image type</button>
+    <button type="button" data-btn="too_poetic">Too poetic</button>
+    <button type="button" data-btn="too_generic">Too generic</button>
+    <button type="button" data-btn="missed_technical">Missed technical issue</button>
+    <button type="button" data-btn="write_correction">Write correction</button>
+  </div>
+  <textarea id="correction" placeholder="Optional correction text" rows="3" style="width:100%;display:none;"></textarea>
+  <p id="status"></p>
+  <script src="/static/feedback.js"></script>
+</body>
+</html>

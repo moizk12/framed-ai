@@ -22,8 +22,20 @@ except Exception:
 BASE_DIR = os.getenv("FRAMED_DATA_DIR", DEFAULT_BASE)
 FEEDBACK_DIR = os.path.join(BASE_DIR, "feedback")
 HITL_FEEDBACK_PATH = os.path.join(FEEDBACK_DIR, "hitl_feedback.jsonl")
+UI_FEEDBACK_PATH = os.path.join(FEEDBACK_DIR, "ui_feedback.jsonl")
 
 VALID_FEEDBACK_TYPES = frozenset(["overconfidence", "missed_alternative", "emphasis_misaligned", "mentor_failure"])
+
+UI_FEEDBACK_LABELS = {
+    "good_critique": "overconfidence",
+    "wrong_image_type": "missed_alternative",
+    "too_poetic": "emphasis_misaligned",
+    "too_generic": "mentor_failure",
+    "missed_technical": "emphasis_misaligned",
+    "write_correction": "missed_alternative",
+}
+
+VALID_UI_BUTTONS = frozenset(UI_FEEDBACK_LABELS.keys())
 
 
 def _ensure_dir():
@@ -75,6 +87,39 @@ def append_feedback(
         return True
     except Exception as e:
         logger.error(f"Failed to append HITL feedback: {e}", exc_info=True)
+        return False
+
+
+def append_ui_feedback(
+    image_id: str,
+    button: str,
+    signature: str,
+    correction: str = "",
+    critique_excerpt: str = "",
+) -> bool:
+    """Append quick UI feedback (maps to HITL types in ui_feedback.jsonl)."""
+    if button not in VALID_UI_BUTTONS:
+        logger.warning("Invalid UI feedback button: %s", button)
+        return False
+    sig = (signature or image_id or "").strip()
+    if not sig:
+        return False
+    entry = {
+        "image_id": image_id or sig[:16],
+        "pattern_signature": sig,
+        "button": button,
+        "mapped_hitl_type": UI_FEEDBACK_LABELS[button],
+        "correction": (correction or "").strip()[:2000],
+        "critique_excerpt": (critique_excerpt or "").strip()[:500],
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    try:
+        _ensure_dir()
+        with open(UI_FEEDBACK_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return True
+    except Exception as e:
+        logger.error("Failed to append UI feedback: %s", e, exc_info=True)
         return False
 
 

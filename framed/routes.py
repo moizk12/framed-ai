@@ -267,6 +267,28 @@ def reset():
     save_echo_memory([])
     return jsonify({"ok": True, "message": "History cleared"})
 
+@main.post("/feedback")
+def feedback_route():
+    try:
+        payload = request.get_json(force=True) or {}
+        button = (payload.get("button") or payload.get("feedback_type") or "").strip()
+        image_id = (payload.get("image_id") or "").strip()
+        signature = (payload.get("signature") or payload.get("pattern_signature") or image_id).strip()
+        correction = (payload.get("correction") or "").strip()
+        excerpt = (payload.get("critique_excerpt") or "").strip()
+        if not button:
+            return jsonify({"error": "Missing feedback button"}), 400
+        from framed.feedback.storage import append_ui_feedback
+
+        ok = append_ui_feedback(image_id, button, signature, correction, excerpt)
+        if not ok:
+            return jsonify({"error": "Invalid feedback payload"}), 400
+        return jsonify({"ok": True})
+    except Exception as e:
+        current_app.logger.exception("Feedback failed")
+        return jsonify({"error": str(e)}), 500
+
+
 @main.post("/ask-echo")
 def ask_echo_route():
     try:
