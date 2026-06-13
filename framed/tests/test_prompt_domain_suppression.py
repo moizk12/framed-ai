@@ -3,18 +3,24 @@
 from framed.analysis.intelligence_formatting import (
     composition_critique_prompt_block,
     count_composition_terms,
+    count_technical_terms,
     domain_guard_prompt_block,
     format_visual_evidence,
     is_composition_depth_scene,
     is_screenshot_ui_scene,
+    is_technical_practicality_scene,
     organic_evidence_suppressed,
     routing_prompt_blocks,
     sanitize_primary_screenshot,
     sanitize_primary_when_suppressed,
     screenshot_critique_prompt_block,
+    technical_critique_prompt_block,
     ui_screen_scene_hint,
 )
-from framed.analysis.expression_layer import _finalize_composition_critique
+from framed.analysis.expression_layer import (
+    _finalize_composition_critique,
+    _finalize_technical_critique,
+)
 
 
 def _suppressed_ve(**overrides):
@@ -253,3 +259,34 @@ def test_finalize_composition_critique_injects_structure():
     out = _finalize_composition_critique(generic, "I see a layered street scene.")
     assert count_composition_terms(out) >= 2
     assert "foreground" in out.lower()
+
+
+def _cluttered_interior_ve():
+    return {
+        "domain_guard_applied": False,
+        "scene_gate": {"scene_type": "interior_scene", "is_surface_study": False},
+        "perception_technical": {"available": True, "brightness": 120.0, "contrast": 28.0, "sharpness": 85.0},
+    }
+
+
+def test_technical_practicality_scene_cluttered_interior():
+    assert is_technical_practicality_scene(_cluttered_interior_ve()) is True
+    assert is_technical_practicality_scene(_screenshot_ui_ve()) is False
+    assert is_technical_practicality_scene(_photographic_ve()) is False
+
+
+def test_technical_critique_prompt_block_ic0019():
+    block = technical_critique_prompt_block(_cluttered_interior_ve())
+    assert "IC_0019" in block
+    assert "sharpness" in block.lower() or "focus" in block.lower()
+
+
+def test_finalize_technical_critique_injects_terms():
+    generic = "A warm moody interior with poetic atmosphere."
+    out = _finalize_technical_critique(
+        generic,
+        "I see a cluttered room.",
+        {"brightness": 120.0, "contrast": 28.0, "sharpness": 85.0},
+    )
+    assert count_technical_terms(out) >= 1
+    assert "sharpness" in out.lower() or "focus" in out.lower()

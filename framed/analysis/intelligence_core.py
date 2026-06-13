@@ -66,6 +66,7 @@ def framed_intelligence(
         perception = analysis_result.get("perception", {}) or {}
         semantics = perception.get("semantics", {}) or {}
         composition = perception.get("composition", {}) or {}
+        technical = perception.get("technical", {}) or {}
         clip_data = semantics
         # Objects: YOLO may store in perception.composition or perception.objects
         objects_raw = perception.get("objects", {})
@@ -101,6 +102,8 @@ def framed_intelligence(
         ve_l1 = dict(visual_evidence)
         if composition.get("available"):
             ve_l1["perception_composition"] = composition
+        if technical.get("available") or technical.get("brightness") is not None:
+            ve_l1["perception_technical"] = technical
         recognition = reason_about_recognition(ve_l1, require_multiple_hypotheses=force_multi)
 
         # === AMBIGUITY & DISAGREEMENT (post-Layer 1) ===

@@ -77,14 +77,18 @@ def screenshot_critique_prompt_block(visual_evidence: Optional[Dict[str, Any]]) 
 def routing_prompt_blocks(
     visual_evidence: Optional[Dict[str, Any]],
     perception_composition: Optional[Dict[str, Any]] = None,
+    perception_technical: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Combined domain-guard + screenshot + composition routing prompt constraints."""
+    """Combined domain-guard + screenshot + composition + technical routing prompt constraints."""
     if perception_composition is None and visual_evidence:
         perception_composition = visual_evidence.get("perception_composition")
+    if perception_technical is None and visual_evidence:
+        perception_technical = visual_evidence.get("perception_technical")
     parts = [
         domain_guard_prompt_block(visual_evidence),
         screenshot_critique_prompt_block(visual_evidence),
         composition_critique_prompt_block(visual_evidence, perception_composition),
+        technical_critique_prompt_block(visual_evidence, perception_technical),
     ]
     return "\n".join(p for p in parts if p)
 
@@ -209,6 +213,95 @@ def count_composition_terms(text: str) -> int:
     if not text:
         return 0
     return len(_COMPOSITION_DEPTH_TERMS.findall(text))
+
+
+_TECHNICAL_CRITIQUE_TERMS = re.compile(
+    r"\b(blur|motion blur|noise|grain|flat light|underexpos|overexpos|focus|sharpness|"
+    r"compression|shutter|aperture|white balance|retake|crop)\b",
+    re.I,
+)
+
+
+def has_technical_weakness(perception_technical: Optional[Dict[str, Any]]) -> bool:
+    """True when pipeline technical stats suggest flawed capture."""
+    if not perception_technical:
+        return False
+    sharpness = perception_technical.get("sharpness")
+    contrast = perception_technical.get("contrast")
+    brightness = perception_technical.get("brightness")
+    if sharpness is not None and sharpness < 100:
+        return True
+    if contrast is not None and contrast < 35:
+        return True
+    if brightness is not None and (brightness < 45 or brightness > 210):
+        return True
+    return False
+
+
+def is_technical_practicality_scene(
+    visual_evidence: Optional[Dict[str, Any]],
+    perception_technical: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """True when critique should name actionable capture/technical advice (IC_0019)."""
+    if not visual_evidence or is_screenshot_ui_scene(visual_evidence):
+        return False
+    if perception_technical is None:
+        perception_technical = visual_evidence.get("perception_technical") or {}
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    scene_type = str(scene_gate.get("scene_type", "")).lower()
+    if scene_type in ("object_dense", "interior_scene"):
+        return True
+    return has_technical_weakness(perception_technical)
+
+
+def format_perception_technical_lines(perception_technical: Optional[Dict[str, Any]]) -> List[str]:
+    """Deterministic technical cues for Model A prompts."""
+    if not perception_technical:
+        return []
+    lines: List[str] = []
+    brightness = perception_technical.get("brightness")
+    contrast = perception_technical.get("contrast")
+    sharpness = perception_technical.get("sharpness")
+    if brightness is not None:
+        lines.append(f"- Technical stats: brightness={brightness:.1f}, contrast={contrast:.1f}, sharpness={sharpness:.1f}")
+    if has_technical_weakness(perception_technical):
+        if sharpness is not None and sharpness < 100:
+            lines.append("- Weakness signal: low sharpness (possible blur or motion)")
+        if contrast is not None and contrast < 35:
+            lines.append("- Weakness signal: low contrast (flat light)")
+        if brightness is not None and brightness < 45:
+            lines.append("- Weakness signal: underexposure")
+        if brightness is not None and brightness > 210:
+            lines.append("- Weakness signal: overexposure")
+    return lines
+
+
+def technical_critique_prompt_block(
+    visual_evidence: Optional[Dict[str, Any]],
+    perception_technical: Optional[Dict[str, Any]] = None,
+) -> str:
+    """IC_0019: require focus/sharpness/exposure/crop/retake advice on weak or cluttered photos."""
+    if not is_technical_practicality_scene(visual_evidence, perception_technical):
+        return ""
+    tech_lines = format_perception_technical_lines(perception_technical)
+    tech_section = "\n".join(tech_lines) if tech_lines else "- (infer capture flaws from visible blur, flat light, crop, or clutter)"
+    return "\n".join(
+        [
+            "TECHNICAL PRACTICALITY ROUTING (IC_0019):",
+            "- Critique MUST include actionable technical advice: focus, sharpness, blur, exposure, flat light, noise, crop, or retake.",
+            "- Name at least one concrete capture flaw or improvement when the image is weak, cluttered, or phone-snapshot quality.",
+            "- FORBIDDEN: mood-only or aesthetic prose without any technical vocabulary on flawed photos.",
+            "- Use perception technical signals when present:",
+            tech_section,
+        ]
+    )
+
+
+def count_technical_terms(text: str) -> int:
+    """Count IC_0019 technical vocabulary terms (for finalize guard)."""
+    if not text:
+        return 0
+    return len(_TECHNICAL_CRITIQUE_TERMS.findall(text))
 
 
 def _safe_parse_layer_json(content: str) -> Optional[Dict[str, Any]]:

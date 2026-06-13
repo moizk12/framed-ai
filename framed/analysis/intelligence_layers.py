@@ -13,6 +13,7 @@ from .intelligence_formatting import (
     format_user_history,
     is_composition_depth_scene,
     is_screenshot_ui_scene,
+    is_technical_practicality_scene,
     routing_prompt_blocks,
     sanitize_primary_screenshot,
     sanitize_primary_when_suppressed,
@@ -117,6 +118,10 @@ SCENE ROUTING (IC_0018):
 - For photographic scenes (not screenshot_ui): name foreground, midground, background, focal hierarchy, depth/layering, and visual path.
 - Do NOT give generic composition praise without structural vocabulary.
 
+SCENE ROUTING (IC_0019):
+- On cluttered interiors, object-dense scenes, or weak phone captures: name focus, sharpness, blur, exposure, flat light, noise, crop, or retake.
+- Do NOT give mood-only critique without actionable technical vocabulary when capture quality is weak.
+
 REQUIREMENTS:
 - State what you see clearly and concretely (e.g. "I see a bright living room interior with a blue sofa and plants by the window").
 - NOT tentative: "I think I see..." or "This might be..."
@@ -176,6 +181,15 @@ OUTPUT FORMAT (JSON):
             recognition["_screenshot_ui"] = True
         if is_composition_depth_scene(visual_evidence):
             recognition["_composition_depth"] = True
+        if is_technical_practicality_scene(visual_evidence):
+            recognition["_technical_practicality"] = True
+            tech = visual_evidence.get("perception_technical") or {}
+            if tech:
+                recognition["_technical_stats"] = {
+                    k: tech.get(k)
+                    for k in ("brightness", "contrast", "sharpness")
+                    if tech.get(k) is not None
+                }
         if require_multiple_hypotheses and recognition.get("hypotheses"):
             for hyp in recognition["hypotheses"]:
                 if isinstance(hyp, dict) and hyp.get("conclusion"):
@@ -876,6 +890,12 @@ contrast, glare, crop, and screen-capture quality. Do NOT write street, room, or
 COMPOSITION DEPTH MODE (IC_0018): mentor.observations MUST name foreground, midground, background,
 focal point or hierarchy, depth/layering, and visual path. No generic praise without structure.
 """
+        technical_section = ""
+        if recognition.get("_technical_practicality") and not recognition.get("_screenshot_ui"):
+            technical_section = """
+TECHNICAL PRACTICALITY MODE (IC_0019): mentor.observations MUST include focus, sharpness, blur,
+exposure, flat light, noise, crop, or retake advice. No mood-only prose on weak or cluttered captures.
+"""
 
         prompt = f"""
 You are FRAMED's reasoning engine. Output layers 2–7 in one JSON. RECOGNITION IS READ-ONLY EVIDENCE. Do not modify it.
@@ -884,7 +904,7 @@ CURRENT RECOGNITION (read-only):
 "{rec_text}"
 EVIDENCE: {evidence_text}
 CONFIDENCE: {recognition.get('confidence', 0.0):.2f}
-{screenshot_section}{composition_section}
+{screenshot_section}{composition_section}{technical_section}
 PAST INTERPRETATIONS: {past_text}
 USER HISTORY: {user_text}
 

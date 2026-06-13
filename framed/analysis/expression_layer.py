@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 4  # Bump to invalidate all expression cache entries (IC_0018 composition mode)
+EXPRESSION_CACHE_VERSION = 5  # Bump to invalidate all expression cache entries (IC_0019 technical mode)
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -32,6 +32,11 @@ _COMPOSITION_TERMS = re.compile(
 )
 _GENERIC_PRAISE = re.compile(
     r"\b(nice composition|strong mood|beautiful|stunning|breathtaking|gorgeous)\b",
+    re.I,
+)
+_TECHNICAL_TERMS = re.compile(
+    r"\b(blur|motion blur|noise|grain|flat light|underexpos|overexpos|focus|sharpness|"
+    r"compression|shutter|aperture|white balance|retake|crop)\b",
     re.I,
 )
 
@@ -62,6 +67,40 @@ def _finalize_composition_critique(critique: str, what_i_see: str) -> str:
         "The foreground holds the nearest subject or anchor; the midground carries supporting shapes "
         "and overlap; the background sets depth and context. The focal hierarchy should guide where the "
         "eye lands first — note whether clutter, symmetry, or layering strengthens or weakens that path."
+    )
+
+
+def _finalize_technical_critique(
+    critique: str,
+    what_i_see: str,
+    technical_stats: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Ensure actionable technical vocabulary (IC_0019)."""
+    text = critique or ""
+    if len(_TECHNICAL_TERMS.findall(text)) >= 1:
+        return text
+    stats = technical_stats or {}
+    sharpness = stats.get("sharpness")
+    contrast = stats.get("contrast")
+    brightness = stats.get("brightness")
+    advice_parts = []
+    if sharpness is not None and sharpness < 100:
+        advice_parts.append("sharpness is soft — check focus or motion blur and consider a steadier retake")
+    if contrast is not None and contrast < 35:
+        advice_parts.append("contrast is flat — flat light limits separation; exposure or angle may help")
+    if brightness is not None and brightness < 45:
+        advice_parts.append("the frame reads underexposed — raise exposure or add light before reshooting")
+    if brightness is not None and brightness > 210:
+        advice_parts.append("highlights look overexposed — dial back exposure to recover detail")
+    if not advice_parts:
+        advice_parts.append(
+            "check focus and sharpness, watch exposure and flat light, and tighten crop before relying on this capture"
+        )
+    advice = " ".join(advice_parts[:2])
+    return (
+        f"{what_i_see}\n\n"
+        f"This reads as a phone or casual capture where technical quality limits the read. {advice.capitalize()}. "
+        "Name whether blur, noise, compression, or a rushed crop is the main limiter — and whether a retake would help."
     )
 
 
@@ -314,6 +353,16 @@ def generate_poetic_critique(
 - Tone: warm mentor naming how the frame is built — not mood-only gallery prose.
 """
 
+        technical_section = ""
+        if rec.get("_technical_practicality") and not rec.get("_screenshot_ui"):
+            technical_section = """
+**TECHNICAL PRACTICALITY MODE (IC_0019 — overrides mood-only prose):**
+- Name focus, sharpness, blur, exposure, flat light, noise, crop, compression, or retake advice.
+- Use terms: focus, sharpness, blur, exposure, flat light, noise, crop, retake, white balance.
+- FORBIDDEN: mood-only or aesthetic praise without any technical vocabulary on weak or cluttered captures.
+- Tone: warm mentor giving actionable capture advice — not gallery placard poetry alone.
+"""
+
         rules_section = ""
         try:
             from framed.analysis.interpretive_memory import get_active_rules
@@ -336,7 +385,7 @@ DESCRIPTION: {mode_config["description"]}
 TONE: {mode_config["tone"]}
 VOICE: {mode_config["voice"]}
 {constraints_section}
-{screenshot_section}{composition_section}
+{screenshot_section}{composition_section}{technical_section}
 {rules_section}
 
 MENTOR INSTRUCTION:
@@ -393,9 +442,12 @@ End not with advice — but with a question or unresolved pull."""
         
         is_screenshot_ui = bool((intelligence_output.get("recognition") or {}).get("_screenshot_ui"))
         is_composition_depth = bool((intelligence_output.get("recognition") or {}).get("_composition_depth"))
+        is_technical_practicality = bool((intelligence_output.get("recognition") or {}).get("_technical_practicality"))
         temp = 0.8
         if is_screenshot_ui:
             temp = 0.45
+        elif is_technical_practicality:
+            temp = 0.5
         elif is_composition_depth:
             temp = 0.55
         result = call_model_b(
@@ -452,6 +504,10 @@ End not with advice — but with a question or unresolved pull."""
                 "I see a screen or UI capture."
             )
             critique = _finalize_screenshot_critique(critique, what_i_see)
+        elif is_technical_practicality:
+            rec = intelligence_output.get("recognition") or {}
+            what_i_see = rec.get("what_i_see") or "I see a casual or cluttered capture with capture-quality limits."
+            critique = _finalize_technical_critique(critique, what_i_see, rec.get("_technical_stats"))
         elif is_composition_depth:
             what_i_see = (intelligence_output.get("recognition") or {}).get("what_i_see") or (
                 "I see a photographic scene with layered structure."
