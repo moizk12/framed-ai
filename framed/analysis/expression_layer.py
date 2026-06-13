@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 8  # Bump to invalidate all expression cache entries (IC_0020 display heuristic)
+EXPRESSION_CACHE_VERSION = 9  # Bump: stacked finalizers (IC_0020 regression fix)
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -545,25 +545,20 @@ End not with advice — but with a question or unresolved pull."""
             )
             return fallback
 
+        rec = intelligence_output.get("recognition") or {}
+        what_i_see = rec.get("what_i_see") or "I see a scene worth naming with care."
+
         if is_category_alignment:
-            rec = intelligence_output.get("recognition") or {}
-            what_i_see = rec.get("what_i_see") or "I see a scene that requires category-aligned language."
             critique = _finalize_category_alignment(
                 critique, what_i_see, rec.get("_category_lexicon_key")
             )
-        elif is_technical_practicality:
-            rec = intelligence_output.get("recognition") or {}
-            what_i_see = rec.get("what_i_see") or "I see a casual or cluttered capture with capture-quality limits."
-            critique = _finalize_technical_critique(critique, what_i_see, rec.get("_technical_stats"))
-        elif is_screenshot_ui:
-            what_i_see = (intelligence_output.get("recognition") or {}).get("what_i_see") or (
-                "I see a screen or UI capture."
+        if is_technical_practicality:
+            critique = _finalize_technical_critique(
+                critique, what_i_see, rec.get("_technical_stats")
             )
+        if is_screenshot_ui:
             critique = _finalize_screenshot_critique(critique, what_i_see)
-        elif is_composition_depth:
-            what_i_see = (intelligence_output.get("recognition") or {}).get("what_i_see") or (
-                "I see a photographic scene with layered structure."
-            )
+        if is_composition_depth:
             critique = _finalize_composition_critique(critique, what_i_see)
 
         _save_cached_expression(cache_key, critique)
