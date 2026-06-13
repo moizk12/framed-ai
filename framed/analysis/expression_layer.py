@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 9  # Bump: stacked finalizers (IC_0020 regression fix)
+EXPRESSION_CACHE_VERSION = 10  # Bump: category-last finalize; skip composition on UI (IC_0020)
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -106,11 +106,16 @@ def _finalize_technical_critique(
 
 def _finalize_category_alignment(critique: str, what_i_see: str, category_key: Optional[str]) -> str:
     """Ensure category-required vocabulary and strip forbidden terms (IC_0020)."""
-    from .intelligence_formatting import count_category_required_terms, get_category_lexicon
+    from .intelligence_formatting import (
+        count_category_required_terms,
+        get_category_lexicon,
+        sanitize_primary_category,
+    )
 
     lex = get_category_lexicon(category_key)
     if not lex:
         return critique or ""
+    what_i_see = sanitize_primary_category(what_i_see or "", None, category_key)
     text = critique or ""
     forbidden = lex.get("forbidden")
     if forbidden:
@@ -547,19 +552,18 @@ End not with advice — but with a question or unresolved pull."""
 
         rec = intelligence_output.get("recognition") or {}
         what_i_see = rec.get("what_i_see") or "I see a scene worth naming with care."
+        category_key = rec.get("_category_lexicon_key")
 
-        if is_category_alignment:
-            critique = _finalize_category_alignment(
-                critique, what_i_see, rec.get("_category_lexicon_key")
-            )
-        if is_technical_practicality:
+        if is_composition_depth and not is_screenshot_ui and category_key != "screenshot_or_ui_image":
+            critique = _finalize_composition_critique(critique, what_i_see)
+        if is_technical_practicality and not is_screenshot_ui:
             critique = _finalize_technical_critique(
                 critique, what_i_see, rec.get("_technical_stats")
             )
         if is_screenshot_ui:
             critique = _finalize_screenshot_critique(critique, what_i_see)
-        if is_composition_depth:
-            critique = _finalize_composition_critique(critique, what_i_see)
+        if is_category_alignment:
+            critique = _finalize_category_alignment(critique, what_i_see, category_key)
 
         _save_cached_expression(cache_key, critique)
         logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")

@@ -214,6 +214,8 @@ def is_composition_depth_scene(visual_evidence: Optional[Dict[str, Any]]) -> boo
     """True when critique should name concrete visual structure (IC_0018)."""
     if not visual_evidence or is_screenshot_ui_scene(visual_evidence):
         return False
+    if is_likely_digital_display(visual_evidence):
+        return False
     scene_gate = visual_evidence.get("scene_gate") or {}
     scene_type = str(scene_gate.get("scene_type", "")).lower()
     return scene_type != "screenshot_ui"
@@ -505,8 +507,12 @@ def sanitize_primary_category(
     if not lex:
         return primary
     forbidden = lex.get("forbidden")
-    if not forbidden or not forbidden.search(primary):
+    if forbidden and forbidden.search(primary):
+        pass  # fall through to category replacement below
+    elif count_category_required_terms(primary, category_key or "") >= 1:
         return primary
+    else:
+        pass  # missing required terms — fall through to replacement
     if category_key == "screenshot_or_ui_image":
         return (
             "I see a screen or digital display showing UI, code, or webpage content — "
