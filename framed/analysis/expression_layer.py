@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 11  # Bump: digital-display guard + technical-last finalize (IC_0020)
+EXPRESSION_CACHE_VERSION = 12  # Bump: composition finalizer append-only (IC_0020 safe resume)
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -57,17 +57,19 @@ def _finalize_screenshot_critique(critique: str, what_i_see: str) -> str:
 
 
 def _finalize_composition_critique(critique: str, what_i_see: str) -> str:
-    """Ensure concrete composition vocabulary (IC_0018)."""
+    """Ensure concrete composition vocabulary (IC_0018); append only — never wipe other IC terms."""
     text = _GENERIC_PRAISE.sub("", critique or "")
     text = re.sub(r"\s{2,}", " ", text).strip()
     if len(_COMPOSITION_TERMS.findall(text)) >= 2:
         return text
-    return (
-        f"{what_i_see}\n\n"
+    composition_block = (
         "The foreground holds the nearest subject or anchor; the midground carries supporting shapes "
         "and overlap; the background sets depth and context. The focal hierarchy should guide where the "
         "eye lands first — note whether clutter, symmetry, or layering strengthens or weakens that path."
     )
+    if text:
+        return f"{text}\n\n{composition_block}".strip()
+    return f"{what_i_see}\n\n{composition_block}".strip()
 
 
 def _finalize_technical_critique(
