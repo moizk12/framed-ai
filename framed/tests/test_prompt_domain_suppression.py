@@ -272,6 +272,18 @@ def _cluttered_interior_ve():
 def test_technical_practicality_scene_cluttered_interior():
     assert is_technical_practicality_scene(_cluttered_interior_ve()) is True
     assert is_technical_practicality_scene(_screenshot_ui_ve()) is False
+
+
+def test_technical_practicality_suppresses_false_screenshot():
+    ve = {
+        "domain_guard_applied": True,
+        "scene_gate": {
+            "scene_type": "screenshot_ui",
+            "signals": {"yolo_objects": ["couch"], "clip_caption": "a surreal photo blending multiple realities"},
+        },
+    }
+    assert is_technical_practicality_scene(ve) is True
+    assert is_screenshot_ui_scene(ve) is False
     assert is_technical_practicality_scene(_photographic_ve()) is False
 
 

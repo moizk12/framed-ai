@@ -4,6 +4,9 @@ import re
 from typing import Any, Dict, List, Optional
 
 _UI_YOLO_OBJECTS = frozenset({"tv", "laptop", "mouse", "keyboard", "monitor", "cell phone"})
+_PHYSICAL_INTERIOR_OBJECTS = frozenset(
+    {"couch", "bed", "chair", "clock", "tie", "book", "vase", "potted plant", "cup", "bottle", "bowl"}
+)
 
 _BANNED_WHEN_SUPPRESSED = re.compile(
     r"\b(organic growth|reclamation|ivy|weathered stone|surface weathering|weathering)\b",
@@ -30,10 +33,56 @@ def is_screenshot_ui_scene(visual_evidence: Optional[Dict[str, Any]]) -> bool:
     """True when scene_gate or signals indicate screenshot/UI/code content (IC_0017)."""
     if not visual_evidence:
         return False
+    if should_suppress_screenshot_routing(visual_evidence):
+        return False
     scene_gate = visual_evidence.get("scene_gate") or {}
     if str(scene_gate.get("scene_type", "")).lower() == "screenshot_ui":
         return True
     return ui_screen_scene_hint(visual_evidence)
+
+
+def is_cluttered_physical_interior(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """Messy room misrouted as screenshot_ui — physical objects, not a UI capture."""
+    if not visual_evidence:
+        return False
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    signals = scene_gate.get("signals") or {}
+    yolo_objects = {str(o).lower() for o in (signals.get("yolo_objects") or [])}
+    if not yolo_objects & _PHYSICAL_INTERIOR_OBJECTS:
+        return False
+    if yolo_objects & (_UI_YOLO_OBJECTS - {"cell phone"}):
+        return False
+    caption = str(signals.get("clip_caption", "") or "").lower()
+    if _UI_CAPTION_HINT.search(caption) and "surreal" not in caption:
+        return False
+    return True
+
+
+def is_phone_snapshot_not_screen(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """Photo of a scene via phone, not a UI/code screenshot."""
+    if not visual_evidence:
+        return False
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    scene_type = str(scene_gate.get("scene_type", "")).lower()
+    signals = scene_gate.get("signals") or {}
+    yolo_objects = {str(o).lower() for o in (signals.get("yolo_objects") or [])}
+    if "person" not in yolo_objects:
+        return False
+    if scene_type in ("people_scene", "street_scene", "landscape", "object_dense"):
+        return True
+    if "cell phone" in yolo_objects and len(yolo_objects) <= 4:
+        return True
+    caption = str(signals.get("clip_caption", "") or "").lower()
+    if re.search(r"\b(blur|motion|snapshot|phone|train|street|crowd)\b", caption):
+        return True
+    return False
+
+
+def should_suppress_screenshot_routing(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """IC_0019: do not treat cluttered interiors or phone snapshots as UI screenshots."""
+    return is_cluttered_physical_interior(visual_evidence) or is_phone_snapshot_not_screen(
+        visual_evidence
+    )
 
 
 def ui_screen_scene_hint(visual_evidence: Optional[Dict[str, Any]]) -> bool:
@@ -243,15 +292,25 @@ def is_technical_practicality_scene(
     perception_technical: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """True when critique should name actionable capture/technical advice (IC_0019)."""
-    if not visual_evidence or is_screenshot_ui_scene(visual_evidence):
+    if not visual_evidence:
+        return False
+    if should_suppress_screenshot_routing(visual_evidence):
+        return True
+    if is_screenshot_ui_scene(visual_evidence):
         return False
     if perception_technical is None:
         perception_technical = visual_evidence.get("perception_technical") or {}
     scene_gate = visual_evidence.get("scene_gate") or {}
     scene_type = str(scene_gate.get("scene_type", "")).lower()
-    if scene_type in ("object_dense", "interior_scene"):
+    if scene_type in ("object_dense", "interior_scene", "people_scene"):
         return True
-    return has_technical_weakness(perception_technical)
+    if has_technical_weakness(perception_technical):
+        return True
+    signals = scene_gate.get("signals") or {}
+    caption = str(signals.get("clip_caption", "") or "").lower()
+    if re.search(r"\b(blur|motion|flat light|snapshot|phone|crop|exposure)\b", caption):
+        return True
+    return False
 
 
 def format_perception_technical_lines(perception_technical: Optional[Dict[str, Any]]) -> List[str]:
