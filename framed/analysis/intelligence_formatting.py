@@ -138,6 +138,7 @@ def routing_prompt_blocks(
         screenshot_critique_prompt_block(visual_evidence),
         composition_critique_prompt_block(visual_evidence, perception_composition),
         technical_critique_prompt_block(visual_evidence, perception_technical),
+        category_alignment_prompt_block(visual_evidence),
     ]
     return "\n".join(p for p in parts if p)
 
@@ -361,6 +362,140 @@ def count_technical_terms(text: str) -> int:
     if not text:
         return 0
     return len(_TECHNICAL_CRITIQUE_TERMS.findall(text))
+
+
+# IC_0020 category lexicon (mirrors TestDaemon category_lexicon.py scorers)
+_CATEGORY_LEXICON: Dict[str, Dict[str, Any]] = {
+    "screenshot_or_ui_image": {
+        "required": re.compile(
+            r"\b(screen|UI|interface|text|layout|code|editor|webpage|"
+            r"screenshot|display|readability|navigation|button)\b",
+            re.I,
+        ),
+        "forbidden": re.compile(
+            r"\b(organic\s+growth|weathered\s+stone|ivy|reclamation|"
+            r"nature'?s?\s+touch|interior\s+surface|green\s+coverage)\b",
+            re.I,
+        ),
+        "required_hint": "screen, UI, interface, layout, text, readability, display, navigation",
+    },
+    "layered_street_composition": {
+        "required": re.compile(
+            r"\b(depth|layer|foreground|background|street|bridge|platform|"
+            r"figure|horizontal|band|graffiti|waterfront|train|rail)\b",
+            re.I,
+        ),
+        "forbidden": re.compile(
+            r"\b(weathered\s+stone|ivy\s+reclaim|reclamation|organic\s+growth)\b",
+            re.I,
+        ),
+        "required_hint": "foreground, background, depth, layer, street, figure",
+    },
+    "cluttered_room_weak_composition": {
+        "required": re.compile(
+            r"\b(clutter|tool|wall|object|shelf|interior|room|chaos|dense|"
+            r"hierarchy|focal|texture|contrast)\b",
+            re.I,
+        ),
+        "forbidden": re.compile(
+            r"\b(bright\s+street\s+scene|outdoor\s+street|sidewalk|"
+            r"weathered\s+stone|ivy\s+reclaim)\b",
+            re.I,
+        ),
+        "required_hint": "clutter, interior, room, objects, focal hierarchy, texture",
+    },
+}
+
+
+def infer_category_lexicon_key(visual_evidence: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Map scene signals to category lexicon key (IC_0020)."""
+    if not visual_evidence:
+        return None
+    if is_screenshot_ui_scene(visual_evidence):
+        return "screenshot_or_ui_image"
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    scene_type = str(scene_gate.get("scene_type", "")).lower()
+    signals = scene_gate.get("signals") or {}
+    yolo_objects = {str(o).lower() for o in (signals.get("yolo_objects") or [])}
+    caption = str(signals.get("clip_caption", "") or "").lower()
+    if scene_type in ("object_dense", "interior_scene"):
+        return "cluttered_room_weak_composition"
+    if yolo_objects & _PHYSICAL_INTERIOR_OBJECTS:
+        return "cluttered_room_weak_composition"
+    if scene_type in ("street_scene", "people_scene"):
+        return "layered_street_composition"
+    if re.search(r"\b(street|sidewalk|urban|pedestrian|bridge|waterfront)\b", caption):
+        return "layered_street_composition"
+    if "person" in yolo_objects or "people" in caption:
+        return "layered_street_composition"
+    return None
+
+
+def is_category_alignment_scene(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """True when category-required vocabulary should be enforced (IC_0020)."""
+    return infer_category_lexicon_key(visual_evidence) is not None
+
+
+def get_category_lexicon(category_key: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not category_key:
+        return None
+    return _CATEGORY_LEXICON.get(category_key)
+
+
+def count_category_required_terms(text: str, category_key: str) -> int:
+    lex = get_category_lexicon(category_key)
+    if not lex or not text:
+        return 0
+    return len(lex["required"].findall(text))
+
+
+def category_alignment_prompt_block(visual_evidence: Optional[Dict[str, Any]]) -> str:
+    """IC_0020: require category-aligned vocabulary; forbid cross-domain terms."""
+    category_key = infer_category_lexicon_key(visual_evidence)
+    lex = get_category_lexicon(category_key)
+    if not lex:
+        return ""
+    return "\n".join(
+        [
+            f"CATEGORY ALIGNMENT ROUTING (IC_0020 — {category_key}):",
+            f"- Critique MUST use category-required terms: {lex['required_hint']}.",
+            "- Do NOT use forbidden domain language for this category (no organic growth on UI, no weathered stone on interiors, etc.).",
+            "- Primary recognition and critique must stay aligned with the inferred category.",
+        ]
+    )
+
+
+def sanitize_primary_category(
+    primary: str,
+    visual_evidence: Optional[Dict[str, Any]],
+    category_key: Optional[str] = None,
+) -> str:
+    """Strip category-forbidden terms from Layer 1 primary when IC_0020 active."""
+    if not primary:
+        return primary
+    category_key = category_key or infer_category_lexicon_key(visual_evidence)
+    lex = get_category_lexicon(category_key)
+    if not lex:
+        return primary
+    forbidden = lex.get("forbidden")
+    if not forbidden or not forbidden.search(primary):
+        return primary
+    if category_key == "screenshot_or_ui_image":
+        return (
+            "I see a screen or digital display showing UI, code, or webpage content — "
+            "layout, text readability, contrast, hierarchy, and crop are the primary subjects."
+        )
+    if category_key == "cluttered_room_weak_composition":
+        return (
+            "I see a cluttered interior room with dense objects, competing focal points, "
+            "and weak hierarchy — clutter and texture dominate the frame."
+        )
+    if category_key == "layered_street_composition":
+        return (
+            "I see a layered street or urban scene with figures, foreground and background depth, "
+            "and horizontal bands of activity."
+        )
+    return forbidden.sub("", primary)
 
 
 def _safe_parse_layer_json(content: str) -> Optional[Dict[str, Any]]:

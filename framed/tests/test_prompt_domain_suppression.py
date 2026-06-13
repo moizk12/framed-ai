@@ -1,16 +1,21 @@
 """IC_0015-B: downstream prompt suppression unit tests."""
 
 from framed.analysis.intelligence_formatting import (
+    category_alignment_prompt_block,
     composition_critique_prompt_block,
+    count_category_required_terms,
     count_composition_terms,
     count_technical_terms,
     domain_guard_prompt_block,
     format_visual_evidence,
+    infer_category_lexicon_key,
+    is_category_alignment_scene,
     is_composition_depth_scene,
     is_screenshot_ui_scene,
     is_technical_practicality_scene,
     organic_evidence_suppressed,
     routing_prompt_blocks,
+    sanitize_primary_category,
     sanitize_primary_screenshot,
     sanitize_primary_when_suppressed,
     screenshot_critique_prompt_block,
@@ -18,6 +23,7 @@ from framed.analysis.intelligence_formatting import (
     ui_screen_scene_hint,
 )
 from framed.analysis.expression_layer import (
+    _finalize_category_alignment,
     _finalize_composition_critique,
     _finalize_technical_critique,
 )
@@ -302,3 +308,28 @@ def test_finalize_technical_critique_injects_terms():
     )
     assert count_technical_terms(out) >= 1
     assert "sharpness" in out.lower() or "focus" in out.lower()
+
+
+def test_category_alignment_infers_screenshot_key():
+    assert infer_category_lexicon_key(_screenshot_ui_ve()) == "screenshot_or_ui_image"
+    assert is_category_alignment_scene(_screenshot_ui_ve()) is True
+
+
+def test_category_alignment_prompt_block_ic0020():
+    block = category_alignment_prompt_block(_screenshot_ui_ve())
+    assert "IC_0020" in block
+    assert "layout" in block.lower() or "screen" in block.lower()
+
+
+def test_sanitize_primary_category_strips_organic_on_ui():
+    ve = _screenshot_ui_ve()
+    bad = "I see weathered stone with organic growth reclaiming the UI."
+    fixed = sanitize_primary_category(bad, ve)
+    assert "organic growth" not in fixed.lower()
+    assert "screen" in fixed.lower() or "UI" in fixed
+
+
+def test_finalize_category_alignment_injects_ui_terms():
+    generic = "An abstract interior scene with poetic mood."
+    out = _finalize_category_alignment(generic, "I see a display.", "screenshot_or_ui_image")
+    assert count_category_required_terms(out, "screenshot_or_ui_image") >= 1

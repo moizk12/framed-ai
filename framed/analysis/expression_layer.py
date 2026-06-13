@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 6  # Bump to invalidate all expression cache entries (IC_0019 routing fix)
+EXPRESSION_CACHE_VERSION = 7  # Bump to invalidate all expression cache entries (IC_0020 category mode)
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -102,6 +102,39 @@ def _finalize_technical_critique(
         f"This reads as a phone or casual capture where technical quality limits the read. {advice.capitalize()}. "
         "Name whether blur, noise, compression, or a rushed crop is the main limiter — and whether a retake would help."
     )
+
+
+def _finalize_category_alignment(critique: str, what_i_see: str, category_key: Optional[str]) -> str:
+    """Ensure category-required vocabulary and strip forbidden terms (IC_0020)."""
+    from .intelligence_formatting import count_category_required_terms, get_category_lexicon
+
+    lex = get_category_lexicon(category_key)
+    if not lex:
+        return critique or ""
+    text = critique or ""
+    forbidden = lex.get("forbidden")
+    if forbidden:
+        text = forbidden.sub("", text)
+        text = re.sub(r"\s{2,}", " ", text).strip()
+    combined = f"{what_i_see}\n\n{text}".strip()
+    if count_category_required_terms(combined, category_key or "") >= 1:
+        return combined
+    if category_key == "screenshot_or_ui_image":
+        addon = (
+            "This is a screen capture or UI display — the layout sets text hierarchy and navigation density. "
+            "Readability depends on contrast; note whether the interface, display, and screen crop show content clearly."
+        )
+    elif category_key == "layered_street_composition":
+        addon = (
+            "The foreground holds the nearest figures; the background sets street depth and layered bands. "
+            "Note how depth, horizontal layers, and the urban street context guide the eye through the frame."
+        )
+    else:
+        addon = (
+            "The interior room reads as clutter — dense objects compete for focal hierarchy and texture contrast. "
+            "Name the clutter, room density, and competing objects directly."
+        )
+    return f"{what_i_see}\n\n{text}\n\n{addon}".strip()
 
 
 def _hitl_calibration_state_for_cache() -> str:
@@ -363,6 +396,16 @@ def generate_poetic_critique(
 - Tone: warm mentor giving actionable capture advice — not gallery placard poetry alone.
 """
 
+        category_section = ""
+        if rec.get("_category_alignment"):
+            cat_key = rec.get("_category_lexicon_key") or "category"
+            category_section = f"""
+**CATEGORY ALIGNMENT MODE (IC_0020 — {cat_key}):**
+- Use category-required vocabulary; stay aligned with the inferred scene category.
+- FORBIDDEN: cross-domain terms (organic growth on UI, weathered stone on cluttered interiors, fine-art poetry on screenshots).
+- Tone: warm mentor whose language matches what the image actually is.
+"""
+
         rules_section = ""
         try:
             from framed.analysis.interpretive_memory import get_active_rules
@@ -385,7 +428,7 @@ DESCRIPTION: {mode_config["description"]}
 TONE: {mode_config["tone"]}
 VOICE: {mode_config["voice"]}
 {constraints_section}
-{screenshot_section}{composition_section}{technical_section}
+{screenshot_section}{composition_section}{technical_section}{category_section}
 {rules_section}
 
 MENTOR INSTRUCTION:
@@ -443,9 +486,12 @@ End not with advice — but with a question or unresolved pull."""
         is_screenshot_ui = bool((intelligence_output.get("recognition") or {}).get("_screenshot_ui"))
         is_composition_depth = bool((intelligence_output.get("recognition") or {}).get("_composition_depth"))
         is_technical_practicality = bool((intelligence_output.get("recognition") or {}).get("_technical_practicality"))
+        is_category_alignment = bool((intelligence_output.get("recognition") or {}).get("_category_alignment"))
         temp = 0.8
         if is_screenshot_ui:
             temp = 0.45
+        elif is_category_alignment:
+            temp = 0.48
         elif is_technical_practicality:
             temp = 0.5
         elif is_composition_depth:
@@ -503,6 +549,12 @@ End not with advice — but with a question or unresolved pull."""
             rec = intelligence_output.get("recognition") or {}
             what_i_see = rec.get("what_i_see") or "I see a casual or cluttered capture with capture-quality limits."
             critique = _finalize_technical_critique(critique, what_i_see, rec.get("_technical_stats"))
+        elif is_category_alignment:
+            rec = intelligence_output.get("recognition") or {}
+            what_i_see = rec.get("what_i_see") or "I see a scene that requires category-aligned language."
+            critique = _finalize_category_alignment(
+                critique, what_i_see, rec.get("_category_lexicon_key")
+            )
         elif is_screenshot_ui:
             what_i_see = (intelligence_output.get("recognition") or {}).get("what_i_see") or (
                 "I see a screen or UI capture."

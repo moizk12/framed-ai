@@ -13,8 +13,11 @@ from .intelligence_formatting import (
     format_user_history,
     is_composition_depth_scene,
     is_screenshot_ui_scene,
+    is_category_alignment_scene,
     is_technical_practicality_scene,
+    infer_category_lexicon_key,
     routing_prompt_blocks,
+    sanitize_primary_category,
     sanitize_primary_screenshot,
     sanitize_primary_when_suppressed,
 )
@@ -122,6 +125,10 @@ SCENE ROUTING (IC_0019):
 - On cluttered interiors, object-dense scenes, or weak phone captures: name focus, sharpness, blur, exposure, flat light, noise, crop, or retake.
 - Do NOT give mood-only critique without actionable technical vocabulary when capture quality is weak.
 
+SCENE ROUTING (IC_0020):
+- Stay aligned with inferred category: UI/screenshot rows need screen/layout/text terms; street rows need depth/layer/foreground; cluttered interiors need clutter/room/focal hierarchy.
+- Do NOT use category-forbidden language (organic growth on UI, weathered stone on interiors).
+
 REQUIREMENTS:
 - State what you see clearly and concretely (e.g. "I see a bright living room interior with a blue sofa and plants by the window").
 - NOT tentative: "I think I see..." or "This might be..."
@@ -172,13 +179,20 @@ OUTPUT FORMAT (JSON):
             recognition["confidence"] = 0.0
 
         recognition["what_i_see"] = sanitize_primary_screenshot(
-            sanitize_primary_when_suppressed(
-                recognition.get("what_i_see", ""), visual_evidence
+            sanitize_primary_category(
+                sanitize_primary_when_suppressed(
+                    recognition.get("what_i_see", ""), visual_evidence
+                ),
+                visual_evidence,
             ),
             visual_evidence,
         )
         if is_screenshot_ui_scene(visual_evidence):
             recognition["_screenshot_ui"] = True
+        if is_category_alignment_scene(visual_evidence):
+            cat_key = infer_category_lexicon_key(visual_evidence)
+            recognition["_category_alignment"] = True
+            recognition["_category_lexicon_key"] = cat_key
         if is_composition_depth_scene(visual_evidence):
             recognition["_composition_depth"] = True
         if is_technical_practicality_scene(visual_evidence):
@@ -896,6 +910,13 @@ focal point or hierarchy, depth/layering, and visual path. No generic praise wit
 TECHNICAL PRACTICALITY MODE (IC_0019): mentor.observations MUST include focus, sharpness, blur,
 exposure, flat light, noise, crop, or retake advice. No mood-only prose on weak or cluttered captures.
 """
+        category_section = ""
+        if recognition.get("_category_alignment"):
+            cat_key = recognition.get("_category_lexicon_key") or "category"
+            category_section = f"""
+CATEGORY ALIGNMENT MODE (IC_0020 — {cat_key}): mentor.observations MUST use category-required vocabulary
+and avoid forbidden cross-domain terms (no organic growth on UI, no weathered stone on interiors).
+"""
 
         prompt = f"""
 You are FRAMED's reasoning engine. Output layers 2–7 in one JSON. RECOGNITION IS READ-ONLY EVIDENCE. Do not modify it.
@@ -904,7 +925,7 @@ CURRENT RECOGNITION (read-only):
 "{rec_text}"
 EVIDENCE: {evidence_text}
 CONFIDENCE: {recognition.get('confidence', 0.0):.2f}
-{screenshot_section}{composition_section}{technical_section}
+{screenshot_section}{composition_section}{technical_section}{category_section}
 PAST INTERPRETATIONS: {past_text}
 USER HISTORY: {user_text}
 

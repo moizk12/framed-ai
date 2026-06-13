@@ -11,6 +11,7 @@ from .intelligence_formatting import (
     format_visual_evidence,
     format_temporal_memory,
     format_user_history,
+    infer_category_lexicon_key,
 )
 from .ambiguity import (
     compute_plausibility,
@@ -67,6 +68,7 @@ def framed_intelligence(
         semantics = perception.get("semantics", {}) or {}
         composition = perception.get("composition", {}) or {}
         technical = perception.get("technical", {}) or {}
+        category_key = infer_category_lexicon_key(visual_evidence) if visual_evidence else None
         clip_data = semantics
         # Objects: YOLO may store in perception.composition or perception.objects
         objects_raw = perception.get("objects", {})
@@ -104,6 +106,8 @@ def framed_intelligence(
             ve_l1["perception_composition"] = composition
         if technical.get("available") or technical.get("brightness") is not None:
             ve_l1["perception_technical"] = technical
+        if category_key:
+            ve_l1["inferred_category_key"] = category_key
         recognition = reason_about_recognition(ve_l1, require_multiple_hypotheses=force_multi)
 
         # === AMBIGUITY & DISAGREEMENT (post-Layer 1) ===
