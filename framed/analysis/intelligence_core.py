@@ -98,7 +98,10 @@ def framed_intelligence(
         # === LAYER 1: RECOGNITION (with optional multi-hypothesis) ===
         force_multi = plausibility.get("force_multi_hypothesis", False)
         logger.info(f"Layer 1: Certain Recognition (multi_hypothesis={force_multi})...")
-        recognition = reason_about_recognition(visual_evidence, require_multiple_hypotheses=force_multi)
+        ve_l1 = dict(visual_evidence)
+        if composition.get("available"):
+            ve_l1["perception_composition"] = composition
+        recognition = reason_about_recognition(ve_l1, require_multiple_hypotheses=force_multi)
 
         # === AMBIGUITY & DISAGREEMENT (post-Layer 1) ===
         ambiguity_sensitivity_bump = hitl_calibration.get("ambiguity_sensitivity_bump", 0)

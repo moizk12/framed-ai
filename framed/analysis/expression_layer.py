@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 3  # Bump to invalidate all expression cache entries (IC_0017 screenshot mode)
+EXPRESSION_CACHE_VERSION = 4  # Bump to invalidate all expression cache entries (IC_0018 composition mode)
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -23,6 +23,15 @@ _UI_CRITIQUE_TERMS = re.compile(
 )
 _SCREENSHOT_BANNED = re.compile(
     r"\b(organic\s+growth|weathered\s+stone|reclamation|ivy|nature'?s?\s+touch|fine\s+art|street\s+scene)\b",
+    re.I,
+)
+_COMPOSITION_TERMS = re.compile(
+    r"\b(foreground|midground|background|focal point|visual hierarchy|depth|layering|"
+    r"framing|balance|leading lines?|negative space|horizon)\b",
+    re.I,
+)
+_GENERIC_PRAISE = re.compile(
+    r"\b(nice composition|strong mood|beautiful|stunning|breathtaking|gorgeous)\b",
     re.I,
 )
 
@@ -40,6 +49,20 @@ def _finalize_screenshot_critique(critique: str, what_i_see: str) -> str:
             "The crop may clip page chrome, and screen-photo quality limits how cleanly UI details register."
         )
     return text
+
+
+def _finalize_composition_critique(critique: str, what_i_see: str) -> str:
+    """Ensure concrete composition vocabulary (IC_0018)."""
+    text = _GENERIC_PRAISE.sub("", critique or "")
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    if len(_COMPOSITION_TERMS.findall(text)) >= 2:
+        return text
+    return (
+        f"{what_i_see}\n\n"
+        "The foreground holds the nearest subject or anchor; the midground carries supporting shapes "
+        "and overlap; the background sets depth and context. The focal hierarchy should guide where the "
+        "eye lands first — note whether clutter, symmetry, or layering strengthens or weakens that path."
+    )
 
 
 def _hitl_calibration_state_for_cache() -> str:
@@ -280,6 +303,17 @@ def generate_poetic_critique(
 - Tone: direct UX/design mentor reviewing a screenshot — warm but specific, not gallery placard poetry.
 """
 
+        composition_section = ""
+        rec = intelligence_output.get("recognition") or {}
+        if rec.get("_composition_depth") and not rec.get("_screenshot_ui"):
+            composition_section = """
+**COMPOSITION DEPTH MODE (IC_0018 — overrides generic praise):**
+- Name foreground, midground, background, focal point/hierarchy, depth, layering, and visual path.
+- Use terms: foreground, midground, background, focal point, visual hierarchy, depth, framing, balance.
+- FORBIDDEN: generic praise alone (nice composition, beautiful, stunning) without structural vocabulary.
+- Tone: warm mentor naming how the frame is built — not mood-only gallery prose.
+"""
+
         rules_section = ""
         try:
             from framed.analysis.interpretive_memory import get_active_rules
@@ -302,7 +336,7 @@ DESCRIPTION: {mode_config["description"]}
 TONE: {mode_config["tone"]}
 VOICE: {mode_config["voice"]}
 {constraints_section}
-{screenshot_section}
+{screenshot_section}{composition_section}
 {rules_section}
 
 MENTOR INSTRUCTION:
@@ -358,11 +392,17 @@ Your critique should read like a quiet but demanding conversation between a ment
 End not with advice — but with a question or unresolved pull."""
         
         is_screenshot_ui = bool((intelligence_output.get("recognition") or {}).get("_screenshot_ui"))
+        is_composition_depth = bool((intelligence_output.get("recognition") or {}).get("_composition_depth"))
+        temp = 0.8
+        if is_screenshot_ui:
+            temp = 0.45
+        elif is_composition_depth:
+            temp = 0.55
         result = call_model_b(
             prompt=prompt,
             system_prompt=system_prompt,
             max_tokens=1500,  # Cap for latency; sufficient for critique
-            temperature=0.45 if is_screenshot_ui else 0.8,
+            temperature=temp,
         )
         
         logger.info(f"Using expression model: {result.get('model', 'unknown')}")
@@ -412,6 +452,11 @@ End not with advice — but with a question or unresolved pull."""
                 "I see a screen or UI capture."
             )
             critique = _finalize_screenshot_critique(critique, what_i_see)
+        elif is_composition_depth:
+            what_i_see = (intelligence_output.get("recognition") or {}).get("what_i_see") or (
+                "I see a photographic scene with layered structure."
+            )
+            critique = _finalize_composition_critique(critique, what_i_see)
 
         _save_cached_expression(cache_key, critique)
         logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")

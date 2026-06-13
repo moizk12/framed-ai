@@ -11,6 +11,7 @@ from .intelligence_formatting import (
     format_visual_evidence,
     format_temporal_memory,
     format_user_history,
+    is_composition_depth_scene,
     is_screenshot_ui_scene,
     routing_prompt_blocks,
     sanitize_primary_screenshot,
@@ -112,6 +113,10 @@ SCENE ROUTING (IC_0017):
 - scene_type=screenshot_ui → screen/UI/code/webpage screenshot/photo-of-screen; primary MUST name display/UI/text/code.
 - Mentor observations for screenshot_ui MUST cover layout, readability, hierarchy, contrast, glare, crop, text density — NOT mood, symbolism, or outdoor/street/room photography.
 
+SCENE ROUTING (IC_0018):
+- For photographic scenes (not screenshot_ui): name foreground, midground, background, focal hierarchy, depth/layering, and visual path.
+- Do NOT give generic composition praise without structural vocabulary.
+
 REQUIREMENTS:
 - State what you see clearly and concretely (e.g. "I see a bright living room interior with a blue sofa and plants by the window").
 - NOT tentative: "I think I see..." or "This might be..."
@@ -169,6 +174,8 @@ OUTPUT FORMAT (JSON):
         )
         if is_screenshot_ui_scene(visual_evidence):
             recognition["_screenshot_ui"] = True
+        if is_composition_depth_scene(visual_evidence):
+            recognition["_composition_depth"] = True
         if require_multiple_hypotheses and recognition.get("hypotheses"):
             for hyp in recognition["hypotheses"]:
                 if isinstance(hyp, dict) and hyp.get("conclusion"):
@@ -863,6 +870,12 @@ def reason_about_layers_2_7(
 SCREENSHOT/UI MODE (IC_0017): mentor.observations MUST include layout, readability, text hierarchy,
 contrast, glare, crop, and screen-capture quality. Do NOT write street, room, or fine-art observations.
 """
+        composition_section = ""
+        if recognition.get("_composition_depth") and not recognition.get("_screenshot_ui"):
+            composition_section = """
+COMPOSITION DEPTH MODE (IC_0018): mentor.observations MUST name foreground, midground, background,
+focal point or hierarchy, depth/layering, and visual path. No generic praise without structure.
+"""
 
         prompt = f"""
 You are FRAMED's reasoning engine. Output layers 2–7 in one JSON. RECOGNITION IS READ-ONLY EVIDENCE. Do not modify it.
@@ -871,7 +884,7 @@ CURRENT RECOGNITION (read-only):
 "{rec_text}"
 EVIDENCE: {evidence_text}
 CONFIDENCE: {recognition.get('confidence', 0.0):.2f}
-{screenshot_section}
+{screenshot_section}{composition_section}
 PAST INTERPRETATIONS: {past_text}
 USER HISTORY: {user_text}
 

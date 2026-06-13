@@ -1,8 +1,11 @@
 """IC_0015-B: downstream prompt suppression unit tests."""
 
 from framed.analysis.intelligence_formatting import (
+    composition_critique_prompt_block,
+    count_composition_terms,
     domain_guard_prompt_block,
     format_visual_evidence,
+    is_composition_depth_scene,
     is_screenshot_ui_scene,
     organic_evidence_suppressed,
     routing_prompt_blocks,
@@ -11,6 +14,7 @@ from framed.analysis.intelligence_formatting import (
     screenshot_critique_prompt_block,
     ui_screen_scene_hint,
 )
+from framed.analysis.expression_layer import _finalize_composition_critique
 
 
 def _suppressed_ve(**overrides):
@@ -215,3 +219,37 @@ def test_routing_prompt_blocks_include_screenshot_without_domain_guard():
     assert not organic_evidence_suppressed(ve)
     block = routing_prompt_blocks(ve)
     assert "SCREEN/UI" in block
+
+
+def _photographic_ve():
+    return {
+        "domain_guard_applied": False,
+        "organic_growth": {"applicable": True, "green_coverage": 0.1},
+        "scene_gate": {
+            "scene_type": "street_scene",
+            "is_surface_study": False,
+            "signals": {"clip_caption": "people on a city street"},
+        },
+    }
+
+
+def test_composition_depth_scene_photographic():
+    assert is_composition_depth_scene(_photographic_ve()) is True
+    assert is_composition_depth_scene(_screenshot_ui_ve()) is False
+
+
+def test_composition_critique_prompt_block_ic0018():
+    block = composition_critique_prompt_block(
+        _photographic_ve(),
+        {"available": True, "subject_framing": {"position": "center", "size": "medium"}},
+    )
+    assert "IC_0018" in block
+    assert "foreground" in block.lower()
+    assert "midground" in block.lower()
+
+
+def test_finalize_composition_critique_injects_structure():
+    generic = "A beautiful stunning scene with strong mood."
+    out = _finalize_composition_critique(generic, "I see a layered street scene.")
+    assert count_composition_terms(out) >= 2
+    assert "foreground" in out.lower()

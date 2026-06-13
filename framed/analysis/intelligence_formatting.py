@@ -74,11 +74,17 @@ def screenshot_critique_prompt_block(visual_evidence: Optional[Dict[str, Any]]) 
     )
 
 
-def routing_prompt_blocks(visual_evidence: Optional[Dict[str, Any]]) -> str:
-    """Combined domain-guard + screenshot routing prompt constraints."""
+def routing_prompt_blocks(
+    visual_evidence: Optional[Dict[str, Any]],
+    perception_composition: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Combined domain-guard + screenshot + composition routing prompt constraints."""
+    if perception_composition is None and visual_evidence:
+        perception_composition = visual_evidence.get("perception_composition")
     parts = [
         domain_guard_prompt_block(visual_evidence),
         screenshot_critique_prompt_block(visual_evidence),
+        composition_critique_prompt_block(visual_evidence, perception_composition),
     ]
     return "\n".join(p for p in parts if p)
 
@@ -141,6 +147,68 @@ def sanitize_primary_screenshot(primary: str, visual_evidence: Optional[Dict[str
             "layout, text readability, contrast, hierarchy, and crop are the primary subjects."
         )
     return primary
+
+
+_COMPOSITION_DEPTH_TERMS = re.compile(
+    r"\b(foreground|midground|background|focal point|visual hierarchy|depth|layering|"
+    r"framing|balance|leading lines?|negative space|horizon)\b",
+    re.I,
+)
+
+
+def is_composition_depth_scene(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """True when critique should name concrete visual structure (IC_0018)."""
+    if not visual_evidence or is_screenshot_ui_scene(visual_evidence):
+        return False
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    scene_type = str(scene_gate.get("scene_type", "")).lower()
+    return scene_type != "screenshot_ui"
+
+
+def format_perception_composition_lines(perception_composition: Optional[Dict[str, Any]]) -> List[str]:
+    """Deterministic composition cues for Model A prompts."""
+    if not perception_composition or not perception_composition.get("available"):
+        return []
+    lines: List[str] = []
+    subject_framing = perception_composition.get("subject_framing") or {}
+    if subject_framing:
+        position = subject_framing.get("position", "")
+        size = subject_framing.get("size", "")
+        if position or size:
+            lines.append(f"- Subject framing: position={position}, size={size}")
+    for key in ("symmetry", "line_pattern", "line_style"):
+        val = perception_composition.get(key)
+        if val:
+            lines.append(f"- Composition signal: {key}={val}")
+    return lines
+
+
+def composition_critique_prompt_block(
+    visual_evidence: Optional[Dict[str, Any]],
+    perception_composition: Optional[Dict[str, Any]] = None,
+) -> str:
+    """IC_0018: require foreground/midground/background and focal hierarchy in critique."""
+    if not is_composition_depth_scene(visual_evidence):
+        return ""
+    comp_lines = format_perception_composition_lines(perception_composition)
+    comp_section = "\n".join(comp_lines) if comp_lines else "- (use visible objects and scene_gate to infer depth layers)"
+    return "\n".join(
+        [
+            "COMPOSITION DEPTH ROUTING (IC_0018):",
+            "- Critique MUST name concrete visual structure: foreground, midground, background, focal point or hierarchy, depth/layering.",
+            "- Mention visual path or how the eye travels through the frame when layers are visible.",
+            "- FORBIDDEN: generic praise alone (nice composition, beautiful, stunning) without structural vocabulary.",
+            "- Use perception composition signals when present:",
+            comp_section,
+        ]
+    )
+
+
+def count_composition_terms(text: str) -> int:
+    """Count IC_0018 composition vocabulary terms (for finalize guard)."""
+    if not text:
+        return 0
+    return len(_COMPOSITION_DEPTH_TERMS.findall(text))
 
 
 def _safe_parse_layer_json(content: str) -> Optional[Dict[str, Any]]:
