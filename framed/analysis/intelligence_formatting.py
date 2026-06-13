@@ -295,6 +295,8 @@ def is_technical_practicality_scene(
     """True when critique should name actionable capture/technical advice (IC_0019)."""
     if not visual_evidence:
         return False
+    if is_likely_digital_display(visual_evidence):
+        return False
     if should_suppress_screenshot_routing(visual_evidence):
         return True
     if is_screenshot_ui_scene(visual_evidence):
