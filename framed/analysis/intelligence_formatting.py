@@ -432,6 +432,27 @@ def is_likely_digital_display(visual_evidence: Optional[Dict[str, Any]]) -> bool
     ed = float(mc.get("edge_degradation", 0) or 0)
     cu = float(mc.get("color_uniformity", 0) or 0)
     if green < 0.01 and ed > 0.25 and cu > 0.9:
+        scene_type = str(scene_gate.get("scene_type", "")).lower()
+        if scene_type in ("people_scene", "street_scene", "urban_scene"):
+            return False
+        yolo_objects = {str(o).lower() for o in (signals.get("yolo_objects") or [])}
+        if yolo_objects & {
+            "person",
+            "car",
+            "bus",
+            "train",
+            "bicycle",
+            "motorcycle",
+            "truck",
+            "chair",
+            "bench",
+        }:
+            return False
+        if re.search(
+            r"\b(street|urban|pedestrian|motion|crowd|train|city|people)\b",
+            caption,
+        ):
+            return False
         return True
     return False
 

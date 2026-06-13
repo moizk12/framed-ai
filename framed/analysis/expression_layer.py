@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 10  # Bump: category-last finalize; skip composition on UI (IC_0020)
+EXPRESSION_CACHE_VERSION = 11  # Bump: digital-display guard + technical-last finalize (IC_0020)
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -317,6 +317,32 @@ MENTOR_MODES = {
 # EXPRESSION GENERATION
 # ========================================================
 
+def _apply_expression_finalizers(
+    critique: str,
+    intelligence_output: Dict[str, Any],
+) -> str:
+    """Deterministic IC_0017–0020 guards; always run after Model B or cache read."""
+    rec = intelligence_output.get("recognition") or {}
+    what_i_see = rec.get("what_i_see") or "I see a scene worth naming with care."
+    category_key = rec.get("_category_lexicon_key")
+    is_screenshot_ui = bool(rec.get("_screenshot_ui"))
+    is_composition_depth = bool(rec.get("_composition_depth"))
+    is_technical_practicality = bool(rec.get("_technical_practicality"))
+    is_category_alignment = bool(rec.get("_category_alignment"))
+
+    if is_composition_depth and not is_screenshot_ui and category_key != "screenshot_or_ui_image":
+        critique = _finalize_composition_critique(critique, what_i_see)
+    if is_screenshot_ui:
+        critique = _finalize_screenshot_critique(critique, what_i_see)
+    if is_category_alignment:
+        critique = _finalize_category_alignment(critique, what_i_see, category_key)
+    if is_technical_practicality and not is_screenshot_ui:
+        critique = _finalize_technical_critique(
+            critique, what_i_see, rec.get("_technical_stats")
+        )
+    return critique
+
+
 def generate_poetic_critique(
     intelligence_output: Dict[str, Any],
     mentor_mode: str = "Balanced Mentor",
@@ -532,6 +558,7 @@ End not with advice — but with a question or unresolved pull."""
                     )
                     critique2 = (retry.get("content", "") or "").strip()
                     if critique2:
+                        critique2 = _apply_expression_finalizers(critique2, intelligence_output)
                         _save_cached_expression(cache_key, critique2)
                         logger.info(f"Expression layer (Model B) retry succeeded: {len(critique2)} characters")
                         return critique2
@@ -550,20 +577,7 @@ End not with advice — but with a question or unresolved pull."""
             )
             return fallback
 
-        rec = intelligence_output.get("recognition") or {}
-        what_i_see = rec.get("what_i_see") or "I see a scene worth naming with care."
-        category_key = rec.get("_category_lexicon_key")
-
-        if is_composition_depth and not is_screenshot_ui and category_key != "screenshot_or_ui_image":
-            critique = _finalize_composition_critique(critique, what_i_see)
-        if is_technical_practicality and not is_screenshot_ui:
-            critique = _finalize_technical_critique(
-                critique, what_i_see, rec.get("_technical_stats")
-            )
-        if is_screenshot_ui:
-            critique = _finalize_screenshot_critique(critique, what_i_see)
-        if is_category_alignment:
-            critique = _finalize_category_alignment(critique, what_i_see, category_key)
+        critique = _apply_expression_finalizers(critique, intelligence_output)
 
         _save_cached_expression(cache_key, critique)
         logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")
