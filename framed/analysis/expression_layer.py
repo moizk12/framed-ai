@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 7  # Bump to invalidate all expression cache entries (IC_0020 category mode)
+EXPRESSION_CACHE_VERSION = 8  # Bump to invalidate all expression cache entries (IC_0020 display heuristic)
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -545,16 +545,16 @@ End not with advice — but with a question or unresolved pull."""
             )
             return fallback
 
-        if is_technical_practicality:
-            rec = intelligence_output.get("recognition") or {}
-            what_i_see = rec.get("what_i_see") or "I see a casual or cluttered capture with capture-quality limits."
-            critique = _finalize_technical_critique(critique, what_i_see, rec.get("_technical_stats"))
-        elif is_category_alignment:
+        if is_category_alignment:
             rec = intelligence_output.get("recognition") or {}
             what_i_see = rec.get("what_i_see") or "I see a scene that requires category-aligned language."
             critique = _finalize_category_alignment(
                 critique, what_i_see, rec.get("_category_lexicon_key")
             )
+        elif is_technical_practicality:
+            rec = intelligence_output.get("recognition") or {}
+            what_i_see = rec.get("what_i_see") or "I see a casual or cluttered capture with capture-quality limits."
+            critique = _finalize_technical_critique(critique, what_i_see, rec.get("_technical_stats"))
         elif is_screenshot_ui:
             what_i_see = (intelligence_output.get("recognition") or {}).get("what_i_see") or (
                 "I see a screen or UI capture."

@@ -315,6 +315,21 @@ def test_category_alignment_infers_screenshot_key():
     assert is_category_alignment_scene(_screenshot_ui_ve()) is True
 
 
+def test_likely_digital_display_from_screen_stats():
+    ve = {
+        "organic_growth": {"green_coverage": 0.0, "applicable": False},
+        "material_condition": {"edge_degradation": 0.6, "color_uniformity": 0.95},
+        "scene_gate": {
+            "scene_type": "interior_scene",
+            "signals": {"clip_caption": "a herd of animals moving dynamically", "yolo_objects": []},
+        },
+    }
+    from framed.analysis.intelligence_formatting import is_likely_digital_display
+
+    assert is_likely_digital_display(ve) is True
+    assert infer_category_lexicon_key(ve) == "screenshot_or_ui_image"
+
+
 def test_category_alignment_prompt_block_ic0020():
     block = category_alignment_prompt_block(_screenshot_ui_ve())
     assert "IC_0020" in block

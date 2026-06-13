@@ -193,6 +193,8 @@ OUTPUT FORMAT (JSON):
             cat_key = infer_category_lexicon_key(visual_evidence)
             recognition["_category_alignment"] = True
             recognition["_category_lexicon_key"] = cat_key
+            if cat_key == "screenshot_or_ui_image":
+                recognition["_screenshot_ui"] = True
         if is_composition_depth_scene(visual_evidence):
             recognition["_composition_depth"] = True
         if is_technical_practicality_scene(visual_evidence):

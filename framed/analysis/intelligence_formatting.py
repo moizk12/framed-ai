@@ -407,11 +407,36 @@ _CATEGORY_LEXICON: Dict[str, Dict[str, Any]] = {
 }
 
 
+def is_likely_digital_display(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """Heuristic for UI/screenshot when scene_gate mislabels as interior or unknown."""
+    if not visual_evidence:
+        return False
+    if ui_screen_scene_hint(visual_evidence):
+        return True
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    signals = scene_gate.get("signals") or {}
+    caption = str(signals.get("clip_caption", "") or "").lower()
+    if re.search(
+        r"\b(webpage|website|arxiv|github|browser|news|interface on screen|"
+        r"lines of code|geometric shapes|text on|monitor|display)\b",
+        caption,
+    ):
+        return True
+    mc = visual_evidence.get("material_condition") or {}
+    og = visual_evidence.get("organic_growth") or {}
+    green = float(og.get("green_coverage", 1.0))
+    ed = float(mc.get("edge_degradation", 0) or 0)
+    cu = float(mc.get("color_uniformity", 0) or 0)
+    if green < 0.01 and ed > 0.25 and cu > 0.9:
+        return True
+    return False
+
+
 def infer_category_lexicon_key(visual_evidence: Optional[Dict[str, Any]]) -> Optional[str]:
     """Map scene signals to category lexicon key (IC_0020)."""
     if not visual_evidence:
         return None
-    if is_screenshot_ui_scene(visual_evidence):
+    if is_screenshot_ui_scene(visual_evidence) or is_likely_digital_display(visual_evidence):
         return "screenshot_or_ui_image"
     scene_gate = visual_evidence.get("scene_gate") or {}
     scene_type = str(scene_gate.get("scene_type", "")).lower()
