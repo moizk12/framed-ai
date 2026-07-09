@@ -1,7 +1,7 @@
 """Perception helpers (pure image-path analyzers)."""
 
 from collections import Counter
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -425,4 +425,91 @@ def detect_objects_and_framing(image_path: str, confidence_threshold: float = 0.
         "framing_description": framing_desc,
         "spatial_interpretation": spatial_interpretation,
     }
+
+
+_UI_CLIP_TOKENS = frozenset({"screen", "ui", "code", "editor", "monitor", "display", "interface", "laptop"})
+_UI_YOLO_OBJECTS = frozenset({"tv", "laptop", "mouse", "keyboard", "monitor", "cell phone"})
+_PERSON_YOLO = frozenset({"person", "people"})
+_MOCK_GROUNDING_BOXES = [
+    {"label": "ui_element", "x": 0.1, "y": 0.1, "w": 0.8, "h": 0.7, "confidence": 0.9, "source": "mock"},
+    {"label": "object", "x": 0.2, "y": 0.3, "w": 0.4, "h": 0.4, "confidence": 0.85, "source": "mock"},
+]
+
+
+def _box_dict(label: str, x: float, y: float, w: float, h: float, confidence: float, source: str) -> Dict[str, Any]:
+    return {
+        "label": label,
+        "x": round(x, 4),
+        "y": round(y, 4),
+        "w": round(w, 4),
+        "h": round(h, 4),
+        "confidence": round(confidence, 4),
+        "source": source,
+    }
+
+
+def _heuristic_grounding_probe(
+    image_path: str,
+    visual_evidence: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Phase-1 fallback: YOLO/CLIP/green heuristics — no critique impact."""
+    ve = visual_evidence or {}
+    boxes: List[Dict[str, Any]] = []
+    try:
+        objects = [str(o).lower() for o in detect_objects(image_path)]
+    except Exception:
+        objects = []
+    try:
+        clip = get_clip_description(image_path)
+        caption = str(clip.get("caption") or "").lower()
+    except Exception:
+        caption = ""
+
+    ui_hit = bool({o for o in objects} & _UI_YOLO_OBJECTS) or any(tok in caption for tok in _UI_CLIP_TOKENS)
+    if ui_hit:
+        boxes.append(_box_dict("ui_element", 0.08, 0.06, 0.84, 0.82, 0.75, "heuristic"))
+        if any(tok in caption for tok in ("text", "label", "title", "button")):
+            boxes.append(_box_dict("text", 0.15, 0.12, 0.55, 0.12, 0.7, "heuristic"))
+
+    if any(o in _PERSON_YOLO for o in objects):
+        boxes.append(_box_dict("person", 0.25, 0.2, 0.35, 0.55, 0.8, "heuristic"))
+    elif objects and objects != ["no objects detected"]:
+        boxes.append(_box_dict("subject", 0.2, 0.25, 0.5, 0.5, 0.65, "heuristic"))
+
+    if not ui_hit and objects and objects != ["no objects detected"]:
+        boxes.append(_box_dict("object", 0.18, 0.22, 0.45, 0.42, 0.7, "heuristic"))
+
+    og = ve.get("organic_growth") or {}
+    gc = float(og.get("green_coverage", 0.0) or 0.0)
+    if gc >= 0.05:
+        boxes.append(_box_dict("plant_candidate", 0.3, 0.4, 0.25, 0.2, min(0.9, gc + 0.5), "heuristic"))
+
+    return boxes
+
+
+def run_dense_grounding_probe(
+    image_path: str,
+    scene_type: Optional[str] = None,
+    visual_evidence: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    IC_0022: optional dense grounding probe — stores candidate boxes only.
+    Backend order: mock (test) -> locateanything (future) -> heuristic fallback.
+    """
+    del scene_type  # reserved for future scene-aware refinement
+    try:
+        import config
+
+        backend = getattr(config, "GROUNDING_PROBE_BACKEND", "auto")
+    except Exception:
+        backend = "auto"
+
+    if backend == "mock":
+        return list(_MOCK_GROUNDING_BOXES)
+
+    if backend in ("locateanything", "auto"):
+        # Phase 1: LocateAnything not wired; fall through to heuristic
+        pass
+
+    return _heuristic_grounding_probe(image_path, visual_evidence=visual_evidence)
 

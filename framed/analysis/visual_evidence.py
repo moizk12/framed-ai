@@ -41,6 +41,45 @@ class ThemeClaimLicense:
         return asdict(self)
 
 
+@dataclass
+class GroundingBox:
+    """IC_0022: candidate region box for dense grounding probe (evidence only)."""
+
+    label: str
+    x: float
+    y: float
+    w: float
+    h: float
+    confidence: float
+    source: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+def grounding_boxes_to_dicts(boxes: List[GroundingBox]) -> List[Dict[str, Any]]:
+    return [b.to_dict() for b in boxes]
+
+
+def _attach_grounding_probe(visual_evidence: Dict[str, Any], image_path: str) -> None:
+    """Attach grounding[] when IC_0022 flag enabled; empty list when off."""
+    try:
+        import config
+
+        if not getattr(config, "ENABLE_DENSE_GROUNDING_PROBE", False):
+            visual_evidence["grounding"] = []
+            return
+        from .perception import run_dense_grounding_probe
+
+        visual_evidence["grounding"] = run_dense_grounding_probe(
+            image_path,
+            visual_evidence=visual_evidence,
+        )
+    except Exception as exc:
+        logger.warning("Dense grounding probe failed: %s", exc)
+        visual_evidence["grounding"] = []
+
+
 def _is_ui_or_digital_scene(visual_evidence: Optional[Dict[str, Any]], scene_type: Optional[str] = None) -> bool:
     if not visual_evidence:
         return False
@@ -944,6 +983,8 @@ def extract_visual_features(image_path):
 
         visual_evidence = apply_domain_guard(visual_evidence)
 
+        _attach_grounding_probe(visual_evidence, image_path)
+
         # Validate visual evidence (post-guard)
         validation = validate_visual_evidence(visual_evidence)
         visual_evidence["validation"] = validation
@@ -962,5 +1003,6 @@ def extract_visual_features(image_path):
             "material_condition": {"condition": "unknown", "confidence": 0.0},
             "organic_integration": {"relationship": "none", "confidence": 0.0},
             "overall_confidence": 0.0,
+            "grounding": [],
             "validation": {"is_valid": False, "warnings": [], "issues": [f"Extraction failed: {str(e)}"]},
         }

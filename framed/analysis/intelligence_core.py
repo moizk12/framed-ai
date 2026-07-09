@@ -213,6 +213,7 @@ def framed_intelligence(
             "confidence_governed": True,
             "require_multiple_hypotheses": force_multi,
             "theme_claim_license": theme_license_dict,
+            "grounding": list(visual_evidence.get("grounding") or []),
         }
         
         logger.info(f"FRAMED Intelligence Core completed: conf={meta_cognition.get('confidence', 0):.2f}, multi_hyp={multi_present}, disagreement={disagreement.get('exists', False)}")

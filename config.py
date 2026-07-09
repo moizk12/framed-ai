@@ -19,3 +19,7 @@ FRAMED_STRICT_LOCAL = os.getenv("FRAMED_STRICT_LOCAL", "false").lower() == "true
 FRAMED_AB_MODEL = os.getenv("FRAMED_AB_MODEL", "").strip()
 _gemma_budget = os.getenv("FRAMED_GEMMA_IMAGE_TOKEN_BUDGET", "").strip()
 FRAMED_GEMMA_IMAGE_TOKEN_BUDGET = int(_gemma_budget) if _gemma_budget.isdigit() else None
+
+# IC_0022: dense grounding probe (default off — enable for gate runs only)
+ENABLE_DENSE_GROUNDING_PROBE = os.getenv("ENABLE_DENSE_GROUNDING_PROBE", "false").lower() == "true"
+GROUNDING_PROBE_BACKEND = os.getenv("GROUNDING_PROBE_BACKEND", "auto").strip().lower()
