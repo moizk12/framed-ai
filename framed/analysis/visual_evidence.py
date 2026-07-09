@@ -69,7 +69,7 @@ def _attach_grounding_probe(visual_evidence: Dict[str, Any], image_path: str) ->
         if not getattr(config, "ENABLE_DENSE_GROUNDING_PROBE", False):
             visual_evidence["grounding"] = []
             return
-        from .perception import run_dense_grounding_probe
+        from framed.analysis.perception import run_dense_grounding_probe
 
         visual_evidence["grounding"] = run_dense_grounding_probe(
             image_path,
