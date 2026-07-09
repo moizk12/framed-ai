@@ -1,5 +1,6 @@
 """Perception helpers (pure image-path analyzers)."""
 
+import os
 from collections import Counter
 from typing import Any, Dict, List, Optional
 
@@ -497,12 +498,7 @@ def run_dense_grounding_probe(
     Backend order: mock (test) -> locateanything (future) -> heuristic fallback.
     """
     del scene_type  # reserved for future scene-aware refinement
-    try:
-        import config
-
-        backend = getattr(config, "GROUNDING_PROBE_BACKEND", "auto")
-    except Exception:
-        backend = "auto"
+    backend = os.getenv("GROUNDING_PROBE_BACKEND", "auto").lower()
 
     if backend == "mock":
         return list(_MOCK_GROUNDING_BOXES)

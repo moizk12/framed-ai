@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -61,14 +62,17 @@ def grounding_boxes_to_dicts(boxes: List[GroundingBox]) -> List[Dict[str, Any]]:
     return [b.to_dict() for b in boxes]
 
 
+def _dense_grounding_probe_enabled() -> bool:
+    """Read flag from env — avoids TestDaemon config.py shadowing framed-clean config."""
+    return os.getenv("ENABLE_DENSE_GROUNDING_PROBE", "false").lower() == "true"
+
+
 def _attach_grounding_probe(visual_evidence: Dict[str, Any], image_path: str) -> None:
     """Attach grounding[] when IC_0022 flag enabled; empty list when off."""
+    if not _dense_grounding_probe_enabled():
+        visual_evidence["grounding"] = []
+        return
     try:
-        import config
-
-        if not getattr(config, "ENABLE_DENSE_GROUNDING_PROBE", False):
-            visual_evidence["grounding"] = []
-            return
         from framed.analysis.perception import run_dense_grounding_probe
 
         visual_evidence["grounding"] = run_dense_grounding_probe(
