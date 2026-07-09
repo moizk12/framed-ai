@@ -1,6 +1,7 @@
 """IC_0015-B: downstream prompt suppression unit tests."""
 
 from framed.analysis.intelligence_formatting import (
+    apply_theme_license_to_text,
     category_alignment_prompt_block,
     composition_critique_prompt_block,
     count_category_required_terms,
@@ -20,12 +21,15 @@ from framed.analysis.intelligence_formatting import (
     sanitize_primary_when_suppressed,
     screenshot_critique_prompt_block,
     technical_critique_prompt_block,
+    theme_license_prompt_block,
     ui_screen_scene_hint,
 )
+from framed.analysis.visual_evidence import compute_theme_claim_license
 from framed.analysis.expression_layer import (
     _finalize_category_alignment,
     _finalize_composition_critique,
     _finalize_technical_critique,
+    _finalize_theme_claim_license,
 )
 
 
@@ -348,3 +352,82 @@ def test_finalize_category_alignment_injects_ui_terms():
     generic = "An abstract interior scene with poetic mood."
     out = _finalize_category_alignment(generic, "I see a display.", "screenshot_or_ui_image")
     assert count_category_required_terms(out, "screenshot_or_ui_image") >= 1
+
+
+def test_theme_license_forbidden_on_ui_scene():
+    lic = compute_theme_claim_license(_screenshot_ui_ve())
+    assert lic.tier == "forbidden"
+    assert lic.organic_growth == "forbidden"
+    assert lic.reclamation == "forbidden"
+    assert lic.weathered_stone == "forbidden"
+
+
+def test_theme_license_cautious_on_borderline_green():
+    ve = {
+        "organic_growth": {"green_coverage": 0.095, "confidence": 0.7, "applicable": True},
+        "material_condition": {"condition": "neutral", "confidence": 0.6},
+        "organic_integration": {"relationship": "none"},
+        "scene_gate": {"scene_type": "street_scene", "is_surface_study": False},
+    }
+    lic = compute_theme_claim_license(ve)
+    assert lic.organic_growth == "cautious"
+    assert lic.reclamation == "forbidden"
+
+
+def test_theme_license_licensed_on_high_green():
+    lic = compute_theme_claim_license(_normal_ve())
+    assert lic.organic_growth == "licensed"
+    assert lic.tier in ("licensed", "cautious")
+
+
+def test_theme_license_prompt_block_forbids_seeding_when_forbidden():
+    block = theme_license_prompt_block(_screenshot_ui_ve())
+    assert "IC_0021" in block
+    assert "organic growth" in block.lower()
+    assert "reclamation" in block.lower()
+
+
+def test_apply_theme_license_strips_forbidden_organic_growth():
+    lic = compute_theme_claim_license(_screenshot_ui_ve()).to_dict()
+    out = apply_theme_license_to_text(
+        "The UI screen shows organic growth reclaiming the layout.", lic
+    )
+    assert "organic growth" not in out.lower()
+    assert "reclaim" not in out.lower()
+
+
+def test_apply_theme_license_hedges_cautious_organic_growth():
+    ve = {
+        "organic_growth": {"green_coverage": 0.17, "confidence": 0.85, "applicable": True},
+        "material_condition": {"condition": "neutral", "confidence": 0.6},
+        "organic_integration": {"relationship": "none"},
+        "scene_gate": {"scene_type": "interior_scene", "is_surface_study": False},
+    }
+    lic = compute_theme_claim_license(ve).to_dict()
+    out = apply_theme_license_to_text("Abstract art with organic growth tones.", lic)
+    assert "organic growth" not in out.lower()
+    assert "possible greenery" in out.lower()
+
+
+def test_apply_theme_license_preserves_negation_phrase():
+    lic = compute_theme_claim_license(_screenshot_ui_ve()).to_dict()
+    text = "No organic growth is visible on this screen capture."
+    out = apply_theme_license_to_text(text, lic)
+    assert "organic growth" in out.lower()
+    assert out.lower().startswith("no")
+
+
+def test_finalize_theme_claim_license_strips_weathered_stone_interior():
+    ve = _suppressed_ve()
+    lic = compute_theme_claim_license(ve).to_dict()
+    out = _finalize_theme_claim_license(
+        "The cluttered interior reads as weathered stone with ivy reclamation.", lic
+    )
+    assert "weathered stone" not in out.lower()
+    assert "reclamation" not in out.lower()
+    assert "ivy" not in out.lower()
+
+
+def test_routing_prompt_blocks_include_theme_license():
+    block = routing_prompt_blocks(_screenshot_ui_ve())
+    assert "IC_0021" in block

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 12  # Bump: composition finalizer append-only (IC_0020 safe resume)
+EXPRESSION_CACHE_VERSION = 13  # Bump: IC_0021 theme claim licensing finalizer
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -319,13 +319,28 @@ MENTOR_MODES = {
 # EXPRESSION GENERATION
 # ========================================================
 
+def _finalize_theme_claim_license(critique: str, license_info: Optional[Dict[str, Any]]) -> str:
+    """Strip or hedge unlicensed theme vocabulary (IC_0021)."""
+    from .intelligence_formatting import apply_theme_license_to_text
+
+    if not critique or not license_info:
+        return critique or ""
+    return apply_theme_license_to_text(critique, license_info)
+
+
 def _apply_expression_finalizers(
     critique: str,
     intelligence_output: Dict[str, Any],
 ) -> str:
-    """Deterministic IC_0017–0020 guards; always run after Model B or cache read."""
+    """Deterministic IC_0017–0021 guards; always run after Model B or cache read."""
     rec = intelligence_output.get("recognition") or {}
     what_i_see = rec.get("what_i_see") or "I see a scene worth naming with care."
+    license_info = (
+        rec.get("_theme_claim_license")
+        or intelligence_output.get("theme_claim_license")
+        or {}
+    )
+    critique = _finalize_theme_claim_license(critique, license_info)
     category_key = rec.get("_category_lexicon_key")
     is_screenshot_ui = bool(rec.get("_screenshot_ui"))
     is_composition_depth = bool(rec.get("_composition_depth"))
@@ -439,6 +454,16 @@ def generate_poetic_critique(
 - Tone: warm mentor whose language matches what the image actually is.
 """
 
+        theme_license_section = ""
+        license_info = rec.get("_theme_claim_license") or intelligence_output.get("theme_claim_license") or {}
+        if license_info and license_info.get("tier") != "licensed":
+            theme_license_section = """
+**THEME CLAIM LICENSING (IC_0021):**
+- Do NOT assert unlicensed organic growth, reclamation/ivy, or weathered-stone narratives.
+- Decay/clutter/interior descriptions are OK without nature-reclamation themes.
+- When evidence is weak, hedge nature language or omit it entirely.
+"""
+
         rules_section = ""
         try:
             from framed.analysis.interpretive_memory import get_active_rules
@@ -461,7 +486,7 @@ DESCRIPTION: {mode_config["description"]}
 TONE: {mode_config["tone"]}
 VOICE: {mode_config["voice"]}
 {constraints_section}
-{screenshot_section}{composition_section}{technical_section}{category_section}
+{screenshot_section}{composition_section}{technical_section}{category_section}{theme_license_section}
 {rules_section}
 
 MENTOR INSTRUCTION:

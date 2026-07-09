@@ -13,6 +13,7 @@ from .intelligence_formatting import (
     format_user_history,
     infer_category_lexicon_key,
 )
+from .visual_evidence import compute_theme_claim_license
 from .ambiguity import (
     compute_plausibility,
     compute_ambiguity_score,
@@ -110,6 +111,11 @@ def framed_intelligence(
             ve_l1["inferred_category_key"] = category_key
         recognition = reason_about_recognition(ve_l1, require_multiple_hypotheses=force_multi)
 
+        theme_license = compute_theme_claim_license(visual_evidence)
+        theme_license_dict = theme_license.to_dict()
+        visual_evidence["theme_claim_license"] = theme_license_dict
+        recognition["_theme_claim_license"] = theme_license_dict
+
         # === AMBIGUITY & DISAGREEMENT (post-Layer 1) ===
         ambiguity_sensitivity_bump = hitl_calibration.get("ambiguity_sensitivity_bump", 0)
         ambiguity = compute_ambiguity_score(
@@ -206,6 +212,7 @@ def framed_intelligence(
             "reasoning_cost_profile": cost_profile,
             "confidence_governed": True,
             "require_multiple_hypotheses": force_multi,
+            "theme_claim_license": theme_license_dict,
         }
         
         logger.info(f"FRAMED Intelligence Core completed: conf={meta_cognition.get('confidence', 0):.2f}, multi_hyp={multi_present}, disagreement={disagreement.get('exists', False)}")

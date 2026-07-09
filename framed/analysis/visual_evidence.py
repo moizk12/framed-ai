@@ -1,5 +1,10 @@
 """Deterministic visual grounding (organic growth, material, integration, Places365-CLIP fallback)."""
+from __future__ import annotations
+
 import logging
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, List, Optional
+
 import cv2
 import numpy as np
 from PIL import Image
@@ -11,6 +16,130 @@ MIN_GREEN_FOR_RECLAMATION = 0.05
 MIN_GREEN_FOR_ORGANIC_SALIENCE = 0.03
 EDGE_DEGRADED_THRESHOLD = 0.60
 LOW_TEXTURE_THRESHOLD = 0.02
+
+# IC_0021: claim-licensing thresholds (calibrated to MOIZ_REVIEW_IC_0021)
+GREEN_T_LICENSED = 0.12
+GREEN_T_CAUTIOUS = 0.05
+CONF_T_LICENSED = 0.70
+
+_UI_SCENE_TYPES = frozenset({"screenshot_ui", "ui_scene", "screen_content", "digital_display"})
+_UI_YOLO_OBJECTS = frozenset({"tv", "laptop", "mouse", "keyboard", "monitor", "cell phone"})
+
+
+@dataclass
+class ThemeClaimLicense:
+    """Evidence-licensed theme claim tiers for organic growth / reclamation / weathered stone."""
+
+    tier: str  # licensed | cautious | forbidden (overall prompt tier)
+    organic_growth: str = "forbidden"
+    reclamation: str = "forbidden"
+    weathered_stone: str = "forbidden"
+    green_coverage: float = 0.0
+    reasons: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+def _is_ui_or_digital_scene(visual_evidence: Optional[Dict[str, Any]], scene_type: Optional[str] = None) -> bool:
+    if not visual_evidence:
+        return False
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    st = str(scene_type or scene_gate.get("scene_type") or "").lower()
+    if st in _UI_SCENE_TYPES:
+        return True
+    signals = scene_gate.get("signals") or {}
+    yolo_objects = {str(o).lower() for o in (signals.get("yolo_objects") or [])}
+    if yolo_objects & _UI_YOLO_OBJECTS:
+        caption = str(signals.get("clip_caption") or "").lower()
+        if any(tok in caption for tok in ("screen", "ui", "code", "editor", "monitor", "display", "interface")):
+            return True
+    return False
+
+
+def compute_theme_claim_license(
+    visual_evidence: Optional[Dict[str, Any]],
+    scene_type: Optional[str] = None,
+) -> ThemeClaimLicense:
+    """
+    IC_0021: Derive licensed | cautious | forbidden for theme vocabulary from visual evidence.
+    Not a banned-word list — gates definitive claims when pixels do not support them.
+    """
+    ve = visual_evidence or {}
+    scene_gate = ve.get("scene_gate") or {}
+    st = str(scene_type or scene_gate.get("scene_type") or "unknown").lower()
+    is_surface_study = bool(scene_gate.get("is_surface_study", False))
+
+    og = ve.get("organic_growth") or {}
+    mc = ve.get("material_condition") or {}
+    oi = ve.get("organic_integration") or {}
+
+    gc = float(og.get("green_coverage", 0.0) or 0.0)
+    conf = float(og.get("confidence", 0.0) or 0.0)
+    mc_conf = float(mc.get("confidence", 0.0) or 0.0)
+    condition = str(mc.get("condition") or "unknown").lower()
+    relationship = str(oi.get("relationship") or "none").lower()
+    ui_scene = _is_ui_or_digital_scene(ve, st)
+    reasons: List[str] = []
+
+    if ui_scene:
+        og_tier = "forbidden"
+        reasons.append("ui_or_digital_scene")
+    elif gc < GREEN_T_CAUTIOUS:
+        og_tier = "forbidden"
+        reasons.append(f"green_below_cautious:{gc:.3f}")
+    elif gc >= GREEN_T_LICENSED and conf >= CONF_T_LICENSED:
+        og_tier = "licensed"
+        reasons.append(f"green_licensed:{gc:.3f}")
+    else:
+        og_tier = "cautious"
+        reasons.append(f"green_cautious:{gc:.3f}")
+
+    if ui_scene or gc < GREEN_T_CAUTIOUS:
+        rec_tier = "forbidden"
+        if ui_scene:
+            reasons.append("reclamation_blocked_ui")
+        else:
+            reasons.append("reclamation_blocked_low_green")
+    elif gc >= GREEN_T_LICENSED and relationship in ("reclamation", "integration") and conf >= 0.50:
+        rec_tier = "licensed"
+        reasons.append("reclamation_licensed")
+    else:
+        rec_tier = "forbidden"
+        reasons.append("reclamation_requires_overgrowth")
+
+    if ui_scene:
+        ws_tier = "forbidden"
+        reasons.append("weathered_stone_blocked_ui")
+    elif is_surface_study and condition in ("weathered", "degraded") and mc_conf >= 0.65:
+        ws_tier = "licensed"
+        reasons.append("surface_study_weathered")
+    elif condition in ("weathered", "degraded") and gc >= GREEN_T_CAUTIOUS and mc_conf >= 0.60:
+        ws_tier = "cautious"
+        reasons.append("material_wear_cautious")
+    elif is_surface_study and condition == "moderate" and gc >= GREEN_T_LICENSED:
+        ws_tier = "cautious"
+        reasons.append("surface_study_moderate")
+    else:
+        ws_tier = "forbidden"
+        reasons.append("weathered_stone_unlicensed")
+
+    tiers = {og_tier, rec_tier, ws_tier}
+    if "licensed" in tiers and "forbidden" not in {og_tier, rec_tier}:
+        overall = "licensed"
+    elif og_tier == "forbidden" and rec_tier == "forbidden" and ws_tier == "forbidden":
+        overall = "forbidden"
+    else:
+        overall = "cautious"
+
+    return ThemeClaimLicense(
+        tier=overall,
+        organic_growth=og_tier,
+        reclamation=rec_tier,
+        weathered_stone=ws_tier,
+        green_coverage=gc,
+        reasons=reasons,
+    )
 
 def detect_organic_growth(image_path):
     """

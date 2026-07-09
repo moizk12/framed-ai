@@ -13,6 +13,38 @@ _BANNED_WHEN_SUPPRESSED = re.compile(
     re.I,
 )
 
+_THEME_ORGANIC = re.compile(
+    r"\b(organic\s+growth|overgrowth|nature'?s?\s+(touch|embrace))\b",
+    re.I,
+)
+_THEME_RECLAMATION = re.compile(
+    r"\b(reclamation|ivy\s+reclaim\w*|ivy\s+cover\w*|nature\s+reclaim\w*)\b",
+    re.I,
+)
+_THEME_WEATHERED = re.compile(
+    r"\b(weathered\s+stone|surface\s+weathering)\b",
+    re.I,
+)
+_NEGATION_BEFORE = re.compile(
+    r"\b(?:no|not|without|never|lack(?:s|ing)?|absence\s+of)\s+(?:\w+\s+){0,3}$",
+    re.I,
+)
+
+
+def _substitute_theme_pattern(pattern: re.Pattern, text: str, replacement: str) -> str:
+    """Replace theme terms unless immediately preceded by negation (IC_0021)."""
+    parts: List[str] = []
+    last = 0
+    for match in pattern.finditer(text):
+        prefix = text[max(0, match.start() - 40): match.start()]
+        if _NEGATION_BEFORE.search(prefix):
+            continue
+        parts.append(text[last:match.start()])
+        parts.append(replacement)
+        last = match.end()
+    parts.append(text[last:])
+    return "".join(parts)
+
 
 def organic_evidence_suppressed(visual_evidence: Optional[Dict[str, Any]]) -> bool:
     """True when IC_0015-A domain guard marked organic evidence not applicable."""
@@ -123,6 +155,64 @@ def screenshot_critique_prompt_block(visual_evidence: Optional[Dict[str, Any]]) 
     )
 
 
+def theme_license_prompt_block(visual_evidence: Optional[Dict[str, Any]]) -> str:
+    """IC_0021: constrain Model A seeding of theme vocabulary by evidence license tier."""
+    from .visual_evidence import compute_theme_claim_license
+
+    lic = compute_theme_claim_license(visual_evidence)
+    if lic.tier == "licensed":
+        return ""
+    lines: List[str] = [
+        "THEME CLAIM LICENSING (IC_0021):",
+    ]
+    if lic.organic_growth == "forbidden":
+        lines.append("- Do NOT seed or assert: organic growth, overgrowth, or nature-reclamation narrative.")
+    elif lic.organic_growth == "cautious":
+        lines.append(
+            "- Organic/nature language: hedge only — possible greenery or moss IF visibly present; "
+            "no definitive 'organic growth' theme on abstract or weak-green scenes."
+        )
+    if lic.reclamation == "forbidden":
+        lines.append("- Do NOT mention reclamation, ivy reclaiming, or nature overtaking structure.")
+    elif lic.reclamation == "cautious":
+        lines.append("- Reclamation/ivy: only when clearly visible; otherwise omit.")
+    if lic.weathered_stone == "forbidden":
+        lines.append("- Do NOT assert weathered stone or surface-weathering unless this is a surface-study scene.")
+    elif lic.weathered_stone == "cautious":
+        lines.append("- Material aging: describe wear/decay generically unless stone evidence is clear.")
+    if lic.tier == "forbidden":
+        lines.append("- Decay, clutter, and interior descriptions are OK without ivy/reclamation/weathered-stone themes.")
+    return "\n".join(lines)
+
+
+def apply_theme_license_to_text(text: str, license_info: Optional[Dict[str, Any]]) -> str:
+    """Strip or hedge unlicensed theme terms (IC_0021 finalizer helper)."""
+    if not text or not license_info:
+        return text or ""
+    out = text
+    og = str(license_info.get("organic_growth") or "forbidden")
+    rec = str(license_info.get("reclamation") or "forbidden")
+    ws = str(license_info.get("weathered_stone") or "forbidden")
+
+    if rec == "forbidden":
+        out = _substitute_theme_pattern(_THEME_RECLAMATION, out, "")
+    elif rec == "cautious":
+        out = _substitute_theme_pattern(_THEME_RECLAMATION, out, "possible overgrowth")
+
+    if og == "forbidden":
+        out = _substitute_theme_pattern(_THEME_ORGANIC, out, "")
+    elif og == "cautious":
+        out = _substitute_theme_pattern(_THEME_ORGANIC, out, "possible greenery")
+
+    if ws == "forbidden":
+        out = _substitute_theme_pattern(_THEME_WEATHERED, out, "")
+    elif ws == "cautious":
+        out = _substitute_theme_pattern(_THEME_WEATHERED, out, "worn surfaces")
+
+    out = re.sub(r"\s{2,}", " ", out).strip(" ,.;")
+    return out
+
+
 def routing_prompt_blocks(
     visual_evidence: Optional[Dict[str, Any]],
     perception_composition: Optional[Dict[str, Any]] = None,
@@ -135,6 +225,7 @@ def routing_prompt_blocks(
         perception_technical = visual_evidence.get("perception_technical")
     parts = [
         domain_guard_prompt_block(visual_evidence),
+        theme_license_prompt_block(visual_evidence),
         screenshot_critique_prompt_block(visual_evidence),
         composition_critique_prompt_block(visual_evidence, perception_composition),
         technical_critique_prompt_block(visual_evidence, perception_technical),
@@ -165,6 +256,11 @@ def domain_guard_prompt_block(visual_evidence: Optional[Dict[str, Any]]) -> str:
 
 def sanitize_primary_when_suppressed(primary: str, visual_evidence: Optional[Dict[str, Any]]) -> str:
     """Safety net: strip banned organic/weathering terms from Layer 1 primary when guard active."""
+    from .visual_evidence import compute_theme_claim_license
+
+    lic = compute_theme_claim_license(visual_evidence).to_dict()
+    if lic.get("tier") != "licensed":
+        primary = apply_theme_license_to_text(primary or "", lic)
     if not primary or not organic_evidence_suppressed(visual_evidence):
         return primary
     if not _BANNED_WHEN_SUPPRESSED.search(primary):
