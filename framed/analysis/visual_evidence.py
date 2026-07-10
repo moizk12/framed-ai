@@ -132,8 +132,12 @@ def compute_theme_claim_license(
         og_tier = "forbidden"
         reasons.append(f"green_below_cautious:{gc:.3f}")
     elif gc >= GREEN_T_LICENSED and conf >= CONF_T_LICENSED:
-        og_tier = "licensed"
-        reasons.append(f"green_licensed:{gc:.3f}")
+        if is_surface_study or st in ("landscape_scene", "street_scene", "surface_study"):
+            og_tier = "licensed"
+            reasons.append(f"green_licensed:{gc:.3f}")
+        else:
+            og_tier = "cautious"
+            reasons.append(f"green_capped_cautious:{gc:.3f}")
     else:
         og_tier = "cautious"
         reasons.append(f"green_cautious:{gc:.3f}")

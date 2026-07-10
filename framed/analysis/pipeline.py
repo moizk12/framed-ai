@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -385,6 +386,9 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 avg_saturation = None
 
             _ui_yolo = frozenset({"tv", "laptop", "mouse", "keyboard", "monitor", "cell phone"})
+            _physical_interior = frozenset(
+                {"couch", "bed", "chair", "potted plant", "vase", "cup", "bottle", "bowl", "clock", "tie"}
+            )
             _ui_text_tokens = (
                 "screen", "monitor", "ui", "code", "editor", "laptop", "display",
                 "interface", "text", "keyboard", "program", "website", "webpage",
@@ -393,9 +397,11 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
             )
             _ve_mc = (result.get("visual_evidence") or {}).get("material_condition") or {}
             _edge_deg = float(_ve_mc.get("edge_degradation", 0.0) or 0.0)
+            _rough = float(_ve_mc.get("surface_roughness", 0.0) or 0.0)
 
             has_ui_yolo = bool(set(yolo_objs) & _ui_yolo)
-            has_ui_text = any(tok in text_blob for tok in _ui_text_tokens)
+            has_ui_text = any(re.search(rf"\b{re.escape(tok)}\b", text_blob) for tok in _ui_text_tokens)
+            has_physical_interior = bool(set(yolo_objs) & _physical_interior)
             has_ui_signal = has_ui_yolo or (
                 has_ui_text and scene_category in ("artificial", "indoor", "man-made", "")
             )
@@ -403,7 +409,14 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 not has_street_cues
                 and num_vehicles == 0
                 and _edge_deg > 0.47
+                and has_ui_text
                 and scene_category in ("artificial", "indoor", "man-made", "")
+            )
+            route_screenshot_ui = (
+                (has_ui_signal or looks_like_screen_capture)
+                and not has_street_cues
+                and num_vehicles == 0
+                and not (has_physical_interior and has_interior_cues)
             )
 
             scene_type = "unknown"
@@ -411,7 +424,7 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 scene_type = "abstract_art"
             elif avg_saturation is not None and avg_saturation > 0.50 and num_people == 0 and num_vehicles == 0 and not num_buildings:
                 scene_type = "abstract_art"
-            elif (has_ui_signal or looks_like_screen_capture) and not has_street_cues and num_vehicles == 0:
+            elif route_screenshot_ui:
                 scene_type = "screenshot_ui"
             elif num_people > 0 and not looks_like_screen_capture:
                 scene_type = "people_scene"
@@ -446,11 +459,44 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 "screenshot_ui",
             }
             is_surface_study = (not scene_is_depiction) and (edge_deg > 0.6 or rough > 0.12) and num_people == 0 and num_vehicles == 0 and not num_buildings
+            texture_surface_study = (
+                (edge_deg > 0.6 or rough > 0.12)
+                and num_people == 0
+                and num_vehicles == 0
+                and not num_buildings
+                and not has_street_cues
+                and not route_screenshot_ui
+                and not has_physical_interior
+            )
             if is_surface_study:
                 scene_type = "surface_study"
+            elif texture_surface_study and scene_type in ("unknown", "interior_scene"):
+                scene_type = "surface_study"
+                is_surface_study = True
+                scene_is_depiction = False
+
+            rejection_reasons: list[str] = []
+            if not is_surface_study:
+                if scene_is_depiction:
+                    rejection_reasons.append(f"scene_type={scene_type}")
+                if indoor_outdoor in {"indoor", "outdoor"}:
+                    rejection_reasons.append(f"places_indoor_outdoor={indoor_outdoor}")
+                if num_people > 0:
+                    rejection_reasons.append("objects_detected=people")
+                if num_vehicles > 0:
+                    rejection_reasons.append("objects_detected=vehicles")
+                if num_buildings:
+                    rejection_reasons.append("objects_detected=buildings_or_urban_terms")
+                if looks_painting:
+                    rejection_reasons.append("semantic=painting_terms")
+                elif looks_abstract_terms:
+                    rejection_reasons.append("semantic=abstract_terms")
+                if not (edge_deg > 0.6 or rough > 0.12):
+                    rejection_reasons.append("texture_signal_not_strong_enough")
 
             result.setdefault("visual_evidence", {}).setdefault("scene_gate", {})["scene_type"] = scene_type
             result["visual_evidence"]["scene_gate"]["is_surface_study"] = bool(is_surface_study)
+            result["visual_evidence"]["scene_gate"]["surface_study_rejection_reasons"] = rejection_reasons
             result["visual_evidence"]["scene_gate"]["signals"] = {
                 "places_scene_category": scene_category,
                 "places_indoor_outdoor": indoor_outdoor,
@@ -460,6 +506,22 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 "edge_degradation": round(edge_deg, 3),
                 "surface_roughness": round(rough, 3),
             }
+            result["visual_evidence"]["scene_gate"]["note"] = (
+                "If not surface_study: treat material_condition/organic_integration as background-only metrics; "
+                "do not center interpretation on 'weathered stone / reclamation'."
+            )
+
+            if visual_evidence is not None and scene_is_depiction and not is_surface_study:
+                oi2 = dict(visual_evidence.get("organic_integration") or {})
+                if oi2.get("relationship") not in (None, "none"):
+                    oi2["relationship"] = "none"
+                    oi2["integration_level"] = "none"
+                    oi2["confidence"] = min(float(oi2.get("confidence", 0.0) or 0.0), 0.2)
+                    ev = list(oi2.get("evidence") or [])
+                    ev.append(f"scene_gate={scene_type}: organic_integration disabled for non-surface scenes")
+                    oi2["evidence"] = ev[-8:]
+                    visual_evidence["organic_integration"] = oi2
+                    result["visual_evidence"] = visual_evidence
         except Exception as e:
             logger.warning("Scene gate failed (non-fatal): %s", e)
 

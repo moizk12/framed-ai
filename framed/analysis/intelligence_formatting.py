@@ -18,7 +18,7 @@ _THEME_ORGANIC = re.compile(
     re.I,
 )
 _THEME_RECLAMATION = re.compile(
-    r"\b(reclamation|ivy\s+reclaim\w*|ivy\s+cover\w*|nature\s+reclaim\w*)\b",
+    r"\b(reclamation|reclaim\w*|ivy\b|ivy\s+cover\w*|nature\s+reclaim\w*)\b",
     re.I,
 )
 _THEME_WEATHERED = re.compile(
