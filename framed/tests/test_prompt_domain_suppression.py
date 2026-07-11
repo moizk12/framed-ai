@@ -1,5 +1,7 @@
 """IC_0015-B: downstream prompt suppression unit tests."""
 
+import pytest
+
 from framed.analysis.intelligence_formatting import (
     apply_theme_license_to_text,
     category_alignment_prompt_block,
@@ -19,6 +21,7 @@ from framed.analysis.intelligence_formatting import (
     sanitize_primary_category,
     sanitize_primary_screenshot,
     sanitize_primary_when_suppressed,
+    sanitize_screenshot_poetic,
     screenshot_critique_prompt_block,
     technical_critique_prompt_block,
     theme_license_prompt_block,
@@ -26,8 +29,10 @@ from framed.analysis.intelligence_formatting import (
 )
 from framed.analysis.visual_evidence import compute_theme_claim_license
 from framed.analysis.expression_layer import (
+    _apply_expression_finalizers,
     _finalize_category_alignment,
     _finalize_composition_critique,
+    _finalize_screenshot_critique,
     _finalize_technical_critique,
     _finalize_theme_claim_license,
 )
@@ -431,3 +436,65 @@ def test_finalize_theme_claim_license_strips_weathered_stone_interior():
 def test_routing_prompt_blocks_include_theme_license():
     block = routing_prompt_blocks(_screenshot_ui_ve())
     assert "IC_0021" in block
+
+
+def test_screenshot_critique_prompt_block_forbids_poetic_ui_vocabulary_ic0017b():
+    block = screenshot_critique_prompt_block(_screenshot_ui_ve())
+    assert "IC_0017" in block
+    lower = block.lower()
+    for term in ("whisper", "soul", "ethereal", "tapestry", "timeless beauty"):
+        assert term in lower
+
+
+def test_sanitize_screenshot_poetic_strips_gate_terms():
+    poetic = (
+        "A whisper of souls weaves an ethereal tapestry across the UI with timeless beauty."
+    )
+    out = sanitize_screenshot_poetic(poetic)
+    for term in ("whisper", "soul", "ethereal", "tapestry", "timeless beauty"):
+        assert term not in out.lower()
+
+
+@pytest.mark.parametrize(
+    "term",
+    ["whisper", "soul", "ethereal", "tapestry", "timeless beauty"],
+)
+def test_sanitize_screenshot_poetic_strips_each_term(term):
+    out = sanitize_screenshot_poetic(f"The UI layout shows {term} on screen.")
+    assert term not in out.lower()
+
+
+def test_finalize_screenshot_critique_strips_poetic_model_b_leakage():
+    bad = (
+        "The layout has hierarchy, but a whisper of soul and tapestry mood lingers "
+        "with timeless beauty on screen."
+    )
+    out = _finalize_screenshot_critique(bad, "I see a UI screenshot.")
+    for term in ("whisper", "soul", "tapestry", "ethereal", "timeless beauty"):
+        assert term not in out.lower()
+    assert "layout" in out.lower() or "screen" in out.lower()
+
+
+def test_photographic_composition_critique_preserves_poetic_mood():
+    poetic = "A whisper of souls drifts through the tapestry of morning light in the foreground."
+    out = _finalize_composition_critique(poetic, "I see a layered street scene.")
+    assert "whisper" in out.lower() or "tapestry" in out.lower() or "soul" in out.lower()
+
+
+def test_apply_expression_finalizers_skips_poetic_strip_on_photographic():
+    intel = {
+        "recognition": {
+            "what_i_see": "I see a street scene.",
+            "_composition_depth": True,
+            "_screenshot_ui": False,
+            "_theme_claim_license": {
+                "tier": "licensed",
+                "organic_growth": "licensed",
+                "reclamation": "licensed",
+                "weathered_stone": "licensed",
+            },
+        }
+    }
+    poetic = "The whisper of souls forms an ethereal tapestry across the street."
+    out = _apply_expression_finalizers(poetic, intel)
+    assert "whisper" in out.lower()

@@ -60,6 +60,27 @@ _UI_CAPTION_HINT = re.compile(
     re.I,
 )
 
+# IC_0017b: align with TestDaemon POETIC_ON_UI scorer (screenshot_handling gate)
+POETIC_ON_UI = re.compile(
+    r"\b(whispers?|souls?|ethereal|tapestr(y|ies)|timeless\s+beauty)\b",
+    re.I,
+)
+
+
+def has_poetic_on_ui(text: str) -> bool:
+    """True when text contains screenshot-forbidden poetic diction (IC_0017b)."""
+    return bool(POETIC_ON_UI.search(text or ""))
+
+
+def sanitize_screenshot_poetic(text: str) -> str:
+    """Strip poetic Model B vocabulary on screenshot/UI critiques (IC_0017b)."""
+    if not text:
+        return text or ""
+    out = POETIC_ON_UI.sub("", text)
+    out = re.sub(r"\s{2,}", " ", out).strip(" ,.;")
+    out = re.sub(r"\s+([,.;])", r"\1", out)
+    return out
+
 
 def is_screenshot_ui_scene(visual_evidence: Optional[Dict[str, Any]]) -> bool:
     """True when scene_gate or signals indicate screenshot/UI/code content (IC_0017)."""
@@ -149,6 +170,8 @@ def screenshot_critique_prompt_block(visual_evidence: Optional[Dict[str, Any]]) 
             "- Primary: screen, UI, code editor, webpage screenshot, or photo-of-screen.",
             "- Critique MUST discuss: layout, text readability, hierarchy, contrast, glare, crop, text density, screen/photo quality.",
             "- FORBIDDEN: fine-art mood, street/room photography framing, organic growth, weathered stone, reclamation, poetic symbolism.",
+            "- FORBIDDEN poetic/personified UI diction (IC_0017b): whisper, soul, ethereal, tapestry, timeless beauty, cinematic metaphor.",
+            "- Do NOT personify the interface or use gallery-placard poetry — stay a direct UX/design mentor.",
             "- Never describe screenshot content as weathered stone, organic growth, or interior room photography.",
             "- Use terms: screen, UI, interface, layout, readability, text, contrast, hierarchy, crop, display, navigation.",
         ]

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Expression cache: same intelligence + voice + calibration => same critique
 _default_base = os.path.join(tempfile.gettempdir(), "framed")
 _EXPRESSION_CACHE_DIR = os.path.join(os.environ.get("FRAMED_DATA_DIR", _default_base), "expression_cache")
-EXPRESSION_CACHE_VERSION = 13  # Bump: IC_0021 theme claim licensing finalizer
+EXPRESSION_CACHE_VERSION = 14  # Bump: IC_0017b screenshot poetic UI stabilization
 
 _UI_CRITIQUE_TERMS = re.compile(
     r"\b(screen|UI|interface|layout|readability|text|contrast|hierarchy|display|navigation|crop|glare)\b",
@@ -42,8 +42,11 @@ _TECHNICAL_TERMS = re.compile(
 
 
 def _finalize_screenshot_critique(critique: str, what_i_see: str) -> str:
-    """Strip photo-poetry leakage and ensure UI critique vocabulary (IC_0017)."""
+    """Strip photo-poetry leakage and ensure UI critique vocabulary (IC_0017 / IC_0017b)."""
+    from .intelligence_formatting import sanitize_screenshot_poetic
+
     text = _SCREENSHOT_BANNED.sub("", critique or "")
+    text = sanitize_screenshot_poetic(text)
     text = re.sub(r"\s{2,}", " ", text).strip()
     if not _UI_CRITIQUE_TERMS.search(text):
         text = (
