@@ -9,6 +9,12 @@
     .fb-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
     .fb-row button { padding: 0.4rem 0.7rem; cursor: pointer; }
     #status { color: #333; font-size: 0.9rem; }
+    #evidence-inspector { margin-top: 1rem; font-size: 0.9rem; }
+    #evidence-inspector .ei-block { border: 1px solid #ddd; padding: 0.6rem 0.75rem; margin: 0.5rem 0; background: #fafafa; }
+    #evidence-inspector .ei-tier-restricted { border-color: #c88; background: #fff0f0; }
+    #evidence-inspector .ei-tier-cautious { border-color: #b98; background: #fff8e8; }
+    #evidence-inspector .ei-muted { color: #666; font-size: 0.85rem; }
+    #evidence-inspector ul { margin: 0.35rem 0 0; padding-left: 1.2rem; }
   </style>
 </head>
 <body>
@@ -24,6 +30,10 @@
   </form>
   <h2>Critique</h2>
   <div id="critique">Upload an image to begin.</div>
+  <details id="evidence-details" hidden>
+    <summary>Why this critique? (Evidence Inspector)</summary>
+    <div id="evidence-inspector" aria-live="polite"></div>
+  </details>
   <div class="fb-row" id="feedback-buttons" hidden>
     <button type="button" data-btn="good_critique">Good critique</button>
     <button type="button" data-btn="wrong_image_type">Wrong image type</button>

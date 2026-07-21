@@ -1,5 +1,8 @@
 from flask import Blueprint, render_template, request, jsonify, current_app
-import os, uuid, time
+import copy
+import os
+import uuid
+import time
 from werkzeug.utils import secure_filename
 
 from framed.analysis.stage_timing import log_stage_done
@@ -18,6 +21,184 @@ ALLOWED_EXTENSIONS = {"png","jpg","jpeg","webp","bmp","tiff"}
 
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def allowed_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def _grounding_probe_enabled() -> bool:
+    return os.getenv("ENABLE_DENSE_GROUNDING_PROBE", "false").lower() == "true"
+
+
+def _validate_grounding_box(box: dict) -> bool:
+    if not isinstance(box, dict):
+        return False
+    try:
+        x, y, w, h = float(box["x"]), float(box["y"]), float(box["w"]), float(box["h"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < w <= 1 and 0 < h <= 1):
+        return False
+    return x + w <= 1.000001 and y + h <= 1.000001
+
+
+def _prepare_render_boxes(raw_boxes):
+    render = []
+    warnings = []
+    if not isinstance(raw_boxes, list):
+        return render, warnings
+    for idx, box in enumerate(raw_boxes):
+        box_id = f"g{idx}"
+        if not _validate_grounding_box(box):
+            warnings.append(f"grounding_box_invalid:{box_id}")
+            continue
+        entry = copy.deepcopy(box)
+        entry["box_id"] = box_id
+        entry["box_number"] = idx + 1
+        render.append(entry)
+    return render, warnings
+
+
+def _grounding_state(visual_evidence: dict, result: dict) -> str:
+    if bool(result.get("failed")) or result.get("error") is not None:
+        return "error"
+    if not _grounding_probe_enabled():
+        return "disabled"
+    grounding = visual_evidence.get("grounding")
+    if grounding is None:
+        return "unknown"
+    if not isinstance(grounding, list):
+        return "unknown"
+    if len(grounding) == 0:
+        return "empty"
+    return "available"
+
+
+def _tier_display(raw):
+    if not isinstance(raw, str):
+        return "Unavailable"
+    mapping = {
+        "licensed": "Licensed",
+        "cautious": "Limited·cautious",
+        "forbidden": "Restricted",
+        "restricted": "Restricted",
+    }
+    return mapping.get(raw.lower(), raw)
+
+
+def _build_claim_traces(visual_evidence: dict):
+    traces = []
+    tcl = visual_evidence.get("theme_claim_license")
+    if not isinstance(tcl, dict):
+        return traces
+    reasons = [r for r in tcl.get("reasons") or [] if isinstance(r, str)]
+    for claim in ("organic_growth", "reclamation", "weathered_stone", "tier"):
+        raw_tier = tcl.get("tier") if claim == "tier" else tcl.get(claim)
+        reason = reasons[0] if reasons else None
+        paths = ["visual_evidence.theme_claim_license.reasons"]
+        if claim == "organic_growth" and isinstance(visual_evidence.get("organic_growth"), dict):
+            paths.append("visual_evidence.organic_growth")
+        if claim == "reclamation" and isinstance(visual_evidence.get("organic_integration"), dict):
+            paths.append("visual_evidence.organic_integration")
+        if claim == "weathered_stone" and isinstance(visual_evidence.get("material_condition"), dict):
+            paths.append("visual_evidence.material_condition")
+        traces.append(
+            {
+                "claim": claim,
+                "tier": _tier_display(raw_tier),
+                "tier_raw": raw_tier if isinstance(raw_tier, str) else None,
+                "reason": reason,
+                "supporting_paths": paths,
+                "relation_source": "theme_claim_license",
+            }
+        )
+    return traces
+
+
+def _collect_evidence_strings(visual_evidence: dict):
+    out = []
+
+    def walk(v):
+        if isinstance(v, dict):
+            for k, vv in v.items():
+                if k == "evidence" and isinstance(vv, list):
+                    out.extend(x for x in vv if isinstance(x, str))
+                else:
+                    walk(vv)
+        elif isinstance(v, list):
+            for item in v:
+                walk(item)
+
+    walk(visual_evidence)
+    return out
+
+
+def build_evidence_inspector(result: dict) -> dict:
+    """Read-only evidence chain for UI — does not mutate `result`."""
+    if not isinstance(result, dict):
+        return {}
+    visual_evidence = result.get("visual_evidence")
+    if not isinstance(visual_evidence, dict):
+        visual_evidence = {}
+    intelligence = result.get("intelligence") if isinstance(result.get("intelligence"), dict) else {}
+    recognition_raw = intelligence.get("recognition") if isinstance(intelligence.get("recognition"), dict) else {}
+
+    scene_type = None
+    scene_gate = visual_evidence.get("scene_gate")
+    if isinstance(scene_gate, dict):
+        scene_type = scene_gate.get("scene_type")
+
+    grounding_raw = visual_evidence.get("grounding")
+    grounding_list = copy.deepcopy(grounding_raw) if isinstance(grounding_raw, list) else []
+    render_boxes, warnings = _prepare_render_boxes(grounding_list)
+
+    theme_licenses = []
+    tcl = visual_evidence.get("theme_claim_license")
+    if isinstance(tcl, dict):
+        theme_licenses.append(
+            {
+                "tier": tcl.get("tier"),
+                "reasons": list(tcl.get("reasons") or []) if isinstance(tcl.get("reasons"), list) else [],
+            }
+        )
+
+    critique_text = result.get("critique")
+    critique = {
+        "text": critique_text if isinstance(critique_text, str) else None,
+        "status": "Available" if isinstance(critique_text, str) and critique_text.strip() else "Unavailable",
+        "final_output_certified": False,
+    }
+
+    recognition = {"inference_status": "Inferred"}
+    if isinstance(recognition_raw.get("what_i_see"), str):
+        recognition["what_i_see"] = recognition_raw.get("what_i_see")
+    if "confidence" in recognition_raw:
+        recognition["confidence"] = recognition_raw.get("confidence")
+
+    return {
+        "recognition": recognition,
+        "scene": {
+            "scene_type": scene_type,
+            "category": scene_type,
+            "inference_status": "Inferred",
+        },
+        "evidence": _collect_evidence_strings(visual_evidence),
+        "grounding": {
+            "state": _grounding_state(visual_evidence, result),
+            "boxes": grounding_list,
+            "render_boxes": render_boxes,
+            "inference_status": "Observed",
+        },
+        "theme_licenses": theme_licenses,
+        "claim_traces": _build_claim_traces(visual_evidence),
+        "critique": critique,
+        "warnings": warnings,
+        "provenance": {
+            "grounding_probe_enabled": _grounding_probe_enabled(),
+            "final_output_certified": False,
+        },
+    }
 
 
 def clean_result_for_ui(result: dict) -> dict:
@@ -113,6 +294,8 @@ def clean_result_for_ui(result: dict) -> dict:
     # Softly drop internal error metadata from the presentation layer
     if "errors" in ui_view:
         ui_view.pop("errors", None)
+
+    ui_view["evidence_inspector"] = build_evidence_inspector(result)
 
     return {k: v for k, v in ui_view.items() if v}
 
