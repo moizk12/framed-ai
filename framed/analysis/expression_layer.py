@@ -9,6 +9,7 @@ import tempfile
 from typing import Dict, Any, Optional
 
 from .llm_provider import call_model_b
+from .critique_finalization import CritiqueRuntimeError, classify_critique_runtime_failure
 
 logger = logging.getLogger(__name__)
 
@@ -568,7 +569,10 @@ End not with advice — but with a question or unresolved pull."""
         
         if result.get("error"):
             logger.warning(f"Expression layer (Model B) failed: {result['error']}")
-            return f"[Error generating critique: {result['error']}]"
+            raise CritiqueRuntimeError(
+                "expression_layer_provider_error",
+                error_code=classify_critique_runtime_failure(result.get("error")),
+            )
         
         critique = result.get("content", "").strip()
         
@@ -613,9 +617,14 @@ End not with advice — but with a question or unresolved pull."""
         logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")
         return critique
     
+    except CritiqueRuntimeError:
+        raise
     except Exception as e:
         logger.error(f"Expression layer failed: {e}", exc_info=True)
-        return f"[Error generating critique: {str(e)}]"
+        raise CritiqueRuntimeError(
+            "expression_layer_failed",
+            error_code=classify_critique_runtime_failure(e),
+        ) from e
 
 
 # ========================================================

@@ -120,37 +120,63 @@ class IntelligencePipelineTester:
                 "hallucination_detected": False,
                 "visual_evidence_used": bool(analysis_result.get("visual_evidence")),
             }
-            result["learning_impact"] = {"memory_updated": True, "new_pattern_stored": True}
+            result["learning_impact"] = {"memory_updated": False, "new_pattern_stored": False}
             result["mentor_integrity"] = {"mentor_drift": False}
 
             critique = None
             if not self.config.get("disable_expression", False) and intelligence:
-                mentor_mode = self.config.get("mentor_mode", "Balanced Mentor")
-                critique = generate_poetic_critique(intelligence_output=intelligence, mentor_mode=mentor_mode)
-                if critique:
-                    critique = integrate_self_correction(critique, intelligence.get("self_critique", {}))
-                    hitl_penalty = 0.0
-                    try:
-                        from framed.feedback.calibration import get_hitl_calibration
-                        hitl_penalty = get_hitl_calibration(None).get("mentor_drift_penalty", 0)
-                    except Exception:
-                        pass
-                    finalized = finalize_critique_with_reflection(
-                        critique,
-                        intelligence,
-                        analysis_result=analysis_result,
-                        mentor_mode=mentor_mode,
-                        hitl_mentor_drift_penalty=hitl_penalty,
-                    )
-                    critique = finalized["critique"]
-                    result["reflection_diagnostics"] = finalized["reflection_report"]
-                    result["finalization_diagnostics"] = {
-                        "regen_count": finalized["regen_count"],
-                        "downgraded_to_tentative": finalized["downgraded_to_tentative"],
-                        "vocab_guard_triggered": finalized.get("vocab_guard_triggered", False),
-                    }
+                from framed.analysis.critique_finalization import CritiqueRuntimeError
 
-            result["critique"] = critique
+                mentor_mode = self.config.get("mentor_mode", "Balanced Mentor")
+                try:
+                    critique = generate_poetic_critique(intelligence_output=intelligence, mentor_mode=mentor_mode)
+                    if critique:
+                        critique = integrate_self_correction(critique, intelligence.get("self_critique", {}))
+                        hitl_penalty = 0.0
+                        try:
+                            from framed.feedback.calibration import get_hitl_calibration
+                            hitl_penalty = get_hitl_calibration(None).get("mentor_drift_penalty", 0)
+                        except Exception:
+                            pass
+                        finalized = finalize_critique_with_reflection(
+                            critique,
+                            intelligence,
+                            analysis_result=analysis_result,
+                            mentor_mode=mentor_mode,
+                            hitl_mentor_drift_penalty=hitl_penalty,
+                        )
+                        if finalized.get("failed"):
+                            result["failed"] = True
+                            result["error_code"] = finalized.get("error_code", "critique_unavailable")
+                            result["error"] = finalized.get("error", "critique_runtime_failure")
+                            result["learning_impact"] = {
+                                "memory_updated": False,
+                                "new_pattern_stored": False,
+                            }
+                            critique = ""
+                        else:
+                            critique = finalized["critique"]
+                            result["reflection_diagnostics"] = finalized["reflection_report"]
+                            result["finalization_diagnostics"] = {
+                                "regen_count": finalized["regen_count"],
+                                "downgraded_to_tentative": finalized["downgraded_to_tentative"],
+                                "vocab_guard_triggered": finalized.get("vocab_guard_triggered", False),
+                            }
+                            result["learning_impact"] = {
+                                "memory_updated": True,
+                                "new_pattern_stored": True,
+                            }
+                except CritiqueRuntimeError as cre:
+                    result["failed"] = True
+                    result["error_code"] = cre.error_code
+                    result["error"] = cre.stable_message
+                    result["learning_impact"] = {
+                        "memory_updated": False,
+                        "new_pattern_stored": False,
+                    }
+                    critique = ""
+
+            result["critique"] = critique or ""
             result["full_analysis"] = analysis_result
             result["pattern_signature"] = analysis_result.get("pattern_signature", "")  # For HITL feedback
             result["condensed"] = True
@@ -158,6 +184,7 @@ class IntelligencePipelineTester:
         except Exception as e:
             result["failed"] = True
             result["error"] = str(e)
+            result["learning_impact"] = {"memory_updated": False, "new_pattern_stored": False}
             logger.warning(f"Failed {image_id}: {e}")
 
         return result

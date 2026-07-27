@@ -14,6 +14,87 @@ _BANNED_OVER_POETIC = re.compile(
     re.I,
 )
 
+# IC_0027a — structured runtime failure (never accept provider dumps as critique)
+_RUNTIME_ERROR_RE = re.compile(
+    r"(?i)(critique generation unavailable|error generating critique|"
+    r"error code:\s*\d+|insufficient_quota|exceeded your current quota|"
+    r"rate[_ ]?limit|api[_ ]?error|openai\.com/docs/guides/error-codes)",
+)
+
+STABLE_ERROR_CODES = frozenset(
+    {
+        "insufficient_quota",
+        "rate_limit",
+        "api_error",
+        "critique_unavailable",
+        "empty_critique",
+    }
+)
+
+
+class CritiqueRuntimeError(RuntimeError):
+    """Provider/runtime failure during critique generation (IC_0027a)."""
+
+    def __init__(self, message: str, *, error_code: str = "critique_unavailable"):
+        code = error_code if error_code in STABLE_ERROR_CODES else "critique_unavailable"
+        self.error_code = code
+        self.stable_message = message
+        super().__init__(message)
+
+
+def classify_critique_runtime_failure(exc_or_text: Any) -> str:
+    """Map exception/text → stable error_code (prefer structured signals)."""
+    text = str(exc_or_text or "")
+    lower = text.lower()
+    code = None
+    if isinstance(exc_or_text, BaseException):
+        code = getattr(exc_or_text, "code", None) or getattr(exc_or_text, "error_code", None)
+        body = getattr(exc_or_text, "body", None)
+        if isinstance(body, dict):
+            err = body.get("error") or {}
+            if isinstance(err, dict):
+                code = code or err.get("code") or err.get("type")
+        err_obj = getattr(exc_or_text, "error", None)
+        if isinstance(err_obj, dict):
+            code = code or err_obj.get("code") or err_obj.get("type")
+    if isinstance(exc_or_text, dict):
+        code = exc_or_text.get("code") or (exc_or_text.get("error") or {}).get("code")
+    code_s = str(code or "").lower()
+    if "insufficient_quota" in code_s or "insufficient_quota" in lower:
+        return "insufficient_quota"
+    if "rate_limit" in code_s or "rate limit" in lower or "429" in lower:
+        return "rate_limit"
+    if code_s in STABLE_ERROR_CODES:
+        return code_s
+    if _RUNTIME_ERROR_RE.search(text):
+        return "api_error" if "error" in lower else "critique_unavailable"
+    return "critique_unavailable"
+
+
+def is_runtime_failure_critique(critique: Optional[str]) -> bool:
+    """True when critique text is a provider/runtime error dump (legacy or new)."""
+    if critique is None:
+        return False
+    text = str(critique).strip()
+    if not text:
+        return False
+    return bool(_RUNTIME_ERROR_RE.search(text))
+
+
+def runtime_failure_result(error_code: str, message: str = "") -> Dict[str, Any]:
+    code = error_code if error_code in STABLE_ERROR_CODES else "critique_unavailable"
+    return {
+        "critique": "",
+        "failed": True,
+        "error_code": code,
+        "error": message or code,
+        "reflection_report": None,
+        "regen_count": 0,
+        "downgraded_to_tentative": False,
+        "vocab_guard_triggered": False,
+        "learning_impact": {"memory_updated": False, "new_pattern_stored": False},
+    }
+
 
 def _active_correction_rules() -> List[str]:
     try:
@@ -130,6 +211,14 @@ def finalize_critique_with_reflection(
     """Apply reflection, optional regeneration, and tentative downgrade."""
     intelligence_output = intelligence_output or {}
     interpretive_conclusions = interpretive_conclusions or {}
+
+    # IC_0027a: never reflect/store on runtime error dumps or empty required critique
+    if is_runtime_failure_critique(critique):
+        code = classify_critique_runtime_failure(critique)
+        logger.warning("IC_0027a: short-circuit finalization for runtime failure (%s)", code)
+        return runtime_failure_result(code, "critique_runtime_failure")
+    if critique is None or not str(critique).strip():
+        return runtime_failure_result("empty_critique", "empty_critique")
 
     reflection = _reflect(critique, intelligence_output, interpretive_conclusions, hitl_mentor_drift_penalty)
     if not reflection:

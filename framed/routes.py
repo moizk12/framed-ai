@@ -351,7 +351,9 @@ def analyze():
 
         t_critique = time.perf_counter()
         intelligence_output = analysis_result.get("intelligence", {})
-        
+        critique = ""
+        from framed.analysis.critique_finalization import CritiqueRuntimeError
+
         if intelligence_output and intelligence_output.get("recognition", {}).get("what_i_see"):
             # Use new expression layer (Model B)
             try:
@@ -361,44 +363,108 @@ def analyze():
                     integrate_self_correction,
                 )
                 from framed.analysis.temporal_memory import load_user_trajectory
-                
+
                 # Get user history for mentor hierarchy
                 user_history = load_user_trajectory(user_id=photo_id)
-                
+
                 # Apply mentor hierarchy
                 mentor_reasoning = intelligence_output.get("mentor", {})
                 mentor_interventions = apply_mentor_hierarchy(mentor_reasoning, user_history)
-                
+
                 # Generate poetic critique
                 critique = generate_poetic_critique(
                     intelligence_output=intelligence_output,
                     mentor_mode=mentor_mode,
                 )
-                
+
                 # Integrate self-correction
                 self_critique = intelligence_output.get("self_critique", {})
                 critique = integrate_self_correction(critique, self_critique)
-                
+
                 response_payload["critique"] = critique
                 if ui_view:
                     ui_view["critique"] = critique
-                
-                logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")
-                
+
+                current_app.logger.info(
+                    "Expression layer (Model B) completed: %s characters", len(critique)
+                )
+
+            except CritiqueRuntimeError as cre:
+                current_app.logger.warning(
+                    "Expression layer runtime failure (%s): %s", cre.error_code, cre.stable_message
+                )
+                critique = ""
+                response_payload["critique"] = ""
+                response_payload["failed"] = True
+                response_payload["error_code"] = cre.error_code
+                response_payload["error"] = cre.stable_message
+                response_payload["learning_impact"] = {
+                    "memory_updated": False,
+                    "new_pattern_stored": False,
+                }
+                if ui_view:
+                    ui_view["critique"] = ""
+                    ei = ui_view.get("evidence_inspector") or {}
+                    ei["critique"] = {
+                        "status": "Unavailable",
+                        "text": None,
+                        "final_output_certified": False,
+                    }
+                    ui_view["evidence_inspector"] = ei
             except Exception as e:
-                current_app.logger.warning(f"Expression layer failed (non-fatal): {e}, falling back to legacy critique")
-                # Fallback to legacy critique generation
+                current_app.logger.warning(
+                    "Expression layer failed (non-fatal): %s, falling back to legacy critique", e
+                )
+                try:
+                    critique = generate_merged_critique(analysis_result, mentor_mode)
+                    response_payload["critique"] = critique
+                    if ui_view:
+                        ui_view["critique"] = critique
+                except CritiqueRuntimeError as cre:
+                    critique = ""
+                    response_payload["critique"] = ""
+                    response_payload["failed"] = True
+                    response_payload["error_code"] = cre.error_code
+                    response_payload["error"] = cre.stable_message
+                    response_payload["learning_impact"] = {
+                        "memory_updated": False,
+                        "new_pattern_stored": False,
+                    }
+                    if ui_view:
+                        ui_view["critique"] = ""
+                        ei = ui_view.get("evidence_inspector") or {}
+                        ei["critique"] = {
+                            "status": "Unavailable",
+                            "text": None,
+                            "final_output_certified": False,
+                        }
+                        ui_view["evidence_inspector"] = ei
+        else:
+            # Fallback to legacy critique generation (for backward compatibility)
+            try:
                 critique = generate_merged_critique(analysis_result, mentor_mode)
                 response_payload["critique"] = critique
                 if ui_view:
                     ui_view["critique"] = critique
-        else:
-            # Fallback to legacy critique generation (for backward compatibility)
-            critique = generate_merged_critique(analysis_result, mentor_mode)
-            response_payload["critique"] = critique
+            except CritiqueRuntimeError as cre:
+                critique = ""
+                response_payload["critique"] = ""
+                response_payload["failed"] = True
+                response_payload["error_code"] = cre.error_code
+                response_payload["error"] = cre.stable_message
+                response_payload["learning_impact"] = {
+                    "memory_updated": False,
+                    "new_pattern_stored": False,
+                }
+                if ui_view:
+                    ui_view["critique"] = ""
+
+        if response_payload.get("failed") and response_payload.get("error_code"):
+            log_stage_done("critique_expression_reflection", t_request, t_critique)
             if ui_view:
-                ui_view["critique"] = critique
-        
+                response_payload["_ui"] = ui_view
+            return jsonify(response_payload)
+
         try:
             from framed.analysis.critique_finalization import finalize_critique_with_reflection
 
@@ -419,12 +485,34 @@ def analyze():
                 mentor_mode=mentor_mode,
                 hitl_mentor_drift_penalty=hitl_penalty,
             )
-            if finalized.get("reflection_report"):
+            if finalized.get("failed"):
+                response_payload["critique"] = ""
+                response_payload["failed"] = True
+                response_payload["error_code"] = finalized.get("error_code", "critique_unavailable")
+                response_payload["error"] = finalized.get("error", "critique_runtime_failure")
+                response_payload["learning_impact"] = finalized.get(
+                    "learning_impact",
+                    {"memory_updated": False, "new_pattern_stored": False},
+                )
+                if ui_view:
+                    ui_view["critique"] = ""
+            elif finalized.get("reflection_report"):
                 critique = finalized["critique"]
                 response_payload["critique"] = critique
                 response_payload["reflection_report"] = finalized["reflection_report"]
                 if ui_view:
                     ui_view["critique"] = critique
+        except CritiqueRuntimeError as cre:
+            response_payload["critique"] = ""
+            response_payload["failed"] = True
+            response_payload["error_code"] = cre.error_code
+            response_payload["error"] = cre.stable_message
+            response_payload["learning_impact"] = {
+                "memory_updated": False,
+                "new_pattern_stored": False,
+            }
+            if ui_view:
+                ui_view["critique"] = ""
         except Exception as e:
             current_app.logger.warning(f"Reflection loop failed (non-fatal): {e}")
 

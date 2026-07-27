@@ -744,6 +744,7 @@ Begin.
 """
 
     try:
+        from .critique_finalization import CritiqueRuntimeError, classify_critique_runtime_failure
         from .vision import get_openai_client
 
         openai_client = get_openai_client()
@@ -767,9 +768,16 @@ Begin.
         )
         logger.info("PHASE III-A: Received critique response from OpenAI")
         return response.choices[0].message.content.strip()
+    except CritiqueRuntimeError:
+        raise
     except Exception as e:
         logger.error(f"PHASE III-A: Critique generation failed: {e}", exc_info=True)
-        return f"Critique generation unavailable. ({str(e)})"
+        from .critique_finalization import CritiqueRuntimeError, classify_critique_runtime_failure
+
+        raise CritiqueRuntimeError(
+            "critique_generation_failed",
+            error_code=classify_critique_runtime_failure(e),
+        ) from e
 
 
 def describe_stat(name, value):
