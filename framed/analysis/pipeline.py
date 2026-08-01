@@ -373,7 +373,16 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                     "couch",
                     "chair",
                     "table",
+                    "clutter",
+                    "cluttered",
+                    "messy",
+                    "storage",
+                    "coat",
                 ]
+            )
+            has_clutter_cues = any(
+                k in text_blob
+                for k in ["clutter", "cluttered", "messy", "storage", "abandoned", "shelf", "shelves", "coat"]
             )
             looks_abstract_terms = any(k in text_blob for k in ["abstract", "nonrepresentational", "non-representational"])
             looks_painting = any(k in text_blob for k in ["painting", "canvas", "acrylic", "oil painting", "artwork"])
@@ -403,7 +412,9 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
             has_ui_text = any(re.search(rf"\b{re.escape(tok)}\b", text_blob) for tok in _ui_text_tokens)
             has_physical_interior = bool(set(yolo_objs) & _physical_interior)
             has_ui_signal = has_ui_yolo or (
-                has_ui_text and scene_category in ("artificial", "indoor", "man-made", "")
+                has_ui_text
+                and scene_category in ("artificial", "indoor", "man-made", "")
+                and not (has_physical_interior and (has_interior_cues or has_clutter_cues))
             )
             looks_like_screen_capture = (
                 not has_street_cues
@@ -411,12 +422,14 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 and _edge_deg > 0.47
                 and has_ui_text
                 and scene_category in ("artificial", "indoor", "man-made", "")
+                and not (has_physical_interior and (has_interior_cues or has_clutter_cues))
             )
             route_screenshot_ui = (
                 (has_ui_signal or looks_like_screen_capture)
                 and not has_street_cues
                 and num_vehicles == 0
-                and not (has_physical_interior and has_interior_cues)
+                and not (has_physical_interior and (has_interior_cues or has_clutter_cues))
+                and not (has_clutter_cues and num_people == 0 and not has_ui_yolo)
             )
 
             scene_type = "unknown"

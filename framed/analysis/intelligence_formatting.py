@@ -108,6 +108,11 @@ def is_cluttered_physical_interior(visual_evidence: Optional[Dict[str, Any]]) ->
     caption = str(signals.get("clip_caption", "") or "").lower()
     if _UI_CAPTION_HINT.search(caption) and "surreal" not in caption:
         return False
+    scene_type = str(scene_gate.get("scene_type", "")).lower()
+    if scene_type in ("interior_scene", "object_dense"):
+        return True
+    if re.search(r"\b(clutter|cluttered|messy|room|interior|abandoned|shelf|shelves|storage|coat)\b", caption):
+        return True
     return True
 
 
@@ -129,6 +134,113 @@ def is_phone_snapshot_not_screen(visual_evidence: Optional[Dict[str, Any]]) -> b
     if re.search(r"\b(blur|motion|snapshot|phone|train|street|crowd)\b", caption):
         return True
     return False
+
+
+def is_portrait_or_single_subject(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """Portrait / single-subject people scene — not a layered street composition (IC_0027b)."""
+    if not visual_evidence:
+        return False
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    scene_type = str(scene_gate.get("scene_type", "")).lower()
+    if scene_type != "people_scene":
+        return False
+    signals = scene_gate.get("signals") or {}
+    yolo_objects = [str(o).lower() for o in (signals.get("yolo_objects") or [])]
+    person_count = sum(1 for o in yolo_objects if o == "person")
+    caption = str(signals.get("clip_caption", "") or "").lower()
+    has_street_cues = bool(
+        re.search(r"\b(street|sidewalk|urban|road|bus|traffic|crowd|pedestrian|downtown)\b", caption)
+    )
+    return person_count <= 1 and not has_street_cues
+
+
+_STREET_ON_PORTRAIT = re.compile(
+    r"\b(street|urban|sidewalk|road|bus|traffic|crowd|pedestrian|horizontal bands|multiple figures|"
+    r"layered street|figures,? foreground and background)\b",
+    re.I,
+)
+_UI_ON_PHYSICAL_INTERIOR = re.compile(
+    r"\b(screen|digital display|ui|webpage|layout|text hierarchy|readability|tie|clock|keyboard|"
+    r"monitor|interface|code editor|screenshot)\b",
+    re.I,
+)
+_OBJECT_HALLUCINATION_ON_UI = re.compile(
+    r"\b(person|people|tv|television|books?|bed|surreal couch|urban scene)\b",
+    re.I,
+)
+
+
+def reconcile_recognition_with_scene(
+    primary: str,
+    visual_evidence: Optional[Dict[str, Any]],
+) -> str:
+    """IC_0027b: align Layer-1 recognition with scene_gate and visible objects."""
+    if not primary or not visual_evidence:
+        return primary or ""
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    scene_type = str(scene_gate.get("scene_type", "")).lower()
+    signals = scene_gate.get("signals") or {}
+    yolo_objects = {str(o).lower() for o in (signals.get("yolo_objects") or [])}
+    caption = str(signals.get("clip_caption", "") or "").lower()
+
+    if should_suppress_screenshot_routing(visual_evidence) or scene_type in (
+        "interior_scene",
+        "object_dense",
+    ):
+        if _UI_ON_PHYSICAL_INTERIOR.search(primary) and not ui_screen_scene_hint(visual_evidence):
+            return (
+                "I see a cluttered interior room with dense physical objects, competing focal points, "
+                "and weak visual hierarchy — clutter and texture dominate the frame."
+            )
+        if re.search(r"\bscreenshot ui|surreal screenshot\b", primary, re.I):
+            return (
+                "I see a cluttered interior room with a couch and competing objects — "
+                "the scene is a physical space, not a digital display."
+            )
+
+    if is_portrait_or_single_subject(visual_evidence) and _STREET_ON_PORTRAIT.search(primary):
+        return (
+            "I see a close portrait or single-subject people scene — "
+            "one person is the primary subject, not a multi-figure urban street."
+        )
+
+    if scene_type == "screenshot_ui" or (
+        is_screenshot_ui_scene(visual_evidence) and not should_suppress_screenshot_routing(visual_evidence)
+    ):
+        if _OBJECT_HALLUCINATION_ON_UI.search(primary):
+            physical_hallucinations = {"person", "people", "tv", "television", "book", "books", "bed"}
+            mentioned = {m.lower().rstrip("s") for m in _OBJECT_HALLUCINATION_ON_UI.findall(primary)}
+            yolo_or_caption_support = yolo_objects | set(re.findall(r"\b\w+\b", caption))
+            unsupported = any(
+                h in physical_hallucinations
+                and h not in yolo_or_caption_support
+                and (h + "s") not in yolo_or_caption_support
+                for h in mentioned
+            )
+            if unsupported or "urban scene" in primary.lower() or "surreal couch" in primary.lower():
+                return (
+                    "I see a screen or digital display showing UI, code, or webpage content — "
+                    "layout, text readability, contrast, hierarchy, and crop are the primary subjects."
+                )
+        if _FINE_ART_ON_SCREEN.search(primary):
+            return sanitize_primary_screenshot(primary, visual_evidence)
+
+    if scene_type == "people_scene" and not is_portrait_or_single_subject(visual_evidence):
+        if re.search(r"\b(screenshot|ui|digital display|webpage)\b", primary, re.I):
+            return (
+                "I see a people scene with visible figures — "
+                "the primary subject is people in a photographed environment, not a screen capture."
+            )
+
+    if scene_type in ("interior_scene", "object_dense") and re.search(
+        r"\b(street|urban|sidewalk|road scene)\b", primary, re.I
+    ):
+        return (
+            "I see a cluttered interior or object-dense room — "
+            "physical objects and walls dominate, not an outdoor street scene."
+        )
+
+    return primary
 
 
 def should_suppress_screenshot_routing(visual_evidence: Optional[Dict[str, Any]]) -> bool:
@@ -534,6 +646,8 @@ def is_likely_digital_display(visual_evidence: Optional[Dict[str, Any]]) -> bool
     """Heuristic for UI/screenshot when scene_gate mislabels as interior or unknown."""
     if not visual_evidence:
         return False
+    if should_suppress_screenshot_routing(visual_evidence):
+        return False
     if ui_screen_scene_hint(visual_evidence):
         return True
     scene_gate = visual_evidence.get("scene_gate") or {}
@@ -581,6 +695,8 @@ def infer_category_lexicon_key(visual_evidence: Optional[Dict[str, Any]]) -> Opt
     if not visual_evidence:
         return None
     if is_screenshot_ui_scene(visual_evidence) or is_likely_digital_display(visual_evidence):
+        if should_suppress_screenshot_routing(visual_evidence):
+            return "cluttered_room_weak_composition"
         return "screenshot_or_ui_image"
     scene_gate = visual_evidence.get("scene_gate") or {}
     scene_type = str(scene_gate.get("scene_type", "")).lower()
@@ -591,11 +707,17 @@ def infer_category_lexicon_key(visual_evidence: Optional[Dict[str, Any]]) -> Opt
         return "cluttered_room_weak_composition"
     if yolo_objects & _PHYSICAL_INTERIOR_OBJECTS:
         return "cluttered_room_weak_composition"
-    if scene_type in ("street_scene", "people_scene"):
+    if is_portrait_or_single_subject(visual_evidence):
+        return None
+    if scene_type == "street_scene":
         return "layered_street_composition"
-    if re.search(r"\b(street|sidewalk|urban|pedestrian|bridge|waterfront)\b", caption):
+    if scene_type == "people_scene" and re.search(
+        r"\b(street|sidewalk|urban|pedestrian|bridge|waterfront|crowd)\b", caption
+    ):
         return "layered_street_composition"
-    if "person" in yolo_objects or "people" in caption:
+    if "person" in yolo_objects and re.search(
+        r"\b(street|sidewalk|urban|pedestrian|bridge|waterfront)\b", caption
+    ):
         return "layered_street_composition"
     return None
 

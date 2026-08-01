@@ -20,6 +20,7 @@ from .intelligence_formatting import (
     sanitize_primary_category,
     sanitize_primary_screenshot,
     sanitize_primary_when_suppressed,
+    reconcile_recognition_with_scene,
 )
 from .ambiguity import (
     compute_plausibility,
@@ -178,10 +179,13 @@ OUTPUT FORMAT (JSON):
         if "confidence" not in recognition:
             recognition["confidence"] = 0.0
 
-        recognition["what_i_see"] = sanitize_primary_screenshot(
-            sanitize_primary_category(
-                sanitize_primary_when_suppressed(
-                    recognition.get("what_i_see", ""), visual_evidence
+        recognition["what_i_see"] = reconcile_recognition_with_scene(
+            sanitize_primary_screenshot(
+                sanitize_primary_category(
+                    sanitize_primary_when_suppressed(
+                        recognition.get("what_i_see", ""), visual_evidence
+                    ),
+                    visual_evidence,
                 ),
                 visual_evidence,
             ),
@@ -189,6 +193,8 @@ OUTPUT FORMAT (JSON):
         )
         if is_screenshot_ui_scene(visual_evidence):
             recognition["_screenshot_ui"] = True
+        else:
+            recognition.pop("_screenshot_ui", None)
         if is_category_alignment_scene(visual_evidence):
             cat_key = infer_category_lexicon_key(visual_evidence)
             recognition["_category_alignment"] = True
