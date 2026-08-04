@@ -322,6 +322,11 @@ def analyze():
     
     file = request.files.get("image")
     mentor_mode = request.form.get("mentor_mode", "Balanced Mentor")
+    cognition_run_purpose = request.form.get("cognition_run_purpose")
+    baseline_run_id = request.form.get("baseline_run_id")
+    comparison_group_id = request.form.get("comparison_group_id")
+    exclude_run_ids = request.form.get("exclude_run_ids")
+    exclude_episode_ids = request.form.get("exclude_episode_ids")
 
     if not file or file.filename == "":
         current_app.logger.warning(f"No file uploaded. Available keys: {list(request.files.keys())}")
@@ -343,7 +348,16 @@ def analyze():
         photo_id = str(uuid.uuid4())
         t_request = time.perf_counter()
         t_pipeline = time.perf_counter()
-        analysis_result = run_full_analysis(image_path, photo_id=photo_id, filename=safe_name)
+        analysis_result = run_full_analysis(
+            image_path,
+            photo_id=photo_id,
+            filename=safe_name,
+            cognition_run_purpose=cognition_run_purpose,
+            baseline_run_id=baseline_run_id,
+            comparison_group_id=comparison_group_id,
+            exclude_run_ids=exclude_run_ids,
+            exclude_episode_ids=exclude_episode_ids,
+        )
         log_stage_done("run_full_analysis", t_request, t_pipeline)
 
         ui_view = clean_result_for_ui(analysis_result)

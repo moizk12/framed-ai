@@ -642,9 +642,30 @@ _CATEGORY_LEXICON: Dict[str, Dict[str, Any]] = {
 }
 
 
+def is_likely_art_reproduction(visual_evidence: Optional[Dict[str, Any]]) -> bool:
+    """Fine-art / fresco / painting reproduction — not a digital display."""
+    if not visual_evidence:
+        return False
+    scene_gate = visual_evidence.get("scene_gate") or {}
+    signals = scene_gate.get("signals") or {}
+    caption = str(signals.get("clip_caption", "") or "").lower()
+    art_tokens = (
+        r"\b(fresco|mural|michelangelo|sistine|painting|artwork|art\s+reproduction|"
+        r"canvas|museum|masterpiece|renaissance| chapel|ceiling\s+painting|oil\s+painting)\b"
+    )
+    if re.search(art_tokens, caption):
+        return True
+    scene_type = str(scene_gate.get("scene_type", "")).lower()
+    if scene_type == "abstract_art":
+        return True
+    return False
+
+
 def is_likely_digital_display(visual_evidence: Optional[Dict[str, Any]]) -> bool:
     """Heuristic for UI/screenshot when scene_gate mislabels as interior or unknown."""
     if not visual_evidence:
+        return False
+    if is_likely_art_reproduction(visual_evidence):
         return False
     if should_suppress_screenshot_routing(visual_evidence):
         return False
