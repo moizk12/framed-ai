@@ -52,6 +52,24 @@ def purpose_from_mode(mode: RunMode, *, explicit: Optional[RunPurpose] = None) -
     return mapping.get(mode, RunPurpose.LIVE)
 
 
+VALID_MODE_PURPOSE_PAIRS = frozenset(
+    {
+        (RunMode.BASELINE, RunPurpose.BASELINE),
+        (RunMode.CONTROL, RunPurpose.CONTROL),
+        (RunMode.REPLAY, RunPurpose.REPLAY),
+        (RunMode.MEMORY_ENABLED, RunPurpose.LIVE),
+        (RunMode.MEMORY_ENABLED, RunPurpose.MEMORY_ENABLED),
+        (RunMode.MEMORY_ENABLED, RunPurpose.DEMO_SEED),
+        (RunMode.MEMORY_ENABLED, RunPurpose.DIAGNOSTIC),
+    }
+)
+
+
+def validate_mode_purpose(mode: RunMode, purpose: RunPurpose) -> None:
+    if (mode, purpose) not in VALID_MODE_PURPOSE_PAIRS:
+        raise ValueError(f"Incompatible RunMode {mode.value!r} and RunPurpose {purpose.value!r}")
+
+
 def is_retrieval_eligible(purpose: RunPurpose) -> bool:
     return purpose.value in RETRIEVAL_ELIGIBLE_PURPOSES
 

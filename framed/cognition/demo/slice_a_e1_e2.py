@@ -17,13 +17,16 @@ from typing import Any, Dict, Iterator, Optional
 from framed.cognition.context.builder import compute_deliberation_delta
 from framed.cognition.contracts.memory import RetrievalQuery
 from framed.cognition.contracts.runs import RunMode, RunPurpose
+from framed.cognition.constants import PERCEPTION_SNAPSHOT_SCHEMA
 from framed.cognition.integration.pipeline_hook import (
     asset_id_from_path,
     begin_cognition_run,
+    build_perception_snapshot_v1,
     finalize_cognition_run,
 )
 from framed.cognition.ledger.artefact_store import artefact_hash, canonical_json_dumps
 from framed.cognition.ledger.sqlite_store import clear_ledger, get_ledger, release_ledger_store, reset_ledger
+from framed.cognition.replay.engine import execute_replay, validate_bundle_integrity, validate_bundle_schema
 from framed.cognition.retrieval.service import retrieve_memories
 
 
@@ -90,8 +93,8 @@ def _run_episode(
     }
 
 
-def deterministic_gate(bundle: Dict[str, Any]) -> bool:
-    """Gate 1: structured hashes must match on replay."""
+def validate_bundle_payloads(bundle: Dict[str, Any]) -> bool:
+    """Validate bundle has deliberation snapshot payload hashes."""
     runs = bundle.get("runs") or []
     if not runs:
         return False
@@ -100,9 +103,9 @@ def deterministic_gate(bundle: Dict[str, Any]) -> bool:
         payload_hashes = [
             artefact_hash(json.loads(e["payload_json"]))
             for e in events
-            if e.get("payload_json")
+            if e.get("payload_json") and e.get("event_type") == "deliberation_snapshot"
         ]
-        if not payload_hashes:
+        if run.get("run_purpose") in ("memory_enabled", "live", "demo_seed") and not payload_hashes:
             return False
     return True
 
@@ -182,13 +185,9 @@ def _run_slice_a_demo_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[s
     control_path = _write_temp_image(control_bytes)
     try:
         shared_result = _synthetic_result("interior_scene")
-        perception_hash = artefact_hash(
-            {
-                "scene_type": "interior_scene",
-                "signals": shared_result["visual_evidence"]["scene_gate"]["signals"],
-                "category": "interior_scene",
-            }
-        )
+        perception_payload = build_perception_snapshot_v1(shared_result)
+        perception_hash = artefact_hash(perception_payload)
+        assert perception_payload["schema"] == PERCEPTION_SNAPSHOT_SCHEMA
 
         e1_intel = _synthetic_intelligence(
             "Cluttered interior with weak composition — prior failure mode noted.",
@@ -275,7 +274,14 @@ def _run_slice_a_demo_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[s
         bundle["code_commit"] = os.getenv("FRAMED_CODE_COMMIT", "local")
         bundle["retrieval_policy"] = {"version": "v1", "cutoff": 0.7}
         bundle_hash = artefact_hash({k: bundle[k] for k in ("schema", "runs", "episodes", "events") if k in bundle})
-        assert deterministic_gate(bundle), "Deterministic replay gate failed"
+        validate_bundle_schema(bundle)
+        validate_bundle_integrity(bundle, artefacts=ledger.artefacts)
+        assert validate_bundle_payloads(bundle), "Bundle payload validation failed"
+
+        archive_path = evidence_dir / "slice_a_replay_bundle.json"
+        archive_path.write_text(canonical_json_dumps(bundle), encoding="utf-8")
+        replay_report = execute_replay(archive_path)
+        assert replay_report.get("status") == "PASS", f"Replay execution failed: {replay_report}"
 
         ledger.activate_state(e2a_out["session"].workspace_id, "state_baseline")
         ident = e2b_out["session"]
@@ -312,9 +318,8 @@ def _run_slice_a_demo_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[s
             "selected_memory_reference_ids": selected_ref_ids,
             "selected_source_episode_ids": sorted(source_eps),
             "baseline_rejections": baseline_rejects,
+            "replay_report": replay_report,
         }
-        archive_path = evidence_dir / "slice_a_replay_bundle.json"
-        archive_path.write_text(canonical_json_dumps(bundle), encoding="utf-8")
         report_path = evidence_dir / "slice_a_demo_report.json"
         report_path.write_text(canonical_json_dumps(report), encoding="utf-8")
         return report
@@ -383,12 +388,24 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--evidence-dir", type=Path, help="Directory for replay bundle and report outputs.")
     parser.add_argument("--reset-store", action="store_true", help="Delete and recreate the explicit cognition directory.")
     parser.add_argument("--reuse-store", action="store_true", help="Allow reuse of a non-empty explicit cognition directory.")
+    parser.add_argument("--replay", type=Path, help="Replay an exported bundle in an isolated cognition store.")
+    parser.add_argument(
+        "--replay-mutate",
+        choices=("deliberation_hash", "memory_ref"),
+        help="Apply a mutation to the bundle before replay (expects replay failure).",
+    )
     return parser.parse_args(argv)
 
 
 def main() -> int:
     try:
         args = _parse_args()
+        if args.replay is not None:
+            report = execute_replay(args.replay, mutate=args.replay_mutate)
+            print(json.dumps(report, indent=2))
+            if args.replay_mutate:
+                return 0 if report.get("status") == "FAIL" else 1
+            return 0 if report.get("status") == "PASS" else 1
         report = run_slice_a_demo(
             cognition_dir=args.cognition_dir,
             keep_store=args.keep_store,

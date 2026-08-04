@@ -735,7 +735,18 @@ def analyze_image(
                         pass
                 elif cognition_session:
                     finalize_cognition_run(cognition_session, result, intelligence_output)
-            except Exception:
+            except Exception as exc:
+                if cognition_session is not None:
+                    from framed.cognition.integration.pipeline_hook import fail_cognition_run
+
+                    fail_info = fail_cognition_run(
+                        cognition_session,
+                        error_code="cognition_pipeline_failed",
+                        safe_message="Cognition run failed during intelligence execution",
+                        stage="intelligence_core",
+                        internal_exception_type=type(exc).__name__,
+                    )
+                    result.setdefault("cognition_provenance", {}).update(fail_info)
                 result["intelligence"] = {}
         else:
             result["intelligence"] = {}

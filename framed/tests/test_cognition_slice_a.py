@@ -30,6 +30,11 @@ def cognition_env(monkeypatch, tmp_path):
     reset_ledger()
 
 
+def _memory_snapshot(ledger: CognitionLedger, workspace: str) -> dict:
+    ledger.activate_state(workspace, "state_memory_enabled")
+    return ledger.get_active_state(workspace)["snapshot"]
+
+
 def _seed_closed_episode(ledger: CognitionLedger, workspace: str, actor: str, asset: str, scene: str, cat: str, hyp: str):
     baseline_id, _ = ledger.ensure_demo_states(workspace)
     eid = ledger.open_episode(
@@ -147,8 +152,8 @@ def test_retrieval_threshold_and_category_signal(cognition_env):
         scene_signature="interior_scene",
         category_signature="cluttered_room_weak_composition",
     )
-    state = ledger.get_active_state(ws)
-    result = retrieve_memories(q, ledger=ledger, state_snapshot=state["snapshot"])
+    state = _memory_snapshot(ledger, ws)
+    result = retrieve_memories(q, ledger=ledger, state_snapshot=state)
     assert len(result.references) == 1
     assert result.references[0].epistemic_status == "provisional"
     assert result.references[0].trust_level == "low"
@@ -170,7 +175,7 @@ def test_same_asset_excluded(cognition_env):
         scene_signature="interior_scene",
         category_signature="cluttered_room_weak_composition",
     )
-    result = retrieve_memories(q, ledger=ledger, state_snapshot=ledger.get_active_state(ws)["snapshot"])
+    result = retrieve_memories(q, ledger=ledger, state_snapshot=_memory_snapshot(ledger, ws))
     assert len(result.references) == 0
 
 

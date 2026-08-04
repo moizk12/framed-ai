@@ -5,11 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
+import sys
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from framed.cognition.config import cognition_enabled
+from framed.cognition.constants import PERCEPTION_SNAPSHOT_SCHEMA
 from framed.cognition.context.builder import (
     DeliberationContext,
     build_deliberation_context,
@@ -26,6 +29,7 @@ from framed.cognition.contracts.runs import (
     SameAssetPolicy,
     is_retrieval_eligible,
     purpose_from_mode,
+    validate_mode_purpose,
 )
 from framed.cognition.contracts.snapshot import DeliberationSnapshot, snapshot_from_intelligence
 from framed.cognition.identity import get_identity
@@ -54,21 +58,52 @@ class CognitionSession:
     cognition_context: Optional[Dict[str, Any]] = None
     baseline_snapshot: Optional[DeliberationSnapshot] = None
     rejected_candidates: List[Dict[str, Any]] = field(default_factory=list)
+    confidence_provenance: Dict[str, Any] = field(default_factory=dict)
 
 
 def legacy_writes_allowed() -> bool:
     return not cognition_enabled()
 
 
-def perception_artefact_from_result(result: Dict[str, Any]) -> str:
+def build_perception_snapshot_v1(result: Dict[str, Any]) -> Dict[str, Any]:
     ve = result.get("visual_evidence") or {}
     sg = ve.get("scene_gate") or {}
-    payload = {
+    anchors = result.get("semantic_anchors") if isinstance(result.get("semantic_anchors"), dict) else {}
+    return {
+        "schema": PERCEPTION_SNAPSHOT_SCHEMA,
         "scene_type": sg.get("scene_type"),
         "signals": sg.get("signals"),
-        "category": result.get("semantic_anchors", {}).get("scene_type") if isinstance(result.get("semantic_anchors"), dict) else None,
+        "category": anchors.get("scene_type"),
     }
-    return artefact_hash(payload)
+
+
+def perception_artefact_from_result(result: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    payload = build_perception_snapshot_v1(result)
+    return artefact_hash(payload), payload
+
+
+def build_provenance_manifest(
+    *,
+    state_version_id: str,
+    state_snapshot_hash: Optional[str],
+    prompt_provenance: Dict[str, Any],
+    model_provenance: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "schema": "provenance_manifest_v1",
+        "code_commit": os.getenv("FRAMED_CODE_COMMIT", "local"),
+        "python_version": platform.python_version(),
+        "schema_version": 3,
+        "model_provenance": model_provenance,
+        "prompt_provenance": prompt_provenance,
+        "retrieval_policy_version": "v1",
+        "state_version_id": state_version_id,
+        "state_snapshot_hash": state_snapshot_hash,
+        "feature_flags": {
+            "FRAMED_COGNITION_V1": cognition_enabled(),
+        },
+        "deterministic_seed": os.getenv("FRAMED_DETERMINISTIC_SEED"),
+    }
 
 
 def asset_id_from_path(path: str) -> str:
@@ -160,6 +195,7 @@ def begin_cognition_run(
         purpose = RunPurpose.CONTROL
     elif run_mode == RunMode.REPLAY and run_purpose is None:
         purpose = RunPurpose.REPLAY
+    validate_mode_purpose(run_mode, purpose)
     retrieval_enabled = (
         bool(snap.get("retrieval_enabled", True))
         and purpose not in (RunPurpose.BASELINE, RunPurpose.CONTROL, RunPurpose.REPLAY)
@@ -175,8 +211,8 @@ def begin_cognition_run(
         asset_filename=asset_filename,
     )
     run_id = str(uuid.uuid4())
-    perception_hash = perception_artefact_from_result(result)
-    ledger.put_artefact("perception_snapshot", "v1", {"hash": perception_hash, "path": image_path})
+    perception_hash, perception_payload = perception_artefact_from_result(result)
+    ledger.put_artefact("perception_snapshot", "v1", perception_payload)
     scene_sig, cat_sig = _signatures_from_result(result)
     refs: List[Any] = []
     rejected: List[Dict[str, Any]] = []
@@ -245,7 +281,13 @@ def begin_cognition_run(
         comparison_group_id=comparison_group_id,
         retrieval_eligible=is_retrieval_eligible(purpose),
     )
-    ledger.create_run(run)
+    provenance_manifest = build_provenance_manifest(
+        state_version_id=state_version_id,
+        state_snapshot_hash=state.get("snapshot") and artefact_hash(state["snapshot"]),
+        prompt_provenance=run.prompt_provenance,
+        model_provenance=run.model_provenance,
+    )
+    ledger.create_run(run, provenance_manifest=provenance_manifest)
     ledger.append_event(
         episode_id=episode_id,
         run_id=run_id,
@@ -326,6 +368,43 @@ def begin_cognition_run(
     )
 
 
+def fail_cognition_run(
+    session: CognitionSession,
+    *,
+    error_code: str,
+    safe_message: str,
+    stage: str,
+    internal_exception_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Mark cognition run failed without indexing partial success as retrievable memory."""
+    ledger = get_ledger()
+    ledger.append_event(
+        episode_id=session.episode_id,
+        run_id=session.run_id,
+        event_type="run_failed",
+        payload={
+            "error_code": error_code,
+            "safe_message": safe_message,
+            "stage": stage,
+            "internal_exception_type": internal_exception_type,
+            "run_purpose": session.run_purpose.value,
+        },
+    )
+    ledger.fail_episode(
+        session.episode_id,
+        failure_code=error_code,
+        failure_message=safe_message,
+    )
+    ledger.complete_run(session.run_id, failure_code=error_code, failure_stage=stage)
+    return {
+        "status": "failed",
+        "episode_id": session.episode_id,
+        "run_id": session.run_id,
+        "error_code": error_code,
+        "stage": stage,
+    }
+
+
 def finalize_cognition_run(
     session: CognitionSession,
     result: Dict[str, Any],
@@ -347,31 +426,7 @@ def finalize_cognition_run(
         strategy=strategy,
         requested_evidence=session.deliberation_context.requested_evidence,
     )
-    if session.memory_reference_ids and snap_obj.confidence > 0.55:
-        snap_obj = DeliberationSnapshot(
-            **{
-                **snap_obj.to_dict(),
-                "confidence": max(0.0, snap_obj.confidence - 0.05),
-            }
-        )
-    snap = snap_obj.to_dict()
-    snap["perception_artefact_hash"] = session.perception_artefact_hash
-    snap_hash = ledger.put_artefact("deliberation_snapshot", "v1", snap)
-    event_id = ledger.append_event(
-        episode_id=session.episode_id,
-        run_id=session.run_id,
-        event_type="deliberation_snapshot",
-        payload=snap,
-        artefact_hash=snap_hash,
-    )
-    if session.run_purpose == RunPurpose.BASELINE:
-        ledger.store_deliberation_link(
-            episode_id=session.episode_id,
-            run_id=session.run_id,
-            snapshot=snap,
-            link_type="baseline_record",
-        )
-    deltas = []
+    raw_confidence = float(snap_obj.confidence)
     baseline_for_compare: Optional[DeliberationSnapshot] = session.baseline_snapshot
     if baseline_snapshot and not baseline_for_compare:
         baseline_for_compare = DeliberationSnapshot(
@@ -402,22 +457,55 @@ def finalize_cognition_run(
                 category_signature=cat_sig,
                 run_id=session.baseline_run_id,
             )
+
+    baseline_confidence = float(baseline_for_compare.confidence) if baseline_for_compare else raw_confidence
+    clamp_applied = False
+    final_confidence = raw_confidence
+    comparison_status = "no_compatible_baseline"
+    if session.memory_reference_ids and baseline_for_compare:
+        comparison_status = "compatible_baseline"
+        if raw_confidence > baseline_confidence:
+            final_confidence = baseline_confidence
+            clamp_applied = True
+    elif session.memory_reference_ids:
+        comparison_status = "missing_baseline"
+
+    snap_obj = DeliberationSnapshot(
+        **{
+            **snap_obj.to_dict(),
+            "confidence": final_confidence,
+        }
+    )
+    session.confidence_provenance = {
+        "raw_confidence": raw_confidence,
+        "baseline_confidence": baseline_confidence if baseline_for_compare else None,
+        "final_confidence": final_confidence,
+        "clamp_applied": clamp_applied,
+        "comparison_status": comparison_status,
+    }
+
+    snap = snap_obj.to_dict()
+    snap["perception_artefact_hash"] = session.perception_artefact_hash
+    snap["confidence_provenance"] = session.confidence_provenance
+    snap_hash = ledger.put_artefact("deliberation_snapshot", "v1", snap)
+
+    deltas = []
+    delta_payload = None
+    baseline_link_payload = None
+    if session.run_purpose == RunPurpose.BASELINE:
+        baseline_link_payload = snap
     if baseline_for_compare:
         delta_objs = compare_deliberation_snapshots(baseline_for_compare, snap_obj, session.memory_reference_ids)
         deltas = [d.__dict__ for d in delta_objs if d.field_changed != "_compatibility"]
         if deltas:
-            ledger.append_event(
-                episode_id=session.episode_id,
-                run_id=session.run_id,
-                event_type="deliberation_delta",
-                payload={
-                    "deltas": deltas,
-                    "baseline_run_id": baseline_for_compare.run_id or session.baseline_run_id,
-                },
-            )
+            delta_payload = {
+                "deltas": deltas,
+                "baseline_run_id": baseline_for_compare.run_id or session.baseline_run_id,
+            }
+
     fp = artefact_hash({"episode": session.episode_id, "run": session.run_id, "snap": snap_hash})
-    ledger.close_episode(
-        session.episode_id,
+    event_id = ledger.finalize_run_atomic(
+        episode_id=session.episode_id,
         run_id=session.run_id,
         run_purpose=session.run_purpose,
         scene_signature=scene_sig,
@@ -426,14 +514,12 @@ def finalize_cognition_run(
         goal_instance_id=None,
         final_fingerprint=fp,
         perception_artefact_hash=session.perception_artefact_hash,
+        deliberation_snapshot=snap,
+        deliberation_snapshot_hash=snap_hash,
+        experience_closed_payload={"status": "closed", "run_purpose": session.run_purpose.value},
+        delta_payload=delta_payload,
+        baseline_link_payload=baseline_link_payload,
     )
-    ledger.append_event(
-        episode_id=session.episode_id,
-        run_id=session.run_id,
-        event_type="experience_closed",
-        payload={"status": "closed", "run_purpose": session.run_purpose.value},
-    )
-    ledger.complete_run(session.run_id)
     result.setdefault("cognition_provenance", {})
     result["cognition_provenance"].update(
         {
@@ -448,8 +534,10 @@ def finalize_cognition_run(
             "run_purpose": session.run_purpose.value,
             "baseline_run_id": session.baseline_run_id,
             "rejected_candidates": session.rejected_candidates,
+            "confidence_provenance": session.confidence_provenance,
         }
     )
     intelligence_output.setdefault("_cognition_provenance", {})
     intelligence_output["_cognition_provenance"]["memory_reference_ids"] = session.memory_reference_ids
+    intelligence_output["_cognition_provenance"]["confidence_provenance"] = session.confidence_provenance
     return result

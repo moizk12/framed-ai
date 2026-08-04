@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Dict, List, Optional
 
+from framed.cognition.constants import MAX_MEMORY_REFS
 from framed.cognition.contracts.memory import MemoryReference, RetrievalQuery, RetrievalResult, ScoreComponents
 from framed.cognition.contracts.runs import RETRIEVAL_ELIGIBLE_PURPOSES, SameAssetPolicy
 from framed.cognition.ledger.sqlite_store import CognitionLedger, get_ledger
@@ -114,9 +116,23 @@ def retrieve_memories(
         scored.append((row, scores))
 
     scored.sort(key=lambda x: x[1].final_score, reverse=True)
-    for row, scores in scored[: query.max_results]:
-        event_id = _latest_deliberation_event(ledger, row["episode_id"])
-        hypothesis = _hypothesis_from_episode(ledger, row["episode_id"])
+    max_results = min(query.max_results, MAX_MEMORY_REFS)
+    for row, scores in scored[:max_results]:
+        event_id, source_artefact_hash, hypothesis, source_confidence = _source_deliberation_provenance(
+            ledger, row["episode_id"]
+        )
+        if not event_id or not source_artefact_hash:
+            _reject(
+                result.rejected,
+                row,
+                "incomplete_source_provenance",
+                missing_event_id=not bool(event_id),
+                missing_artefact_hash=not bool(source_artefact_hash),
+            )
+            continue
+        if not _row_val(row, "source_run_id"):
+            _reject(result.rejected, row, "incomplete_source_provenance", missing_source_run_id=True)
+            continue
         ref = MemoryReference(
             memory_ref_id=str(uuid.uuid4()),
             source_episode_id=row["episode_id"],
@@ -128,11 +144,11 @@ def retrieve_memories(
             lifecycle_status="closed",
             memory_role="prior_experience",
             trust_level="low",
-            artefact_hash="",
+            artefact_hash=source_artefact_hash,
             scene_signature=row["scene_signature"] or "",
             category_signature=row["category_signature"] or "",
             hypothesis_summary=hypothesis,
-            confidence_at_source=None,
+            confidence_at_source=source_confidence,
             scores=scores,
             match_reason=f"category+signal final={scores.final_score:.2f}",
             eligibility_decision="selected",
@@ -149,18 +165,30 @@ def retrieve_memories(
     return result
 
 
-def _latest_deliberation_event(ledger: CognitionLedger, episode_id: str) -> str:
+def _source_deliberation_provenance(
+    ledger: CognitionLedger, episode_id: str
+) -> tuple[str, str, str, Optional[float]]:
     for ev in reversed(ledger.get_episode_events(episode_id)):
-        if ev["event_type"] == "deliberation_snapshot":
-            return ev["event_id"]
-    return ""
+        if ev["event_type"] != "deliberation_snapshot":
+            continue
+        payload = json.loads(ev["payload_json"])
+        event_id = ev.get("event_id") or ""
+        artefact = ev.get("artefact_hash") or ""
+        hypothesis = str(payload.get("primary_hypothesis", ""))
+        confidence = payload.get("confidence")
+        try:
+            confidence_val = float(confidence) if confidence is not None else None
+        except (TypeError, ValueError):
+            confidence_val = None
+        return event_id, artefact, hypothesis, confidence_val
+    return "", "", "", None
+
+
+def _latest_deliberation_event(ledger: CognitionLedger, episode_id: str) -> str:
+    event_id, _, _, _ = _source_deliberation_provenance(ledger, episode_id)
+    return event_id
 
 
 def _hypothesis_from_episode(ledger: CognitionLedger, episode_id: str) -> str:
-    for ev in reversed(ledger.get_episode_events(episode_id)):
-        if ev["event_type"] == "deliberation_snapshot":
-            import json
-
-            payload = json.loads(ev["payload_json"])
-            return str(payload.get("primary_hypothesis", ""))
-    return ""
+    _, _, hypothesis, _ = _source_deliberation_provenance(ledger, episode_id)
+    return hypothesis

@@ -104,7 +104,7 @@ def test_fresh_install_upgrade_and_retrieval(migration_env):
 
     with ledger._connect() as conn:
         version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        assert version == 2
+        assert version == 3
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
     ws, actor = str(uuid.uuid4()), str(uuid.uuid4())
@@ -153,6 +153,8 @@ def test_fresh_install_upgrade_and_retrieval(migration_env):
     )
     ledger.complete_run(run.run_id)
 
+    _, memory_state_id = ledger.ensure_initial_states(ws)
+    ledger.activate_state(ws, "state_memory_enabled")
     result = retrieve_memories(
         RetrievalQuery(
             workspace_id=ws,
@@ -178,7 +180,7 @@ def test_upgrade_from_001_is_fail_closed_and_preserves_history(migration_env):
 
     with ledger._connect() as conn:
         version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        assert version == 2
+        assert version == 3
         upgraded_live = conn.execute(
             "SELECT run_purpose, retrieval_eligible FROM cognitive_runs WHERE run_id='run-live'"
         ).fetchone()
@@ -222,7 +224,7 @@ def test_reopen_upgraded_database_does_not_reapply_migration(migration_env):
 
     with reopened._connect() as conn:
         versions = conn.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
-        assert [row["version"] for row in versions] == [1, 2]
+        assert [row["version"] for row in versions] == [1, 2, 3]
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 """

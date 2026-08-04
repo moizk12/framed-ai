@@ -4,22 +4,26 @@ from __future__ import annotations
 
 import json
 import gc
+import random
 import sqlite3
+import time
 import uuid
-from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from framed.cognition.config import cognition_db_path
-from framed.cognition.contracts.memory import MemoryReference, ScoreComponents
-from framed.cognition.contracts.runs import CognitiveRun, RunMode, RunPurpose, is_retrieval_eligible
-from framed.cognition.ledger.artefact_store import ArtefactStore
+from framed.cognition.constants import APPEND_EVENT_MAX_RETRIES, APPEND_EVENT_RETRY_BASE_MS, REPLAY_BUNDLE_SCHEMA
+from framed.cognition.contracts.memory import MemoryReference
+from framed.cognition.contracts.runs import CognitiveRun, RunPurpose, is_retrieval_eligible
+from framed.cognition.ledger.artefact_store import ArtefactStore, artefact_hash as compute_artefact_hash
 
 
 class CognitionLedger:
-    def __init__(self, db_path: Optional[Path] = None) -> None:
+    def __init__(self, db_path: Optional[Path] = None, artefact_root: Optional[Path] = None) -> None:
         self.db_path = db_path or cognition_db_path()
-        self.artefacts = ArtefactStore()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_artefact_root = artefact_root or (self.db_path.parent / "artefacts")
+        self.artefacts = ArtefactStore(root=resolved_artefact_root)
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
@@ -84,6 +88,19 @@ class CognitionLedger:
                     )
                     """
                 )
+            if current < 3:
+                for stmt in (migrations_dir / "003_integrity.sql").read_text(encoding="utf-8").split(";"):
+                    stmt = stmt.strip()
+                    if stmt:
+                        try:
+                            conn.execute(stmt)
+                        except sqlite3.OperationalError as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                raise
+                conn.execute(
+                    "INSERT INTO schema_version(version, applied_at) VALUES (3, ?)",
+                    (ArtefactStore.utc_now(),),
+                )
 
     def put_artefact(self, schema_name: str, schema_version: str, obj: Any) -> str:
         digest, rel, byte_len = self.artefacts.put(schema_name, schema_version, obj)
@@ -98,14 +115,15 @@ class CognitionLedger:
             )
         return digest
 
-    def ensure_demo_states(self, workspace_id: str) -> Tuple[str, str]:
-        """Create baseline + memory_enabled demo states if missing."""
+    def ensure_initial_states(self, workspace_id: str) -> Tuple[str, str]:
+        """Create baseline (default active) and memory-enabled (inactive) states if missing."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT state_version_id, label FROM cognitive_state_versions WHERE workspace_id=?",
+                "SELECT state_version_id, label, is_active FROM cognitive_state_versions WHERE workspace_id=?",
                 (workspace_id,),
             ).fetchall()
             by_label = {r["label"]: r["state_version_id"] for r in rows}
+            has_active = any(int(r["is_active"]) for r in rows)
         baseline_id = by_label.get("state_baseline")
         memory_id = by_label.get("state_memory_enabled")
         if not baseline_id:
@@ -128,10 +146,11 @@ class CognitionLedger:
                     """
                     INSERT INTO cognitive_state_versions
                     (state_version_id, workspace_id, parent_version_id, label, created_at, is_active, snapshot_artefact_hash)
-                    VALUES (?, ?, NULL, 'state_baseline', ?, 0, ?)
+                    VALUES (?, ?, NULL, 'state_baseline', ?, ?, ?)
                     """,
-                    (baseline_id, workspace_id, ArtefactStore.utc_now(), snap_hash),
+                    (baseline_id, workspace_id, ArtefactStore.utc_now(), 1 if not has_active else 0, snap_hash),
                 )
+                has_active = has_active or not by_label
         if not memory_id:
             memory_id = str(uuid.uuid4())
             snap = {
@@ -148,20 +167,19 @@ class CognitionLedger:
             }
             snap_hash = self.put_artefact("state_snapshot", "v1", snap)
             with self._connect() as conn:
-                # First install: activate memory state once at creation
-                conn.execute(
-                    "UPDATE cognitive_state_versions SET is_active=0 WHERE workspace_id=?",
-                    (workspace_id,),
-                )
                 conn.execute(
                     """
                     INSERT INTO cognitive_state_versions
                     (state_version_id, workspace_id, parent_version_id, label, created_at, is_active, snapshot_artefact_hash)
-                    VALUES (?, ?, ?, 'state_memory_enabled', ?, 1, ?)
+                    VALUES (?, ?, ?, 'state_memory_enabled', ?, 0, ?)
                     """,
                     (memory_id, workspace_id, baseline_id, ArtefactStore.utc_now(), snap_hash),
                 )
         return baseline_id, memory_id
+
+    def ensure_demo_states(self, workspace_id: str) -> Tuple[str, str]:
+        """Backward-compatible alias for initial state bootstrap."""
+        return self.ensure_initial_states(workspace_id)
 
     def get_active_state(self, workspace_id: str) -> Dict[str, Any]:
         with self._connect() as conn:
@@ -172,39 +190,39 @@ class CognitionLedger:
                 """,
                 (workspace_id,),
             ).fetchone()
-            if row is None:
-                _, mem = self.ensure_demo_states(workspace_id)
+        if row is None:
+            baseline_id, _ = self.ensure_initial_states(workspace_id)
+            with self._connect() as conn:
                 row = conn.execute(
                     "SELECT * FROM cognitive_state_versions WHERE state_version_id=?",
-                    (mem,),
+                    (baseline_id,),
                 ).fetchone()
-            snap = self.artefacts.get(row["snapshot_artefact_hash"])
-            return {"state_version_id": row["state_version_id"], "label": row["label"], "snapshot": snap}
+        snap = self.artefacts.get(row["snapshot_artefact_hash"])
+        return {"state_version_id": row["state_version_id"], "label": row["label"], "snapshot": snap}
 
     def activate_state(self, workspace_id: str, label: str) -> str:
+        self.ensure_initial_states(workspace_id)
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE cognitive_state_versions SET is_active=0 WHERE workspace_id=?",
-                (workspace_id,),
-            )
-            row = conn.execute(
+            target = conn.execute(
                 """
                 SELECT state_version_id FROM cognitive_state_versions
                 WHERE workspace_id=? AND label=? LIMIT 1
                 """,
                 (workspace_id, label),
             ).fetchone()
-            if row is None:
-                self.ensure_demo_states(workspace_id)
-                row = conn.execute(
-                    "SELECT state_version_id FROM cognitive_state_versions WHERE workspace_id=? AND label=?",
-                    (workspace_id, label),
-                ).fetchone()
+            if target is None:
+                raise ValueError(f"Unknown cognitive state label: {label}")
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "UPDATE cognitive_state_versions SET is_active=0 WHERE workspace_id=?",
+                (workspace_id,),
+            )
             conn.execute(
                 "UPDATE cognitive_state_versions SET is_active=1 WHERE state_version_id=?",
-                (row["state_version_id"],),
+                (target["state_version_id"],),
             )
-            return row["state_version_id"]
+            conn.commit()
+            return target["state_version_id"]
 
     def open_episode(
         self,
@@ -243,16 +261,18 @@ class CognitionLedger:
             )
         return episode_id
 
-    def create_run(self, run: CognitiveRun) -> None:
+    def create_run(self, run: CognitiveRun, *, provenance_manifest: Optional[Dict[str, Any]] = None) -> None:
         eligible = is_retrieval_eligible(run.run_purpose)
+        manifest_json = json.dumps(provenance_manifest) if provenance_manifest else None
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO cognitive_runs
                 (run_id, episode_id, mode, run_purpose, baseline_run_id, comparison_group_id,
                  state_version_id, context_fingerprint, retrieval_enabled, retrieval_eligible,
-                 model_provenance_json, prompt_provenance_json, started_at, completed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 model_provenance_json, prompt_provenance_json, started_at, completed_at,
+                 provenance_manifest_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run.run_id,
@@ -269,6 +289,7 @@ class CognitionLedger:
                     json.dumps(run.prompt_provenance),
                     run.started_at,
                     run.completed_at,
+                    manifest_json,
                 ),
             )
 
@@ -277,11 +298,32 @@ class CognitionLedger:
             row = conn.execute("SELECT * FROM cognitive_runs WHERE run_id=?", (run_id,)).fetchone()
             return dict(row) if row else None
 
-    def complete_run(self, run_id: str) -> None:
+    def complete_run(self, run_id: str, *, failure_code: Optional[str] = None, failure_stage: Optional[str] = None) -> None:
         with self._connect() as conn:
             conn.execute(
-                "UPDATE cognitive_runs SET completed_at=? WHERE run_id=?",
-                (ArtefactStore.utc_now(), run_id),
+                """
+                UPDATE cognitive_runs
+                SET completed_at=?, failure_code=COALESCE(?, failure_code), failure_stage=COALESCE(?, failure_stage)
+                WHERE run_id=?
+                """,
+                (ArtefactStore.utc_now(), failure_code, failure_stage, run_id),
+            )
+
+    def fail_episode(
+        self,
+        episode_id: str,
+        *,
+        failure_code: str,
+        failure_message: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE episodes
+                SET status='failed', closed_at=?, failure_code=?, failure_message=?
+                WHERE episode_id=?
+                """,
+                (ArtefactStore.utc_now(), failure_code, failure_message, episode_id),
             )
 
     def _next_sequence(self, conn: sqlite3.Connection, episode_id: str) -> int:
@@ -302,26 +344,167 @@ class CognitionLedger:
     ) -> str:
         event_id = str(uuid.uuid4())
         now = ArtefactStore.utc_now()
+        payload_json = json.dumps(payload, sort_keys=True)
+        last_exc: Optional[Exception] = None
+        for attempt in range(APPEND_EVENT_MAX_RETRIES):
+            try:
+                with self._connect() as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    seq = self._next_sequence(conn, episode_id)
+                    conn.execute(
+                        """
+                        INSERT INTO episode_events
+                        (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            event_id,
+                            episode_id,
+                            run_id,
+                            event_type,
+                            seq,
+                            now,
+                            artefact_hash,
+                            payload_json,
+                        ),
+                    )
+                    conn.commit()
+                    return event_id
+            except sqlite3.OperationalError as exc:
+                last_exc = exc
+                if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                    time.sleep((APPEND_EVENT_RETRY_BASE_MS / 1000.0) * (1 + random.random()) * (attempt + 1))
+                    continue
+                raise
+        raise last_exc or RuntimeError("append_event failed after retries")
+
+    def finalize_run_atomic(
+        self,
+        *,
+        episode_id: str,
+        run_id: str,
+        run_purpose: RunPurpose,
+        scene_signature: str,
+        category_signature: str,
+        goal_type: str,
+        goal_instance_id: Optional[str],
+        final_fingerprint: Optional[str],
+        perception_artefact_hash: Optional[str],
+        deliberation_snapshot: Dict[str, Any],
+        deliberation_snapshot_hash: str,
+        experience_closed_payload: Dict[str, Any],
+        delta_payload: Optional[Dict[str, Any]] = None,
+        baseline_link_payload: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Atomically persist finalization events, close episode, index retrieval, complete run."""
+        now = ArtefactStore.utc_now()
+        snapshot_event_id = str(uuid.uuid4())
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             seq = self._next_sequence(conn, episode_id)
             conn.execute(
                 """
                 INSERT INTO episode_events
                 (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, 'deliberation_snapshot', ?, ?, ?, ?)
                 """,
                 (
-                    event_id,
+                    snapshot_event_id,
                     episode_id,
                     run_id,
-                    event_type,
                     seq,
                     now,
-                    artefact_hash,
-                    json.dumps(payload, sort_keys=True),
+                    deliberation_snapshot_hash,
+                    json.dumps(deliberation_snapshot, sort_keys=True),
                 ),
             )
-        return event_id
+            if baseline_link_payload is not None:
+                seq += 1
+                conn.execute(
+                    """
+                    INSERT INTO episode_events
+                    (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
+                    VALUES (?, ?, ?, 'deliberation_baseline_record', ?, ?, NULL, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        episode_id,
+                        run_id,
+                        seq,
+                        now,
+                        json.dumps(baseline_link_payload, sort_keys=True),
+                    ),
+                )
+            if delta_payload is not None:
+                seq += 1
+                conn.execute(
+                    """
+                    INSERT INTO episode_events
+                    (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
+                    VALUES (?, ?, ?, 'deliberation_delta', ?, ?, NULL, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        episode_id,
+                        run_id,
+                        seq,
+                        now,
+                        json.dumps(delta_payload, sort_keys=True),
+                    ),
+                )
+            ep = conn.execute("SELECT * FROM episodes WHERE episode_id=?", (episode_id,)).fetchone()
+            conn.execute(
+                """
+                UPDATE episodes SET status='closed', closed_at=?, final_fingerprint=?, perception_artefact_hash=?
+                WHERE episode_id=?
+                """,
+                (now, final_fingerprint, perception_artefact_hash, episode_id),
+            )
+            if is_retrieval_eligible(run_purpose):
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO retrieval_index
+                    (episode_id, workspace_id, actor_id, asset_id, scene_signature, category_signature,
+                     goal_type, goal_instance_id, recorded_at, closed_at, source_run_id, run_purpose)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        episode_id,
+                        ep["workspace_id"],
+                        ep["actor_id"],
+                        ep["asset_id"],
+                        scene_signature,
+                        category_signature,
+                        goal_type,
+                        goal_instance_id,
+                        ep["created_at"],
+                        now,
+                        run_id,
+                        run_purpose.value,
+                    ),
+                )
+            seq += 1
+            conn.execute(
+                """
+                INSERT INTO episode_events
+                (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
+                VALUES (?, ?, ?, 'experience_closed', ?, ?, NULL, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    episode_id,
+                    run_id,
+                    seq,
+                    now,
+                    json.dumps(experience_closed_payload, sort_keys=True),
+                ),
+            )
+            conn.execute(
+                "UPDATE cognitive_runs SET completed_at=? WHERE run_id=?",
+                (now, run_id),
+            )
+            conn.commit()
+        return snapshot_event_id
 
     def close_episode(
         self,
@@ -524,15 +707,109 @@ class CognitionLedger:
                     run_ids,
                 ).fetchall()
             ]
-            artefacts = [dict(r) for r in conn.execute("SELECT * FROM artefacts").fetchall()]
+            workspace_ids = list({e["workspace_id"] for e in episodes})
+            state_versions = [
+                dict(r)
+                for r in conn.execute(
+                    f"SELECT * FROM cognitive_state_versions WHERE workspace_id IN ({','.join('?'*len(workspace_ids))})",
+                    workspace_ids,
+                ).fetchall()
+            ] if workspace_ids else []
+            retrieval_index = [
+                dict(r)
+                for r in conn.execute(
+                    f"SELECT * FROM retrieval_index WHERE episode_id IN ({','.join('?'*len(episode_ids))})",
+                    episode_ids,
+                ).fetchall()
+            ]
+            source_episode_ids = list({r["source_episode_id"] for r in refs})
+            extra_index = []
+            if source_episode_ids:
+                extra_index = [
+                    dict(r)
+                    for r in conn.execute(
+                        f"SELECT * FROM retrieval_index WHERE episode_id IN ({','.join('?'*len(source_episode_ids))})",
+                        source_episode_ids,
+                    ).fetchall()
+                ]
+            all_index = {row["episode_id"]: row for row in retrieval_index + extra_index}
+
+        reachable_hashes = self._collect_reachable_artefact_hashes(
+            runs=runs,
+            episodes=episodes,
+            events=events,
+            refs=refs,
+            state_versions=state_versions,
+        )
+        with self._connect() as conn:
+            if reachable_hashes:
+                artefacts = [
+                    dict(r)
+                    for r in conn.execute(
+                        f"SELECT * FROM artefacts WHERE artefact_hash IN ({','.join('?'*len(reachable_hashes))})",
+                        list(reachable_hashes),
+                    ).fetchall()
+                ]
+            else:
+                artefacts = []
+
+        artefact_payloads = []
+        for row in artefacts:
+            digest = row["artefact_hash"]
+            try:
+                payload = self.artefacts.get(digest)
+                artefact_payloads.append({"artefact_hash": digest, "payload": payload})
+            except (FileNotFoundError, OSError):
+                continue
+
+        expected_hashes: Dict[str, Any] = {"runs": {}}
+        for run in runs:
+            run_events = [e for e in events if e["run_id"] == run["run_id"]]
+            snap_hash = next(
+                (e["artefact_hash"] for e in run_events if e["event_type"] == "deliberation_snapshot"),
+                None,
+            )
+            expected_hashes["runs"][run["run_id"]] = {
+                "deliberation_snapshot_hash": snap_hash,
+                "context_fingerprint": run.get("context_fingerprint"),
+            }
+
         return {
-            "schema": "replay_bundle_v1",
+            "schema": REPLAY_BUNDLE_SCHEMA,
             "runs": runs,
             "episodes": episodes,
             "events": events,
             "memory_references": refs,
+            "state_versions": state_versions,
+            "retrieval_index": list(all_index.values()),
             "artefact_manifest": artefacts,
+            "artefact_payloads": artefact_payloads,
+            "expected_hashes": expected_hashes,
         }
+
+    @staticmethod
+    def _collect_reachable_artefact_hashes(
+        *,
+        runs: List[Dict[str, Any]],
+        episodes: List[Dict[str, Any]],
+        events: List[Dict[str, Any]],
+        refs: List[Dict[str, Any]],
+        state_versions: List[Dict[str, Any]],
+    ) -> Set[str]:
+        hashes: Set[str] = set()
+        for ev in events:
+            if ev.get("artefact_hash"):
+                hashes.add(ev["artefact_hash"])
+        for ep in episodes:
+            if ep.get("perception_artefact_hash"):
+                hashes.add(ep["perception_artefact_hash"])
+        for ref in refs:
+            if ref.get("artefact_hash"):
+                hashes.add(ref["artefact_hash"])
+        for sv in state_versions:
+            if sv.get("snapshot_artefact_hash"):
+                hashes.add(sv["snapshot_artefact_hash"])
+        return hashes
 
 
 _ledger: Optional[CognitionLedger] = None
@@ -545,10 +822,12 @@ def get_ledger() -> CognitionLedger:
     return _ledger
 
 
-def reset_ledger(db_path: Optional[Path] = None) -> CognitionLedger:
+def reset_ledger(db_path: Optional[Path] = None, artefact_root: Optional[Path] = None) -> CognitionLedger:
     """Reset singleton ledger (tests/demo isolation)."""
     global _ledger
-    _ledger = CognitionLedger(db_path=db_path)
+    if db_path is not None and artefact_root is None:
+        artefact_root = db_path.parent / "artefacts"
+    _ledger = CognitionLedger(db_path=db_path, artefact_root=artefact_root)
     return _ledger
 
 

@@ -24,6 +24,11 @@ def cognition_env(monkeypatch, tmp_path):
     reset_ledger()
 
 
+def _memory_snapshot(ledger: CognitionLedger, ws: str) -> dict:
+    ledger.activate_state(ws, "state_memory_enabled")
+    return ledger.get_active_state(ws)["snapshot"]
+
+
 def _result(scene: str = "interior_scene"):
     return {"visual_evidence": {"scene_gate": {"scene_type": scene, "signals": {}}}}
 
@@ -101,7 +106,7 @@ def test_same_asset_excluded_before_ranking(cognition_env):
     ledger.ensure_demo_states(ws)
     asset = "shared_asset"
     _close_eligible(ledger, ws, actor, asset, RunPurpose.LIVE, "interior_scene", "cluttered_room_weak_composition", "prior")
-    result = retrieve_memories(_query(ws, actor, asset), ledger=ledger, state_snapshot=ledger.get_active_state(ws)["snapshot"])
+    result = retrieve_memories(_query(ws, actor, asset), ledger=ledger, state_snapshot=_memory_snapshot(ledger, ws))
     assert len(result.references) == 0
     assert any(r.get("rejection_reason") == "same_asset" for r in result.rejected)
 
@@ -169,7 +174,7 @@ def test_live_e1_retrieved(cognition_env):
     ws, actor = str(uuid.uuid4()), str(uuid.uuid4())
     ledger.ensure_demo_states(ws)
     e1, _ = _close_eligible(ledger, ws, actor, "e1_asset", RunPurpose.LIVE, "interior_scene", "cluttered_room_weak_composition", "E1 hyp")
-    result = retrieve_memories(_query(ws, actor, "e2_asset"), ledger=ledger, state_snapshot=ledger.get_active_state(ws)["snapshot"])
+    result = retrieve_memories(_query(ws, actor, "e2_asset"), ledger=ledger, state_snapshot=_memory_snapshot(ledger, ws))
     assert len(result.references) == 1
     assert result.references[0].source_episode_id == e1
 
@@ -186,6 +191,7 @@ def test_baseline_run_id_available_for_comparison(cognition_env, tmp_path):
         result=_result(),
         image_path=str(img),
         asset_filename="ab.jpg",
+        run_mode=RunMode.BASELINE,
         run_purpose=RunPurpose.BASELINE,
     )
     assert base
@@ -208,6 +214,7 @@ def test_e2_memory_retrieves_e1_not_baseline(cognition_env, tmp_path):
         result=_result(),
         image_path=str(e2_img),
         asset_filename="e2.jpg",
+        run_mode=RunMode.BASELINE,
         run_purpose=RunPurpose.BASELINE,
     )
     assert base
@@ -237,7 +244,7 @@ def test_allow_related_revision_same_asset(cognition_env):
     asset = "revision_asset"
     _close_eligible(ledger, ws, actor, asset, RunPurpose.LIVE, "interior_scene", "cluttered_room_weak_composition", "rev")
     q = _query(ws, actor, asset, same_asset_policy=SameAssetPolicy.ALLOW_RELATED_REVISION)
-    result = retrieve_memories(q, ledger=ledger, state_snapshot=ledger.get_active_state(ws)["snapshot"])
+    result = retrieve_memories(q, ledger=ledger, state_snapshot=_memory_snapshot(ledger, ws))
     assert len(result.references) == 1
 
 
@@ -257,7 +264,7 @@ def test_default_query_excludes_same_asset(cognition_env):
         category_signature="cluttered_room_weak_composition",
     )
     assert q.same_asset_policy == SameAssetPolicy.EXCLUDE
-    result = retrieve_memories(q, ledger=ledger, state_snapshot=ledger.get_active_state(ws)["snapshot"])
+    result = retrieve_memories(q, ledger=ledger, state_snapshot=_memory_snapshot(ledger, ws))
     assert len(result.references) == 0
 
 
@@ -268,7 +275,7 @@ def test_rejected_audit_exact_reason(cognition_env):
     eid2, _ = _close_eligible(
         ledger, ws, actor, "audit_asset", RunPurpose.LIVE, "interior_scene", "cluttered_room_weak_composition", "live"
     )
-    result = retrieve_memories(_query(ws, actor, "audit_asset"), ledger=ledger, state_snapshot=ledger.get_active_state(ws)["snapshot"])
+    result = retrieve_memories(_query(ws, actor, "audit_asset"), ledger=ledger, state_snapshot=_memory_snapshot(ledger, ws))
     same_asset_rejects = [r for r in result.rejected if r.get("episode_id") == eid2]
     assert same_asset_rejects
     assert same_asset_rejects[0]["rejection_reason"] == "same_asset"
