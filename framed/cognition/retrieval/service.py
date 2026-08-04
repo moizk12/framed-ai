@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import Any, Dict, List, Optional
 
 from framed.cognition.constants import MAX_MEMORY_REFS
 from framed.cognition.contracts.memory import MemoryReference, RetrievalQuery, RetrievalResult, ScoreComponents
 from framed.cognition.contracts.runs import RETRIEVAL_ELIGIBLE_PURPOSES, SameAssetPolicy
 from framed.cognition.ledger.sqlite_store import CognitionLedger, get_ledger
+from framed.cognition.ledger.artefact_store import artefact_hash as compute_artefact_hash
 
 
 def _row_val(row: Any, key: str, default: Any = "") -> Any:
@@ -133,8 +133,14 @@ def retrieve_memories(
         if not _row_val(row, "source_run_id"):
             _reject(result.rejected, row, "incomplete_source_provenance", missing_source_run_id=True)
             continue
+        deterministic_memory_ref_id = _deterministic_memory_ref_id(
+            query=query,
+            source_episode_id=row["episode_id"],
+            source_event_id=event_id,
+            source_run_id=_row_val(row, "source_run_id"),
+        )
         ref = MemoryReference(
-            memory_ref_id=str(uuid.uuid4()),
+            memory_ref_id=deterministic_memory_ref_id,
             source_episode_id=row["episode_id"],
             source_run_id=_row_val(row, "source_run_id"),
             source_event_id=event_id,
@@ -163,6 +169,34 @@ def retrieve_memories(
             }
         )
     return result
+
+
+def _deterministic_memory_ref_id(
+    *,
+    query: RetrievalQuery,
+    source_episode_id: str,
+    source_event_id: str,
+    source_run_id: str,
+) -> str:
+    # Deterministic provenance-based ID so replay can reproduce deltas exactly.
+    payload = {
+        "memory_ref_id_seed": 1,
+        "workspace_id": query.workspace_id,
+        "actor_id": query.actor_id,
+        "asset_id": query.asset_id,
+        "goal_type": query.goal_type,
+        "goal_instance_id": query.goal_instance_id,
+        "scene_signature": query.scene_signature,
+        "category_signature": query.category_signature,
+        "exclude_episode_ids": query.exclude_episode_ids,
+        "exclude_run_ids": query.exclude_run_ids,
+        "comparison_group_id": query.comparison_group_id,
+        "same_asset_policy": query.same_asset_policy.value,
+        "source_episode_id": source_episode_id,
+        "source_event_id": source_event_id,
+        "source_run_id": source_run_id,
+    }
+    return compute_artefact_hash(payload)
 
 
 def _source_deliberation_provenance(

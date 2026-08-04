@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from framed.cognition.constants import REPLAY_BUNDLE_SCHEMA
-from framed.cognition.contracts.memory import RetrievalQuery
+from framed.cognition.contracts.memory import MemoryReference, RetrievalQuery
+from framed.cognition.context.builder import compare_deliberation_snapshots
 from framed.cognition.contracts.runs import SameAssetPolicy
+from framed.cognition.contracts.snapshot import DeliberationSnapshot
 from framed.cognition.ledger.artefact_store import ArtefactStore, artefact_hash, canonical_json_dumps
 from framed.cognition.ledger.sqlite_store import CognitionLedger, clear_ledger, release_ledger_store, reset_ledger
 from framed.cognition.retrieval.service import retrieve_memories
@@ -60,16 +62,42 @@ def validate_bundle_integrity(
     for run in bundle.get("runs", []):
         run_id = run["run_id"]
         run_expected = (expected.get("runs") or {}).get(run_id) or {}
+        expected_snapshot_hash = run_expected.get("deliberation_snapshot_hash")
+        enforce_expected_deltas = "deliberation_delta_hashes" in run_expected
+        expected_delta_hashes = sorted(run_expected.get("deliberation_delta_hashes") or [])
+
+        actual_snapshot_hash: Optional[str] = None
+        actual_delta_hashes: List[str] = []
         for ev in bundle.get("events", []):
             if ev.get("run_id") != run_id:
                 continue
-            if ev.get("event_type") != "deliberation_snapshot":
-                continue
-            ev_hash = ev.get("artefact_hash")
-            if ev_hash and run_expected.get("deliberation_snapshot_hash") == ev_hash:
-                payload = json.loads(ev["payload_json"])
-                if artefact_hash(payload) != ev_hash:
-                    raise ValueError(f"Deliberation snapshot payload hash mismatch for run {run_id}")
+            if ev.get("event_type") == "deliberation_snapshot":
+                ev_hash = ev.get("artefact_hash")
+                if ev_hash:
+                    payload = json.loads(ev["payload_json"])
+                    payload_hash = artefact_hash(payload)
+                    if payload_hash != ev_hash:
+                        raise ValueError(f"Deliberation snapshot payload hash mismatch for run {run_id}")
+                    actual_snapshot_hash = ev_hash
+            elif ev.get("event_type") == "deliberation_delta":
+                ev_hash = ev.get("artefact_hash")
+                if ev_hash:
+                    payload = json.loads(ev["payload_json"])
+                    payload_hash = artefact_hash(payload)
+                    if payload_hash != ev_hash:
+                        raise ValueError(f"Deliberation delta payload hash mismatch for run {run_id}")
+                    actual_delta_hashes.append(ev_hash)
+
+        if expected_snapshot_hash is not None and actual_snapshot_hash != expected_snapshot_hash:
+            raise ValueError(
+                f"Expected deliberation_snapshot hash mismatch for run {run_id}: "
+                f"expected={expected_snapshot_hash}, actual={actual_snapshot_hash}"
+            )
+        if enforce_expected_deltas and sorted(actual_delta_hashes) != expected_delta_hashes:
+            raise ValueError(
+                f"Expected deliberation_delta hash mismatch for run {run_id}: "
+                f"expected={expected_delta_hashes}, actual={sorted(actual_delta_hashes)}"
+            )
 
 
 def execute_replay(
@@ -109,34 +137,20 @@ def execute_replay(
             bundle = _apply_mutation(bundle, mutate)
 
         _import_bundle(ledger, bundle)
-        if mutate == "deliberation_hash":
-            try:
-                validate_bundle_integrity(bundle, artefacts=ledger.artefacts)
-                return {
-                    "status": "FAIL",
-                    "bundle_path": str(bundle_path),
-                    "cognition_dir": str(resolved_dir),
-                    "replay_checks": [{"match": False, "reason": "mutation_not_rejected"}],
-                    "mutated": True,
-                }
-            except ValueError:
-                return {
-                    "status": "FAIL",
-                    "bundle_path": str(bundle_path),
-                    "cognition_dir": str(resolved_dir),
-                    "replay_checks": [{"match": True, "reason": "mutation_rejected_at_integrity"}],
-                    "mutated": True,
-                }
-
-        validate_bundle_integrity(bundle, artefacts=ledger.artefacts)
+        try:
+            validate_bundle_integrity(bundle, artefacts=ledger.artefacts)
+        except Exception as exc:
+            return {
+                "status": "FAIL",
+                "bundle_path": str(bundle_path),
+                "cognition_dir": str(resolved_dir),
+                "replay_checks": [{"match": False, "reason": "bundle_integrity_validation_failed"}],
+                "mutated": bool(mutate),
+                "error": str(exc),
+            }
 
         replay_checks: List[Dict[str, Any]] = []
         for run in bundle.get("runs", []):
-            purpose = run.get("run_purpose")
-            if purpose not in ("memory_enabled", "live", "demo_seed"):
-                continue
-            if not run.get("retrieval_enabled"):
-                continue
             check = _replay_retrieval_for_run(ledger, bundle, run)
             replay_checks.append(check)
 
@@ -382,35 +396,161 @@ def _replay_retrieval_for_run(
     bundle: Dict[str, Any],
     run: Dict[str, Any],
 ) -> Dict[str, Any]:
+    def _snapshot_from_payload(payload: Dict[str, Any]) -> DeliberationSnapshot:
+        return DeliberationSnapshot(
+            primary_hypothesis=str(payload.get("primary_hypothesis") or ""),
+            confidence=float(payload.get("confidence", 0.5)),
+            strategy=str(payload.get("strategy") or "standard"),
+            requested_evidence=list(payload.get("requested_evidence") or []),
+            alternative_hypotheses=list(payload.get("alternative_hypotheses") or []),
+            hypothesis_ranking=list(payload.get("hypothesis_ranking") or []),
+            branch_abstain=payload.get("branch_abstain"),
+            scene_signature=str(payload.get("scene_signature") or ""),
+            category_signature=str(payload.get("category_signature") or ""),
+            memory_reference_ids=list(payload.get("memory_reference_ids") or []),
+            run_id=str(payload.get("run_id") or ""),
+            state_version_id=str(payload.get("state_version_id") or ""),
+            perception_artefact_hash=str(payload.get("perception_artefact_hash") or ""),
+            context_fingerprint=str(payload.get("context_fingerprint") or ""),
+        )
+
+    def _deliberation_snapshot_payload_for_run_id(run_id: str) -> Optional[Dict[str, Any]]:
+        for ev in bundle.get("events", []):
+            if ev.get("run_id") != run_id or ev.get("event_type") != "deliberation_snapshot":
+                continue
+            return json.loads(ev["payload_json"])
+        return None
+
+    def _normalize_scores(
+        *, ref: Dict[str, Any]
+    ) -> Dict[str, float]:
+        return {
+            "category_score": float(ref.get("category_score", 0.0)),
+            "scene_score": float(ref.get("scene_score", 0.0)),
+            "goal_score": float(ref.get("goal_score", 0.0)),
+            "relation_score": float(ref.get("relation_score", 0.0)),
+            "recency_score": float(ref.get("recency_score", 0.0)),
+            "final_score": float(ref.get("final_score", 0.0)),
+        }
+
+    def _normalize_expected_ref(ref: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "memory_ref_id": ref.get("memory_ref_id"),
+            "source_episode_id": ref.get("source_episode_id"),
+            "source_event_id": ref.get("source_event_id"),
+            "source_run_id": ref.get("source_run_id"),
+            "source_asset_id": ref.get("source_asset_id"),
+            "source_run_purpose": ref.get("source_run_purpose"),
+            "epistemic_status": ref.get("epistemic_status"),
+            "lifecycle_status": ref.get("lifecycle_status"),
+            "memory_role": ref.get("memory_role"),
+            "trust_level": ref.get("trust_level"),
+            "artefact_hash": ref.get("artefact_hash"),
+            "scene_signature": ref.get("scene_signature"),
+            "category_signature": ref.get("category_signature"),
+            "hypothesis_summary": ref.get("hypothesis_summary"),
+            "confidence_at_source": ref.get("confidence_at_source"),
+            "match_reason": ref.get("match_reason"),
+            "eligibility_decision": ref.get("eligibility_decision"),
+            "scores": _normalize_scores(ref=ref),
+        }
+
+    def _normalize_actual_ref(ref: MemoryReference) -> Dict[str, Any]:
+        return {
+            "memory_ref_id": ref.memory_ref_id,
+            "source_episode_id": ref.source_episode_id,
+            "source_event_id": ref.source_event_id,
+            "source_run_id": ref.source_run_id,
+            "source_asset_id": ref.source_asset_id,
+            "source_run_purpose": ref.source_run_purpose,
+            "epistemic_status": ref.epistemic_status,
+            "lifecycle_status": ref.lifecycle_status,
+            "memory_role": ref.memory_role,
+            "trust_level": ref.trust_level,
+            "artefact_hash": ref.artefact_hash,
+            "scene_signature": ref.scene_signature,
+            "category_signature": ref.category_signature,
+            "hypothesis_summary": ref.hypothesis_summary,
+            "confidence_at_source": ref.confidence_at_source,
+            "match_reason": ref.match_reason,
+            "eligibility_decision": ref.eligibility_decision,
+            "scores": {
+                "category_score": float(ref.scores.category_score),
+                "scene_score": float(ref.scores.scene_score),
+                "goal_score": float(ref.scores.goal_score),
+                "relation_score": float(ref.scores.relation_score),
+                "recency_score": float(ref.scores.recency_score),
+                "final_score": float(ref.scores.final_score),
+            },
+        }
+
     run_id = run["run_id"]
     episode_id = run["episode_id"]
     episode = next(e for e in bundle["episodes"] if e["episode_id"] == episode_id)
+    expected = (bundle.get("expected_hashes") or {}).get("runs") or {}
+    run_expected = expected.get(run_id) or {}
+    expected_delta_hashes = sorted(run_expected.get("deliberation_delta_hashes") or [])
 
-    scene_sig = ""
-    cat_sig = ""
-    for ev in bundle.get("events", []):
-        if ev.get("run_id") == run_id and ev.get("event_type") == "deliberation_snapshot":
-            payload = json.loads(ev["payload_json"])
-            scene_sig = payload.get("scene_signature") or ""
-            cat_sig = payload.get("category_signature") or ""
-            break
-    if not scene_sig:
-        for row in bundle.get("retrieval_index") or []:
-            if row["episode_id"] == episode_id:
-                scene_sig = row.get("scene_signature") or ""
-                cat_sig = row.get("category_signature") or ""
+    expected_refs = [r for r in bundle.get("memory_references", []) if r.get("run_id") == run_id]
+    expected_ref_norm = sorted(
+        [_normalize_expected_ref(r) for r in expected_refs],
+        key=lambda x: (x["source_episode_id"], x["source_event_id"], x["memory_ref_id"]),
+    )
 
-    state = ledger.get_active_state(episode["workspace_id"])
-    policy = state["snapshot"].get("same_asset_policy", "exclude")
+    # State snapshot is run-specific, not the bundle-global active state.
+    state_version_id = run.get("state_version_id")
+    sv = next((s for s in bundle.get("state_versions", []) if s.get("state_version_id") == state_version_id), None)
+    state_snapshot = ledger.artefacts.get(sv["snapshot_artefact_hash"]) if sv else {}
+
+    expected_retrieval_enabled = bool(run.get("retrieval_enabled"))
+    if not expected_retrieval_enabled:
+        actual_refs = []
+        actual_delta_hashes: List[str] = []
+        match = (len(expected_refs) == 0) and (expected_delta_hashes == actual_delta_hashes)
+        return {
+            "run_id": run_id,
+            "match": match,
+            "expected_ref_count": len(expected_refs),
+            "actual_ref_count": 0,
+            "expected_delta_hashes": expected_delta_hashes,
+            "actual_delta_hashes": actual_delta_hashes,
+        }
+
+    # If the original run selected zero memories and produced zero deltas, we can
+    # skip re-running retrieval (imported bundles may contain "future" closed
+    # episodes, and temporal at-synchrony filtering isn't implemented here).
+    if len(expected_refs) == 0 and expected_delta_hashes == []:
+        return {
+            "run_id": run_id,
+            "match": True,
+            "expected_ref_count": 0,
+            "actual_ref_count": 0,
+            "expected_delta_hashes": expected_delta_hashes,
+            "actual_delta_hashes": [],
+        }
+
+    memory_snap_payload = _deliberation_snapshot_payload_for_run_id(run_id) or {}
+    baseline_run_id = run.get("baseline_run_id")
+    baseline_snap_payload = _deliberation_snapshot_payload_for_run_id(baseline_run_id) if baseline_run_id else None
+
+    policy = state_snapshot.get("same_asset_policy", "exclude")
     try:
         same_asset_policy = SameAssetPolicy(policy)
     except ValueError:
         same_asset_policy = SameAssetPolicy.EXCLUDE
 
-    recorded_refs = [
-        r for r in bundle.get("memory_references", []) if r.get("run_id") == run_id
-    ]
-    recorded_source_eps = sorted({r["source_episode_id"] for r in recorded_refs})
+    exclude_episode_ids: tuple[str, ...] = ()
+    # Match pipeline_hook.begin_cognition_run semantics:
+    # - exclude_episode_ids = (baseline_episode_id, episode_id) when baseline_run_id is set
+    # - exclude_run_ids = (baseline_run_id,) when baseline_run_id is set
+    # - do NOT exclude the current run_id from candidates
+    exclude_run_ids: tuple[str, ...] = ()
+    if baseline_run_id:
+        baseline_run = next((r for r in bundle.get("runs", []) if r.get("run_id") == baseline_run_id), None)
+        if baseline_run:
+            exclude_episode_ids = exclude_episode_ids + (baseline_run.get("episode_id"),)
+            exclude_run_ids = exclude_run_ids + (baseline_run_id,)
+    exclude_episode_ids = exclude_episode_ids + (episode_id,)
 
     q = RetrievalQuery(
         workspace_id=episode["workspace_id"],
@@ -418,38 +558,57 @@ def _replay_retrieval_for_run(
         asset_id=episode["asset_id"],
         goal_type=episode["goal_type"],
         goal_instance_id=episode.get("goal_instance_id"),
-        scene_signature=scene_sig or "interior_scene",
-        category_signature=cat_sig or "cluttered_room_weak_composition",
-        exclude_episode_ids=(episode_id,),
-        exclude_run_ids=(run_id,),
+        scene_signature=str(memory_snap_payload.get("scene_signature") or ""),
+        category_signature=str(memory_snap_payload.get("category_signature") or ""),
+        exclude_episode_ids=exclude_episode_ids,
+        exclude_run_ids=exclude_run_ids,
         comparison_group_id=run.get("comparison_group_id"),
         same_asset_policy=same_asset_policy,
     )
-    if run.get("baseline_run_id"):
-        baseline = next((r for r in bundle["runs"] if r["run_id"] == run["baseline_run_id"]), None)
-        if baseline:
-            q = RetrievalQuery(
-                workspace_id=q.workspace_id,
-                actor_id=q.actor_id,
-                asset_id=q.asset_id,
-                goal_type=q.goal_type,
-                goal_instance_id=q.goal_instance_id,
-                scene_signature=q.scene_signature,
-                category_signature=q.category_signature,
-                exclude_episode_ids=q.exclude_episode_ids + (baseline["episode_id"],),
-                exclude_run_ids=q.exclude_run_ids + (run["baseline_run_id"],),
-                comparison_group_id=q.comparison_group_id,
-                same_asset_policy=q.same_asset_policy,
-            )
 
-    replay_result = retrieve_memories(q, ledger=ledger, state_snapshot=state["snapshot"])
-    replay_source_eps = sorted({r.source_episode_id for r in replay_result.references})
-    match = replay_source_eps == recorded_source_eps
+    replay_result = retrieve_memories(q, ledger=ledger, state_snapshot=state_snapshot)
+    actual_refs = replay_result.references
+    actual_ref_norm = sorted(
+        [_normalize_actual_ref(r) for r in actual_refs],
+        key=lambda x: (x["source_episode_id"], x["source_event_id"], x["memory_ref_id"]),
+    )
+
+    match_refs = actual_ref_norm == expected_ref_norm
+    actual_memory_ref_ids = [r.memory_ref_id for r in actual_refs]
+
+    actual_delta_hashes: List[str] = []
+    if baseline_run_id:
+        if baseline_snap_payload:
+            # Mirror pipeline_hook.begin_cognition_run legacy baseline_snapshot construction:
+            # the baseline snapshot used for delta computation only carries a reduced key set.
+            baseline_ds = DeliberationSnapshot(
+                primary_hypothesis=str(baseline_snap_payload.get("primary_hypothesis", "")),
+                confidence=float(baseline_snap_payload.get("confidence", 0.5)),
+                strategy=str(baseline_snap_payload.get("strategy", "standard")),
+                requested_evidence=list(baseline_snap_payload.get("requested_evidence") or []),
+                perception_artefact_hash=str(memory_snap_payload.get("perception_artefact_hash") or ""),
+                scene_signature=str(memory_snap_payload.get("scene_signature") or ""),
+                category_signature=str(memory_snap_payload.get("category_signature") or ""),
+                run_id=str(baseline_run_id),
+            )
+            memory_ds = _snapshot_from_payload(memory_snap_payload)
+            delta_objs = compare_deliberation_snapshots(baseline_ds, memory_ds, actual_memory_ref_ids)
+            deltas = [d.__dict__ for d in delta_objs if d.field_changed != "_compatibility"]
+            if deltas:
+                delta_payload = {"deltas": deltas, "baseline_run_id": baseline_ds.run_id or baseline_run_id}
+                actual_delta_hashes = [artefact_hash(delta_payload)]
+    else:
+        # No baseline link available; delta should be absent.
+        actual_delta_hashes = []
+
+    match_deltas = sorted(actual_delta_hashes) == expected_delta_hashes
     return {
         "run_id": run_id,
-        "recorded_source_episodes": recorded_source_eps,
-        "replay_source_episodes": replay_source_eps,
-        "match": match,
+        "match": match_refs and match_deltas,
+        "expected_ref_count": len(expected_refs),
+        "actual_ref_count": len(actual_refs),
+        "expected_delta_hashes": expected_delta_hashes,
+        "actual_delta_hashes": actual_delta_hashes,
     }
 
 
@@ -457,15 +616,66 @@ def _apply_mutation(bundle: Dict[str, Any], kind: str) -> Dict[str, Any]:
     import copy
 
     mutated = copy.deepcopy(bundle)
-    if kind == "deliberation_hash":
-        for ev in mutated.get("events", []):
-            if ev.get("event_type") == "deliberation_snapshot":
-                ev["artefact_hash"] = "0" * 64
-                break
+    runs = mutated.get("runs") or []
+    run_ids = [r.get("run_id") for r in runs if r.get("run_id")]
+    target_run_id = run_ids[0] if run_ids else None
+
+    if kind in ("deliberation_hash", "expected_snapshot_hash"):
+        if mutated.get("expected_hashes") and target_run_id:
+            mutated["expected_hashes"]["runs"][target_run_id]["deliberation_snapshot_hash"] = "0" * 64
+        else:
+            for ev in mutated.get("events", []):
+                if ev.get("event_type") == "deliberation_snapshot":
+                    ev["artefact_hash"] = "0" * 64
+                    break
     elif kind == "memory_ref":
         refs = mutated.get("memory_references") or []
         if refs:
             refs[0]["source_episode_id"] = "mutated-episode-id"
+    elif kind == "e1_hypothesis":
+        run_purpose_map = {r["run_id"]: r.get("run_purpose") for r in runs if r.get("run_id")}
+        for ev in mutated.get("events", []):
+            if ev.get("event_type") == "deliberation_snapshot" and run_purpose_map.get(ev.get("run_id")) == "live":
+                payload = json.loads(ev["payload_json"])
+                payload["primary_hypothesis"] = "MUTATED_E1_HYPOTHESIS"
+                ev["payload_json"] = json.dumps(payload, sort_keys=True)
+                break
+    elif kind == "state_cutoff":
+        for item in mutated.get("artefact_payloads", []):
+            payload = item.get("payload") or {}
+            if payload.get("schema") == "state_snapshot_v1":
+                payload["cutoff_score"] = 0.1
+                item["payload"] = payload
+                break
+    elif kind == "removed_source_event":
+        # Remove one deliberation_snapshot event referenced by memory_references.
+        refs = mutated.get("memory_references") or []
+        if refs:
+            source_event_id = refs[0].get("source_event_id")
+            mutated["events"] = [e for e in mutated.get("events", []) if e.get("event_id") != source_event_id]
+    elif kind == "perception_snapshot":
+        # Mutate perception snapshot artefact payload.
+        for item in mutated.get("artefact_payloads", []):
+            if isinstance(item, dict) and (item.get("payload") or {}).get("schema") == "perception_snapshot_v1":
+                payload = item["payload"]
+                payload["scene_type"] = "MUTATED_SCENE_TYPE"
+                item["payload"] = payload
+                break
+    elif kind == "baseline_confidence":
+        run_purpose_map = {r["run_id"]: r.get("run_purpose") for r in runs if r.get("run_id")}
+        for ev in mutated.get("events", []):
+            if ev.get("event_type") == "deliberation_snapshot" and run_purpose_map.get(ev.get("run_id")) == "baseline":
+                payload = json.loads(ev["payload_json"])
+                payload["confidence"] = 0.01
+                ev["payload_json"] = json.dumps(payload, sort_keys=True)
+                break
+    elif kind == "changed_memory_reference":
+        refs = mutated.get("memory_references") or []
+        if refs:
+            refs[0]["artefact_hash"] = "0" * 64
+    elif kind == "expected_delta_hash":
+        if mutated.get("expected_hashes") and target_run_id:
+            mutated["expected_hashes"]["runs"][target_run_id]["deliberation_delta_hashes"] = ["0" * 64]
     else:
         raise ValueError(f"Unknown mutation kind: {kind}")
     return mutated

@@ -399,6 +399,25 @@ class CognitionLedger:
         """Atomically persist finalization events, close episode, index retrieval, complete run."""
         now = ArtefactStore.utc_now()
         snapshot_event_id = str(uuid.uuid4())
+        baseline_digest: Optional[str] = None
+        baseline_rel: Optional[str] = None
+        baseline_len: Optional[int] = None
+        delta_digest: Optional[str] = None
+        delta_rel: Optional[str] = None
+        delta_len: Optional[int] = None
+
+        # Write payload artefact files before the DB transaction.
+        # DB rows for these artefacts are inserted inside the transaction so the ledger
+        # never points at missing/partial artefacts.
+        if baseline_link_payload is not None:
+            baseline_digest, baseline_rel, baseline_len = self.artefacts.put(
+                "deliberation_baseline_record", "v1", baseline_link_payload
+            )
+        if delta_payload is not None:
+            delta_digest, delta_rel, delta_len = self.artefacts.put(
+                "deliberation_delta", "v1", delta_payload
+            )
+
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             seq = self._next_sequence(conn, episode_id)
@@ -420,11 +439,27 @@ class CognitionLedger:
             )
             if baseline_link_payload is not None:
                 seq += 1
+                assert baseline_digest is not None and baseline_rel is not None and baseline_len is not None
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO artefacts
+                    (artefact_hash, schema_name, schema_version, relative_path, byte_length, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        baseline_digest,
+                        "deliberation_baseline_record",
+                        "v1",
+                        baseline_rel,
+                        baseline_len,
+                        now,
+                    ),
+                )
                 conn.execute(
                     """
                     INSERT INTO episode_events
                     (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
-                    VALUES (?, ?, ?, 'deliberation_baseline_record', ?, ?, NULL, ?)
+                    VALUES (?, ?, ?, 'deliberation_baseline_record', ?, ?, ?, ?)
                     """,
                     (
                         str(uuid.uuid4()),
@@ -432,16 +467,33 @@ class CognitionLedger:
                         run_id,
                         seq,
                         now,
+                        baseline_digest,
                         json.dumps(baseline_link_payload, sort_keys=True),
                     ),
                 )
             if delta_payload is not None:
                 seq += 1
+                assert delta_digest is not None and delta_rel is not None and delta_len is not None
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO artefacts
+                    (artefact_hash, schema_name, schema_version, relative_path, byte_length, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        delta_digest,
+                        "deliberation_delta",
+                        "v1",
+                        delta_rel,
+                        delta_len,
+                        now,
+                    ),
+                )
                 conn.execute(
                     """
                     INSERT INTO episode_events
                     (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
-                    VALUES (?, ?, ?, 'deliberation_delta', ?, ?, NULL, ?)
+                    VALUES (?, ?, ?, 'deliberation_delta', ?, ?, ?, ?)
                     """,
                     (
                         str(uuid.uuid4()),
@@ -449,6 +501,7 @@ class CognitionLedger:
                         run_id,
                         seq,
                         now,
+                        delta_digest,
                         json.dumps(delta_payload, sort_keys=True),
                     ),
                 )
@@ -677,62 +730,110 @@ class CognitionLedger:
         )
 
     def export_replay_bundle(self, run_ids: List[str]) -> Dict[str, Any]:
+        if not run_ids:
+            return {
+                "schema": REPLAY_BUNDLE_SCHEMA,
+                "runs": [],
+                "episodes": [],
+                "events": [],
+                "memory_references": [],
+                "state_versions": [],
+                "retrieval_index": [],
+                "artefact_manifest": [],
+                "artefact_payloads": [],
+                "expected_hashes": {"runs": {}},
+            }
+
+        run_placeholders = ",".join("?" * len(run_ids))
+
         with self._connect() as conn:
             runs = [
                 dict(r)
                 for r in conn.execute(
-                    f"SELECT * FROM cognitive_runs WHERE run_id IN ({','.join('?'*len(run_ids))})",
+                    f"SELECT * FROM cognitive_runs WHERE run_id IN ({run_placeholders})",
                     run_ids,
-                ).fetchall()
-            ]
-            episode_ids = list({r["episode_id"] for r in runs})
-            episodes = [
-                dict(r)
-                for r in conn.execute(
-                    f"SELECT * FROM episodes WHERE episode_id IN ({','.join('?'*len(episode_ids))})",
-                    episode_ids,
-                ).fetchall()
-            ]
-            events = [
-                dict(r)
-                for r in conn.execute(
-                    f"SELECT * FROM episode_events WHERE episode_id IN ({','.join('?'*len(episode_ids))})",
-                    episode_ids,
                 ).fetchall()
             ]
             refs = [
                 dict(r)
                 for r in conn.execute(
-                    f"SELECT * FROM memory_references WHERE run_id IN ({','.join('?'*len(run_ids))})",
+                    f"SELECT * FROM memory_references WHERE run_id IN ({run_placeholders})",
                     run_ids,
                 ).fetchall()
             ]
-            workspace_ids = list({e["workspace_id"] for e in episodes})
-            state_versions = [
-                dict(r)
-                for r in conn.execute(
-                    f"SELECT * FROM cognitive_state_versions WHERE workspace_id IN ({','.join('?'*len(workspace_ids))})",
-                    workspace_ids,
-                ).fetchall()
-            ] if workspace_ids else []
-            retrieval_index = [
-                dict(r)
-                for r in conn.execute(
-                    f"SELECT * FROM retrieval_index WHERE episode_id IN ({','.join('?'*len(episode_ids))})",
+
+            run_episode_ids = {r["episode_id"] for r in runs}
+            source_episode_ids = {r["source_episode_id"] for r in refs}
+            episode_ids = list(run_episode_ids | source_episode_ids)
+
+            episode_placeholders = ",".join("?" * len(episode_ids)) if episode_ids else "NULL"
+            episodes = (
+                [dict(r) for r in conn.execute(
+                    f"SELECT * FROM episodes WHERE episode_id IN ({episode_placeholders})",
                     episode_ids,
-                ).fetchall()
-            ]
-            source_episode_ids = list({r["source_episode_id"] for r in refs})
-            extra_index = []
-            if source_episode_ids:
-                extra_index = [
-                    dict(r)
-                    for r in conn.execute(
-                        f"SELECT * FROM retrieval_index WHERE episode_id IN ({','.join('?'*len(source_episode_ids))})",
-                        source_episode_ids,
-                    ).fetchall()
-                ]
-            all_index = {row["episode_id"]: row for row in retrieval_index + extra_index}
+                ).fetchall()]
+                if episode_ids
+                else []
+            )
+            events = (
+                [dict(r) for r in conn.execute(
+                    f"""
+                    SELECT * FROM episode_events
+                    WHERE episode_id IN ({episode_placeholders})
+                    ORDER BY episode_id, sequence_num
+                    """,
+                    episode_ids,
+                ).fetchall()]
+                if episode_ids
+                else []
+            )
+
+            workspace_ids = list({e["workspace_id"] for e in episodes})
+            state_versions = (
+                [dict(r) for r in conn.execute(
+                    f"""
+                    SELECT * FROM cognitive_state_versions
+                    WHERE workspace_id IN ({','.join('?' * len(workspace_ids))})
+                    """,
+                    workspace_ids,
+                ).fetchall()]
+                if workspace_ids
+                else []
+            )
+
+            retrieval_index = (
+                [dict(r) for r in conn.execute(
+                    f"""
+                    SELECT * FROM retrieval_index
+                    WHERE episode_id IN ({episode_placeholders})
+                    """,
+                    episode_ids,
+                ).fetchall()]
+                if episode_ids
+                else []
+            )
+            all_index = {row["episode_id"]: row for row in retrieval_index}
+
+            # Enrich MemoryReference with deliberation snapshot-derived values.
+            snapshot_payload_by_event_id: Dict[str, Any] = {}
+            for ev in events:
+                if ev.get("event_type") != "deliberation_snapshot":
+                    continue
+                if not ev.get("event_id") or not ev.get("payload_json"):
+                    continue
+                try:
+                    snapshot_payload_by_event_id[ev["event_id"]] = json.loads(ev["payload_json"])
+                except json.JSONDecodeError:
+                    continue
+
+            for ref in refs:
+                src_payload = snapshot_payload_by_event_id.get(ref.get("source_event_id"))
+                if not src_payload:
+                    continue
+                ref["scene_signature"] = src_payload.get("scene_signature")
+                ref["category_signature"] = src_payload.get("category_signature")
+                ref["hypothesis_summary"] = src_payload.get("primary_hypothesis")
+                ref["confidence_at_source"] = src_payload.get("confidence")
 
         reachable_hashes = self._collect_reachable_artefact_hashes(
             runs=runs,
@@ -753,24 +854,45 @@ class CognitionLedger:
             else:
                 artefacts = []
 
-        artefact_payloads = []
+        artefact_payloads: List[Dict[str, Any]] = []
+        artefact_payload_by_digest: Dict[str, Any] = {}
         for row in artefacts:
             digest = row["artefact_hash"]
             try:
                 payload = self.artefacts.get(digest)
                 artefact_payloads.append({"artefact_hash": digest, "payload": payload})
+                artefact_payload_by_digest[digest] = payload
             except (FileNotFoundError, OSError):
                 continue
+
+        active_state_versions = [sv for sv in state_versions if int(sv.get("is_active", 0)) == 1]
+        active_state_snapshots = [
+            {
+                "state_version_id": sv.get("state_version_id"),
+                "label": sv.get("label"),
+                "snapshot_artefact_hash": sv.get("snapshot_artefact_hash"),
+                "snapshot": artefact_payload_by_digest.get(sv.get("snapshot_artefact_hash")),
+            }
+            for sv in active_state_versions
+        ]
 
         expected_hashes: Dict[str, Any] = {"runs": {}}
         for run in runs:
             run_events = [e for e in events if e["run_id"] == run["run_id"]]
             snap_hash = next(
-                (e["artefact_hash"] for e in run_events if e["event_type"] == "deliberation_snapshot"),
+                (e.get("artefact_hash") for e in run_events if e.get("event_type") == "deliberation_snapshot"),
                 None,
+            )
+            delta_hashes = sorted(
+                [
+                    e.get("artefact_hash")
+                    for e in run_events
+                    if e.get("event_type") == "deliberation_delta" and e.get("artefact_hash")
+                ]
             )
             expected_hashes["runs"][run["run_id"]] = {
                 "deliberation_snapshot_hash": snap_hash,
+                "deliberation_delta_hashes": delta_hashes,
                 "context_fingerprint": run.get("context_fingerprint"),
             }
 
@@ -781,6 +903,7 @@ class CognitionLedger:
             "events": events,
             "memory_references": refs,
             "state_versions": state_versions,
+            "active_state_snapshots": active_state_snapshots,
             "retrieval_index": list(all_index.values()),
             "artefact_manifest": artefacts,
             "artefact_payloads": artefact_payloads,
