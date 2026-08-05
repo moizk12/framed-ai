@@ -102,6 +102,9 @@ def retrieve_memories(
         if horizon and row["closed_at"] and row["closed_at"] > horizon:
             _reject(result.rejected, row, "outside_visibility_horizon")
             continue
+        if query.as_of_visibility and row["closed_at"] and row["closed_at"] > query.as_of_visibility:
+            _reject(result.rejected, row, "outside_retrieval_as_of")
+            continue
 
         scores = _score_candidate(row, query)
         if scores.category_score <= 0:

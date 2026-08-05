@@ -188,7 +188,7 @@ def _browser_click_smoke() -> Dict[str, Any]:
 def run_live_gate() -> Dict[str, Any]:
     _setup_env()
     report: Dict[str, Any] = {
-        "schema": "slice_a_live_gate_v2",
+        "schema": "slice_a_live_gate_v3",
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "gate_root": str(GATE_ROOT),
         "cognition_dir": str(COGNITION_DIR),
@@ -255,16 +255,52 @@ def run_live_gate() -> Dict[str, Any]:
     rb["active_state_after"] = _ledger().get_active_state(ident["workspace_id"]).get("label")
     report["phases"]["rollback"] = rb
 
-    post_restart_state = _ledger().get_active_state(ident["workspace_id"])
+    # Restart durability: release singleton and reopen the same cognition dir from disk.
+    from framed.cognition.ledger.sqlite_store import release_ledger_store, reset_ledger
+
+    db_path = COGNITION_DIR / "cognition_ledger.sqlite3"
+    release_ledger_store(db_path)
+    reopened = reset_ledger(db_path)
+    post_restart_state = reopened.get_active_state(ident["workspace_id"])
+    rb_after_restart = _post_analyze(IMAGES["e2"], cognition_run_purpose="baseline")
+    rb_after = _record_from_response("rollback_after_restart", rb_after_restart)
     report["phases"]["restart_durability"] = {
         "active_state_label": post_restart_state.get("label"),
         "snapshot_retrieval_enabled": post_restart_state.get("snapshot", {}).get("retrieval_enabled"),
+        "post_restart_baseline_refs": len(rb_after.get("memory_reference_ids") or []),
     }
 
     _activate("state_memory_enabled")
     fresco_resp = _post_analyze(IMAGES["fresco"], cognition_run_purpose="live")
     fresco = _record_from_response("fresco", fresco_resp)
     report["phases"]["fresco"] = fresco
+
+    # Exported replay + mutation rejection
+    from framed.cognition.replay.engine import execute_replay
+
+    run_ids = [rid for rid in (e1.get("run_id"), e2b.get("run_id"), e2m.get("run_id"), ctrl.get("run_id")) if rid]
+    bundle = _ledger().export_replay_bundle(run_ids)
+    evidence_dir = ARCHIVE_ROOT / "live_gate_v3_evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    bundle_path = evidence_dir / "slice_a_replay_bundle.json"
+    bundle_path.write_text(json.dumps(bundle, indent=2, default=str), encoding="utf-8")
+    replay_report = execute_replay(bundle_path)
+    mutation_results = {}
+    for kind in (
+        "deliberation_hash",
+        "frozen_hypothesis",
+        "raw_confidence",
+        "expected_delta_hash",
+        "context_fingerprint",
+        "policy_version",
+    ):
+        mutation_results[kind] = execute_replay(bundle_path, mutate=kind).get("status")
+    report["phases"]["replay"] = {
+        "bundle_path": str(bundle_path),
+        "replay_status": replay_report.get("status"),
+        "replay_checks": replay_report.get("replay_checks"),
+        "mutation_results": mutation_results,
+    }
 
     e1_id = e1.get("episode_id")
     e2b_id = e2b.get("episode_id")
@@ -273,6 +309,16 @@ def run_live_gate() -> Dict[str, Any]:
     source_eps = {r.get("source_episode_id") for r in mem_refs}
     rejected = e2m.get("rejected_candidates") or []
     baseline_rejects = [r for r in rejected if r.get("episode_id") == e2b_id or r.get("source_run_id") == e2b_run]
+    mem_check = next(
+        (c for c in (replay_report.get("replay_checks") or []) if c.get("expected_ref_count", 0) >= 1),
+        {},
+    )
+    browser = ui.get("browser_click") or {}
+    playwright_available = not browser.get("skipped") or "playwright" not in str(browser.get("reason", "")).lower()
+    with _ledger()._connect() as conn:
+        open_episode_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM episodes WHERE status='open'"
+        ).fetchone()["c"]
 
     checks = {
         "e1_stored": bool(e1_id),
@@ -292,27 +338,41 @@ def run_live_gate() -> Dict[str, Any]:
         },
         "rollback_zero_refs": len(rb.get("memory_reference_ids") or []) == 0,
         "rollback_state_durable": post_restart_state.get("label") == "state_baseline",
+        "restart_baseline_zero_refs": len(rb_after.get("memory_reference_ids") or []) == 0,
         "feedback_js_200": ui.get("feedback_js_status") == 200,
-        "browser_post_analyze": ui.get("browser_click", {}).get("post_analyze_seen") is True
-        or ui.get("browser_click", {}).get("skipped"),
+        "browser_post_analyze": browser.get("post_analyze_seen") is True
+        or (browser.get("skipped") and not playwright_available),
         "fresco_not_ui": (fresco.get("scene_gate") or {}).get("scene_type") != "screenshot_ui",
         "all_post_analyze": all(
             x.get("status_code") == 200
-            for x in (e1_resp, e2b_resp, e2m_resp, ctrl_resp, rb_resp, fresco_resp)
+            for x in (e1_resp, e2b_resp, e2m_resp, ctrl_resp, rb_resp, fresco_resp, rb_after_restart)
             if isinstance(x, dict)
         ),
+        "replay_pass": replay_report.get("status") == "PASS",
+        "replay_snapshot_match": (
+            mem_check.get("expected_snapshot_hash") == mem_check.get("actual_snapshot_hash")
+            if mem_check
+            else False
+        ),
+        "replay_delta_match": (
+            mem_check.get("expected_delta_hashes") == mem_check.get("actual_delta_hashes")
+            if mem_check
+            else False
+        ),
+        "replay_mutations_fail": all(v == "FAIL" for v in mutation_results.values()) and bool(mutation_results),
+        "no_open_episodes": open_episode_count == 0,
     }
     report["checks"] = checks
     report["verdict"] = "PASS" if all(checks.values()) else "FAIL"
     report["failed_checks"] = [k for k, v in checks.items() if not v]
 
-    _save("live_gate_report_v2.json", report)
-    _save("live_e1_record_v2.json", e1)
-    _save("live_e2_baseline_record_v2.json", e2b)
-    _save("live_e2_memory_record_v2.json", e2m)
-    _save("live_control_record_v2.json", ctrl)
+    _save("live_gate_report_v3.json", report)
+    _save("live_e1_record_v3.json", e1)
+    _save("live_e2_baseline_record_v3.json", e2b)
+    _save("live_e2_memory_record_v3.json", e2m)
+    _save("live_control_record_v3.json", ctrl)
     _save(
-        "live_deliberation_delta_report_v2.json",
+        "live_deliberation_delta_report_v3.json",
         {
             "deltas": e2m.get("deltas"),
             "e2_baseline": e2b.get("deliberation_snapshot"),
@@ -321,10 +381,11 @@ def run_live_gate() -> Dict[str, Any]:
             "rejected_candidates": rejected,
         },
     )
-    _save("live_rollback_report_v2.json", rb)
-    _save("live_restart_durability_report_v2.json", report["phases"]["restart_durability"])
-    _save("live_ui_smoke_report_v2.json", ui)
-    _save("live_fresco_regression_report_v2.json", fresco)
+    _save("live_rollback_report_v3.json", rb)
+    _save("live_restart_durability_report_v3.json", report["phases"]["restart_durability"])
+    _save("live_ui_smoke_report_v3.json", ui)
+    _save("live_fresco_regression_report_v3.json", fresco)
+    _save("live_replay_report_v3.json", report["phases"]["replay"])
     return report
 
 

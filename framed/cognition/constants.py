@@ -14,3 +14,5 @@ APPEND_EVENT_RETRY_BASE_MS = 5
 # Replay bundle
 REPLAY_BUNDLE_SCHEMA = "replay_bundle_v1"
 PERCEPTION_SNAPSHOT_SCHEMA = "perception_snapshot_v1"
+FROZEN_DELIBERATION_INPUT_SCHEMA = "frozen_deliberation_input_v1"
+GOVERNANCE_POLICY_VERSION = "slice_a_provisional_confidence_v1"

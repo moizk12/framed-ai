@@ -391,7 +391,22 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--replay", type=Path, help="Replay an exported bundle in an isolated cognition store.")
     parser.add_argument(
         "--replay-mutate",
-        choices=("deliberation_hash", "memory_ref"),
+        choices=(
+            "deliberation_hash",
+            "expected_snapshot_hash",
+            "memory_ref",
+            "e1_hypothesis",
+            "frozen_hypothesis",
+            "raw_confidence",
+            "baseline_confidence",
+            "changed_memory_reference",
+            "state_cutoff",
+            "removed_source_event",
+            "perception_snapshot",
+            "context_fingerprint",
+            "expected_delta_hash",
+            "policy_version",
+        ),
         help="Apply a mutation to the bundle before replay (expects replay failure).",
     )
     return parser.parse_args(argv)

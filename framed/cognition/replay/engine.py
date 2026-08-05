@@ -15,7 +15,10 @@ from framed.cognition.constants import REPLAY_BUNDLE_SCHEMA
 from framed.cognition.contracts.memory import MemoryReference, RetrievalQuery
 from framed.cognition.context.builder import compare_deliberation_snapshots
 from framed.cognition.contracts.runs import SameAssetPolicy
-from framed.cognition.contracts.snapshot import DeliberationSnapshot
+from framed.cognition.contracts.snapshot import (
+    DeliberationSnapshot,
+    build_governed_deliberation_snapshot,
+)
 from framed.cognition.ledger.artefact_store import ArtefactStore, artefact_hash, canonical_json_dumps
 from framed.cognition.ledger.sqlite_store import CognitionLedger, clear_ledger, release_ledger_store, reset_ledger
 from framed.cognition.retrieval.service import retrieve_memories
@@ -396,34 +399,7 @@ def _replay_retrieval_for_run(
     bundle: Dict[str, Any],
     run: Dict[str, Any],
 ) -> Dict[str, Any]:
-    def _snapshot_from_payload(payload: Dict[str, Any]) -> DeliberationSnapshot:
-        return DeliberationSnapshot(
-            primary_hypothesis=str(payload.get("primary_hypothesis") or ""),
-            confidence=float(payload.get("confidence", 0.5)),
-            strategy=str(payload.get("strategy") or "standard"),
-            requested_evidence=list(payload.get("requested_evidence") or []),
-            alternative_hypotheses=list(payload.get("alternative_hypotheses") or []),
-            hypothesis_ranking=list(payload.get("hypothesis_ranking") or []),
-            branch_abstain=payload.get("branch_abstain"),
-            scene_signature=str(payload.get("scene_signature") or ""),
-            category_signature=str(payload.get("category_signature") or ""),
-            memory_reference_ids=list(payload.get("memory_reference_ids") or []),
-            run_id=str(payload.get("run_id") or ""),
-            state_version_id=str(payload.get("state_version_id") or ""),
-            perception_artefact_hash=str(payload.get("perception_artefact_hash") or ""),
-            context_fingerprint=str(payload.get("context_fingerprint") or ""),
-        )
-
-    def _deliberation_snapshot_payload_for_run_id(run_id: str) -> Optional[Dict[str, Any]]:
-        for ev in bundle.get("events", []):
-            if ev.get("run_id") != run_id or ev.get("event_type") != "deliberation_snapshot":
-                continue
-            return json.loads(ev["payload_json"])
-        return None
-
-    def _normalize_scores(
-        *, ref: Dict[str, Any]
-    ) -> Dict[str, float]:
+    def _normalize_scores(*, ref: Dict[str, Any]) -> Dict[str, float]:
         return {
             "category_score": float(ref.get("category_score", 0.0)),
             "scene_score": float(ref.get("scene_score", 0.0)),
@@ -484,12 +460,38 @@ def _replay_retrieval_for_run(
             },
         }
 
+    def _frozen_input_for_run(run_id: str) -> Optional[Dict[str, Any]]:
+        for ev in bundle.get("events", []):
+            if ev.get("run_id") != run_id or ev.get("event_type") != "frozen_deliberation_input_recorded":
+                continue
+            digest = ev.get("artefact_hash")
+            if not digest:
+                return None
+            return ledger.artefacts.get(digest)
+        return None
+
+    def _baseline_payload_for_run_id(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not run_id:
+            return None
+        for ev in bundle.get("events", []):
+            if ev.get("run_id") != run_id or ev.get("event_type") != "deliberation_snapshot":
+                continue
+            return json.loads(ev["payload_json"])
+        return None
+
     run_id = run["run_id"]
     episode_id = run["episode_id"]
     episode = next(e for e in bundle["episodes"] if e["episode_id"] == episode_id)
     expected = (bundle.get("expected_hashes") or {}).get("runs") or {}
     run_expected = expected.get(run_id) or {}
     expected_delta_hashes = sorted(run_expected.get("deliberation_delta_hashes") or [])
+    expected_snapshot_hash = run_expected.get("deliberation_snapshot_hash")
+    expected_frozen_hash = run_expected.get("frozen_deliberation_input_hash")
+    expected_confidence_hash = run_expected.get("confidence_provenance_hash")
+    expected_context_fp = run_expected.get("context_fingerprint") or run.get("context_fingerprint")
+    expected_state_version = run_expected.get("state_version_id") or run.get("state_version_id")
+    expected_perception = run_expected.get("perception_artefact_hash")
+    retrieval_as_of = run_expected.get("retrieval_as_of") or run.get("started_at")
 
     expected_refs = [r for r in bundle.get("memory_references", []) if r.get("run_id") == run_id]
     expected_ref_norm = sorted(
@@ -497,118 +499,155 @@ def _replay_retrieval_for_run(
         key=lambda x: (x["source_episode_id"], x["source_event_id"], x["memory_ref_id"]),
     )
 
-    # State snapshot is run-specific, not the bundle-global active state.
     state_version_id = run.get("state_version_id")
     sv = next((s for s in bundle.get("state_versions", []) if s.get("state_version_id") == state_version_id), None)
     state_snapshot = ledger.artefacts.get(sv["snapshot_artefact_hash"]) if sv else {}
 
-    expected_retrieval_enabled = bool(run.get("retrieval_enabled"))
-    if not expected_retrieval_enabled:
-        actual_refs = []
-        actual_delta_hashes: List[str] = []
-        match = (len(expected_refs) == 0) and (expected_delta_hashes == actual_delta_hashes)
+    frozen_input = _frozen_input_for_run(run_id)
+    if frozen_input is None:
         return {
             "run_id": run_id,
-            "match": match,
+            "match": False,
+            "reason": "missing_frozen_deliberation_input",
             "expected_ref_count": len(expected_refs),
             "actual_ref_count": 0,
             "expected_delta_hashes": expected_delta_hashes,
-            "actual_delta_hashes": actual_delta_hashes,
+            "actual_delta_hashes": [],
         }
-
-    # If the original run selected zero memories and produced zero deltas, we can
-    # skip re-running retrieval (imported bundles may contain "future" closed
-    # episodes, and temporal at-synchrony filtering isn't implemented here).
-    if len(expected_refs) == 0 and expected_delta_hashes == []:
+    frozen_hash = artefact_hash(frozen_input)
+    if expected_frozen_hash and frozen_hash != expected_frozen_hash:
         return {
             "run_id": run_id,
-            "match": True,
-            "expected_ref_count": 0,
+            "match": False,
+            "reason": "frozen_input_hash_mismatch",
+            "expected_frozen_hash": expected_frozen_hash,
+            "actual_frozen_hash": frozen_hash,
+            "expected_ref_count": len(expected_refs),
             "actual_ref_count": 0,
             "expected_delta_hashes": expected_delta_hashes,
             "actual_delta_hashes": [],
         }
 
-    memory_snap_payload = _deliberation_snapshot_payload_for_run_id(run_id) or {}
-    baseline_run_id = run.get("baseline_run_id")
-    baseline_snap_payload = _deliberation_snapshot_payload_for_run_id(baseline_run_id) if baseline_run_id else None
+    expected_retrieval_enabled = bool(run.get("retrieval_enabled"))
+    actual_refs: List[MemoryReference] = []
+    if expected_retrieval_enabled:
+        policy = state_snapshot.get("same_asset_policy", "exclude")
+        try:
+            same_asset_policy = SameAssetPolicy(policy)
+        except ValueError:
+            same_asset_policy = SameAssetPolicy.EXCLUDE
 
-    policy = state_snapshot.get("same_asset_policy", "exclude")
-    try:
-        same_asset_policy = SameAssetPolicy(policy)
-    except ValueError:
-        same_asset_policy = SameAssetPolicy.EXCLUDE
+        exclude_episode_ids: tuple[str, ...] = ()
+        exclude_run_ids: tuple[str, ...] = ()
+        baseline_run_id = run.get("baseline_run_id")
+        if baseline_run_id:
+            baseline_run = next((r for r in bundle.get("runs", []) if r.get("run_id") == baseline_run_id), None)
+            if baseline_run:
+                exclude_episode_ids = exclude_episode_ids + (baseline_run.get("episode_id"),)
+                exclude_run_ids = exclude_run_ids + (baseline_run_id,)
+        exclude_episode_ids = exclude_episode_ids + (episode_id,)
 
-    exclude_episode_ids: tuple[str, ...] = ()
-    # Match pipeline_hook.begin_cognition_run semantics:
-    # - exclude_episode_ids = (baseline_episode_id, episode_id) when baseline_run_id is set
-    # - exclude_run_ids = (baseline_run_id,) when baseline_run_id is set
-    # - do NOT exclude the current run_id from candidates
-    exclude_run_ids: tuple[str, ...] = ()
-    if baseline_run_id:
-        baseline_run = next((r for r in bundle.get("runs", []) if r.get("run_id") == baseline_run_id), None)
-        if baseline_run:
-            exclude_episode_ids = exclude_episode_ids + (baseline_run.get("episode_id"),)
-            exclude_run_ids = exclude_run_ids + (baseline_run_id,)
-    exclude_episode_ids = exclude_episode_ids + (episode_id,)
+        q = RetrievalQuery(
+            workspace_id=episode["workspace_id"],
+            actor_id=episode["actor_id"],
+            asset_id=episode["asset_id"],
+            goal_type=episode["goal_type"],
+            goal_instance_id=episode.get("goal_instance_id"),
+            scene_signature=str(frozen_input.get("scene_signature") or ""),
+            category_signature=str(frozen_input.get("category_signature") or ""),
+            exclude_episode_ids=exclude_episode_ids,
+            exclude_run_ids=exclude_run_ids,
+            comparison_group_id=run.get("comparison_group_id"),
+            same_asset_policy=same_asset_policy,
+            as_of_visibility=retrieval_as_of,
+        )
+        replay_result = retrieve_memories(q, ledger=ledger, state_snapshot=state_snapshot)
+        actual_refs = replay_result.references
 
-    q = RetrievalQuery(
-        workspace_id=episode["workspace_id"],
-        actor_id=episode["actor_id"],
-        asset_id=episode["asset_id"],
-        goal_type=episode["goal_type"],
-        goal_instance_id=episode.get("goal_instance_id"),
-        scene_signature=str(memory_snap_payload.get("scene_signature") or ""),
-        category_signature=str(memory_snap_payload.get("category_signature") or ""),
-        exclude_episode_ids=exclude_episode_ids,
-        exclude_run_ids=exclude_run_ids,
-        comparison_group_id=run.get("comparison_group_id"),
-        same_asset_policy=same_asset_policy,
-    )
-
-    replay_result = retrieve_memories(q, ledger=ledger, state_snapshot=state_snapshot)
-    actual_refs = replay_result.references
     actual_ref_norm = sorted(
         [_normalize_actual_ref(r) for r in actual_refs],
         key=lambda x: (x["source_episode_id"], x["source_event_id"], x["memory_ref_id"]),
     )
-
     match_refs = actual_ref_norm == expected_ref_norm
     actual_memory_ref_ids = [r.memory_ref_id for r in actual_refs]
 
-    actual_delta_hashes: List[str] = []
-    if baseline_run_id:
-        if baseline_snap_payload:
-            # Mirror pipeline_hook.begin_cognition_run legacy baseline_snapshot construction:
-            # the baseline snapshot used for delta computation only carries a reduced key set.
-            baseline_ds = DeliberationSnapshot(
-                primary_hypothesis=str(baseline_snap_payload.get("primary_hypothesis", "")),
-                confidence=float(baseline_snap_payload.get("confidence", 0.5)),
-                strategy=str(baseline_snap_payload.get("strategy", "standard")),
-                requested_evidence=list(baseline_snap_payload.get("requested_evidence") or []),
-                perception_artefact_hash=str(memory_snap_payload.get("perception_artefact_hash") or ""),
-                scene_signature=str(memory_snap_payload.get("scene_signature") or ""),
-                category_signature=str(memory_snap_payload.get("category_signature") or ""),
-                run_id=str(baseline_run_id),
-            )
-            memory_ds = _snapshot_from_payload(memory_snap_payload)
-            delta_objs = compare_deliberation_snapshots(baseline_ds, memory_ds, actual_memory_ref_ids)
-            deltas = [d.__dict__ for d in delta_objs if d.field_changed != "_compatibility"]
-            if deltas:
-                delta_payload = {"deltas": deltas, "baseline_run_id": baseline_ds.run_id or baseline_run_id}
-                actual_delta_hashes = [artefact_hash(delta_payload)]
-    else:
-        # No baseline link available; delta should be absent.
-        actual_delta_hashes = []
+    baseline_run_id = run.get("baseline_run_id")
+    baseline_snap_payload = _baseline_payload_for_run_id(baseline_run_id)
+    baseline_ds = None
+    if baseline_snap_payload is not None:
+        baseline_ds = DeliberationSnapshot(
+            primary_hypothesis=str(baseline_snap_payload.get("primary_hypothesis", "")),
+            confidence=float(baseline_snap_payload.get("confidence", 0.5)),
+            strategy=str(baseline_snap_payload.get("strategy", "standard")),
+            requested_evidence=list(baseline_snap_payload.get("requested_evidence") or []),
+            perception_artefact_hash=str(frozen_input.get("perception_artefact_hash") or ""),
+            scene_signature=str(frozen_input.get("scene_signature") or ""),
+            category_signature=str(frozen_input.get("category_signature") or ""),
+            run_id=str(baseline_run_id or ""),
+        )
 
+    # Use recorded memory_reference_ids from frozen input for snapshot regeneration when refs match;
+    # otherwise use replayed IDs so mismatches surface in snapshot/delta hashes.
+    memory_ids_for_gov = list(frozen_input.get("memory_reference_ids") or [])
+    if match_refs:
+        memory_ids_for_gov = actual_memory_ref_ids or memory_ids_for_gov
+
+    governed = build_governed_deliberation_snapshot(
+        frozen_input,
+        baseline_ds,
+        memory_ids_for_gov,
+    )
+    regenerated_snapshot_hash = artefact_hash(governed.snapshot_dict)
+    regenerated_confidence_hash = artefact_hash(governed.confidence_provenance)
+
+    actual_delta_hashes: List[str] = []
+    if baseline_ds is not None:
+        delta_objs = compare_deliberation_snapshots(
+            baseline_ds, governed.snapshot, memory_ids_for_gov
+        )
+        deltas = [d.__dict__ for d in delta_objs if d.field_changed != "_compatibility"]
+        if deltas:
+            delta_payload = {
+                "deltas": deltas,
+                "baseline_run_id": baseline_ds.run_id or baseline_run_id,
+            }
+            actual_delta_hashes = [artefact_hash(delta_payload)]
+
+    match_snapshot = regenerated_snapshot_hash == expected_snapshot_hash
     match_deltas = sorted(actual_delta_hashes) == expected_delta_hashes
+    match_confidence = (
+        expected_confidence_hash is None or regenerated_confidence_hash == expected_confidence_hash
+    )
+    match_context = (
+        expected_context_fp is None
+        or expected_context_fp == frozen_input.get("context_fingerprint")
+    )
+    match_state = expected_state_version is None or expected_state_version == run.get("state_version_id")
+    match_perception = (
+        expected_perception is None
+        or expected_perception == frozen_input.get("perception_artefact_hash")
+    )
+
     return {
         "run_id": run_id,
-        "match": match_refs and match_deltas,
+        "match": bool(
+            match_refs
+            and match_snapshot
+            and match_deltas
+            and match_confidence
+            and match_context
+            and match_state
+            and match_perception
+        ),
         "expected_ref_count": len(expected_refs),
         "actual_ref_count": len(actual_refs),
         "expected_delta_hashes": expected_delta_hashes,
         "actual_delta_hashes": actual_delta_hashes,
+        "expected_snapshot_hash": expected_snapshot_hash,
+        "actual_snapshot_hash": regenerated_snapshot_hash,
+        "expected_confidence_provenance_hash": expected_confidence_hash,
+        "actual_confidence_provenance_hash": regenerated_confidence_hash,
+        "retrieval_as_of": retrieval_as_of,
     }
 
 
@@ -618,7 +657,14 @@ def _apply_mutation(bundle: Dict[str, Any], kind: str) -> Dict[str, Any]:
     mutated = copy.deepcopy(bundle)
     runs = mutated.get("runs") or []
     run_ids = [r.get("run_id") for r in runs if r.get("run_id")]
-    target_run_id = run_ids[0] if run_ids else None
+    # Prefer a memory-enabled run as mutation target when present.
+    target_run_id = None
+    for r in runs:
+        if r.get("run_purpose") in ("memory_enabled", "live", "demo_seed") and r.get("retrieval_enabled"):
+            target_run_id = r.get("run_id")
+            break
+    if target_run_id is None and run_ids:
+        target_run_id = run_ids[0]
 
     if kind in ("deliberation_hash", "expected_snapshot_hash"):
         if mutated.get("expected_hashes") and target_run_id:
@@ -640,21 +686,50 @@ def _apply_mutation(bundle: Dict[str, Any], kind: str) -> Dict[str, Any]:
                 payload["primary_hypothesis"] = "MUTATED_E1_HYPOTHESIS"
                 ev["payload_json"] = json.dumps(payload, sort_keys=True)
                 break
+    elif kind == "frozen_hypothesis":
+        for item in mutated.get("artefact_payloads", []):
+            payload = item.get("payload") or {}
+            if payload.get("schema") == "frozen_deliberation_input_v1":
+                payload["primary_hypothesis"] = "MUTATED_FROZEN_HYPOTHESIS"
+                if isinstance(payload.get("intelligence_output"), dict):
+                    rec = payload["intelligence_output"].setdefault("recognition", {})
+                    rec["what_i_see"] = "MUTATED_FROZEN_HYPOTHESIS"
+                item["payload"] = payload
+                break
+    elif kind == "raw_confidence":
+        for item in mutated.get("artefact_payloads", []):
+            payload = item.get("payload") or {}
+            if payload.get("schema") == "frozen_deliberation_input_v1":
+                payload["raw_confidence"] = 0.99
+                if isinstance(payload.get("intelligence_output"), dict):
+                    rec = payload["intelligence_output"].setdefault("recognition", {})
+                    rec["confidence"] = 0.99
+                item["payload"] = payload
+                break
+    elif kind == "context_fingerprint":
+        if mutated.get("expected_hashes") and target_run_id:
+            mutated["expected_hashes"]["runs"][target_run_id]["context_fingerprint"] = "0" * 64
+    elif kind == "policy_version":
+        for item in mutated.get("artefact_payloads", []):
+            payload = item.get("payload") or {}
+            if payload.get("schema") == "frozen_deliberation_input_v1":
+                payload["governance_policy_version"] = "mutated_policy_v0"
+                payload["prompt_policy_version"] = "mutated_policy_v0"
+                item["payload"] = payload
+                break
     elif kind == "state_cutoff":
         for item in mutated.get("artefact_payloads", []):
             payload = item.get("payload") or {}
             if payload.get("schema") == "state_snapshot_v1":
-                payload["cutoff_score"] = 0.1
+                payload["cutoff_score"] = 0.99
                 item["payload"] = payload
                 break
     elif kind == "removed_source_event":
-        # Remove one deliberation_snapshot event referenced by memory_references.
         refs = mutated.get("memory_references") or []
         if refs:
             source_event_id = refs[0].get("source_event_id")
             mutated["events"] = [e for e in mutated.get("events", []) if e.get("event_id") != source_event_id]
     elif kind == "perception_snapshot":
-        # Mutate perception snapshot artefact payload.
         for item in mutated.get("artefact_payloads", []):
             if isinstance(item, dict) and (item.get("payload") or {}).get("schema") == "perception_snapshot_v1":
                 payload = item["payload"]

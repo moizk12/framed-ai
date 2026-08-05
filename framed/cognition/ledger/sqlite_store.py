@@ -395,6 +395,12 @@ class CognitionLedger:
         experience_closed_payload: Dict[str, Any],
         delta_payload: Optional[Dict[str, Any]] = None,
         baseline_link_payload: Optional[Dict[str, Any]] = None,
+        frozen_input: Optional[Dict[str, Any]] = None,
+        frozen_input_hash: Optional[str] = None,
+        frozen_input_rel: Optional[str] = None,
+        frozen_input_len: Optional[int] = None,
+        deliberation_snapshot_rel: Optional[str] = None,
+        deliberation_snapshot_len: Optional[int] = None,
     ) -> str:
         """Atomically persist finalization events, close episode, index retrieval, complete run."""
         now = ArtefactStore.utc_now()
@@ -409,6 +415,14 @@ class CognitionLedger:
         # Write payload artefact files before the DB transaction.
         # DB rows for these artefacts are inserted inside the transaction so the ledger
         # never points at missing/partial artefacts.
+        if frozen_input is not None and frozen_input_hash is None:
+            frozen_input_hash, frozen_input_rel, frozen_input_len = self.artefacts.put(
+                "frozen_deliberation_input", "v1", frozen_input
+            )
+        if deliberation_snapshot_rel is None:
+            deliberation_snapshot_hash, deliberation_snapshot_rel, deliberation_snapshot_len = self.artefacts.put(
+                "deliberation_snapshot", "v1", deliberation_snapshot
+            )
         if baseline_link_payload is not None:
             baseline_digest, baseline_rel, baseline_len = self.artefacts.put(
                 "deliberation_baseline_record", "v1", baseline_link_payload
@@ -421,6 +435,56 @@ class CognitionLedger:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             seq = self._next_sequence(conn, episode_id)
+            if frozen_input is not None and frozen_input_hash is not None:
+                assert frozen_input_rel is not None and frozen_input_len is not None
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO artefacts
+                    (artefact_hash, schema_name, schema_version, relative_path, byte_length, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        frozen_input_hash,
+                        "frozen_deliberation_input",
+                        "v1",
+                        frozen_input_rel,
+                        frozen_input_len,
+                        now,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO episode_events
+                    (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
+                    VALUES (?, ?, ?, 'frozen_deliberation_input_recorded', ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        episode_id,
+                        run_id,
+                        seq,
+                        now,
+                        frozen_input_hash,
+                        json.dumps({"frozen_deliberation_input_hash": frozen_input_hash}, sort_keys=True),
+                    ),
+                )
+                seq += 1
+            if deliberation_snapshot_rel is not None and deliberation_snapshot_len is not None:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO artefacts
+                    (artefact_hash, schema_name, schema_version, relative_path, byte_length, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        deliberation_snapshot_hash,
+                        "deliberation_snapshot",
+                        "v1",
+                        deliberation_snapshot_rel,
+                        deliberation_snapshot_len,
+                        now,
+                    ),
+                )
             conn.execute(
                 """
                 INSERT INTO episode_events
@@ -558,6 +622,257 @@ class CognitionLedger:
             )
             conn.commit()
         return snapshot_event_id
+
+    def fail_run_atomic(
+        self,
+        *,
+        episode_id: str,
+        run_id: str,
+        error_code: str,
+        safe_message: str,
+        stage: str,
+        internal_exception_type: Optional[str],
+        run_purpose: str,
+        _fail_inject_at: Optional[str] = None,
+    ) -> str:
+        """Atomically mark run/episode failed without indexing."""
+        now = ArtefactStore.utc_now()
+        event_id = str(uuid.uuid4())
+        payload = {
+            "error_code": error_code,
+            "safe_message": safe_message,
+            "stage": stage,
+            "internal_exception_type": internal_exception_type,
+            "run_purpose": run_purpose,
+        }
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if _fail_inject_at == "before_event":
+                raise RuntimeError("injected_fail:before_event")
+            seq = self._next_sequence(conn, episode_id)
+            conn.execute(
+                """
+                INSERT INTO episode_events
+                (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
+                VALUES (?, ?, ?, 'run_failed', ?, ?, NULL, ?)
+                """,
+                (event_id, episode_id, run_id, seq, now, json.dumps(payload, sort_keys=True)),
+            )
+            if _fail_inject_at == "after_event":
+                raise RuntimeError("injected_fail:after_event")
+            conn.execute(
+                """
+                UPDATE episodes
+                SET status='failed', closed_at=?, failure_code=?, failure_message=?
+                WHERE episode_id=?
+                """,
+                (now, error_code, safe_message, episode_id),
+            )
+            if _fail_inject_at == "after_episode_update":
+                raise RuntimeError("injected_fail:after_episode_update")
+            if _fail_inject_at == "before_run_update":
+                raise RuntimeError("injected_fail:before_run_update")
+            conn.execute(
+                """
+                UPDATE cognitive_runs
+                SET completed_at=?, failure_code=?, failure_stage=?
+                WHERE run_id=?
+                """,
+                (now, error_code, stage, run_id),
+            )
+            conn.execute("DELETE FROM retrieval_index WHERE episode_id=?", (episode_id,))
+            if _fail_inject_at == "before_commit":
+                raise RuntimeError("injected_fail:before_commit")
+            conn.commit()
+        return event_id
+
+    def open_run_atomic(
+        self,
+        *,
+        episode_id: str,
+        workspace_id: str,
+        actor_id: str,
+        asset_id: str,
+        goal_type: str,
+        goal_instance_id: Optional[str],
+        state_version_id: str,
+        asset_filename: Optional[str],
+        source_kind: str,
+        run: CognitiveRun,
+        provenance_manifest: Optional[Dict[str, Any]],
+        perception_hash: str,
+        perception_rel: str,
+        perception_len: int,
+        experience_opened_payload: Dict[str, Any],
+        retrieval_performed_payload: Optional[Dict[str, Any]] = None,
+        memory_refs: Optional[List[MemoryReference]] = None,
+        _fail_inject_at: Optional[str] = None,
+    ) -> None:
+        """Atomically create episode+run+opening events+memory refs. Artefact file must already exist."""
+        now = ArtefactStore.utc_now()
+        eligible = is_retrieval_eligible(run.run_purpose)
+        manifest_json = json.dumps(provenance_manifest) if provenance_manifest else None
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if _fail_inject_at == "before_episode":
+                raise RuntimeError("injected_fail:before_episode")
+            conn.execute(
+                """
+                INSERT INTO episodes
+                (episode_id, workspace_id, actor_id, asset_id, goal_type, goal_instance_id,
+                 status, source_kind, asset_filename, created_at, state_version_id)
+                VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+                """,
+                (
+                    episode_id,
+                    workspace_id,
+                    actor_id,
+                    asset_id,
+                    goal_type,
+                    goal_instance_id,
+                    source_kind,
+                    asset_filename,
+                    now,
+                    state_version_id,
+                ),
+            )
+            if _fail_inject_at == "before_run":
+                raise RuntimeError("injected_fail:before_run")
+            conn.execute(
+                """
+                INSERT INTO cognitive_runs
+                (run_id, episode_id, mode, run_purpose, baseline_run_id, comparison_group_id,
+                 state_version_id, context_fingerprint, retrieval_enabled, retrieval_eligible,
+                 model_provenance_json, prompt_provenance_json, started_at, completed_at,
+                 provenance_manifest_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run.run_id,
+                    episode_id,
+                    run.mode.value,
+                    run.run_purpose.value,
+                    run.baseline_run_id,
+                    run.comparison_group_id,
+                    run.state_version_id,
+                    run.context_fingerprint,
+                    1 if run.retrieval_enabled else 0,
+                    1 if eligible else 0,
+                    json.dumps(run.model_provenance),
+                    json.dumps(run.prompt_provenance),
+                    run.started_at or now,
+                    run.completed_at,
+                    manifest_json,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO artefacts
+                (artefact_hash, schema_name, schema_version, relative_path, byte_length, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (perception_hash, "perception_snapshot", "v1", perception_rel, perception_len, now),
+            )
+            if _fail_inject_at == "before_experience_opened":
+                raise RuntimeError("injected_fail:before_experience_opened")
+            seq = 1
+            conn.execute(
+                """
+                INSERT INTO episode_events
+                (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
+                VALUES (?, ?, ?, 'experience_opened', ?, ?, NULL, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    episode_id,
+                    run.run_id,
+                    seq,
+                    now,
+                    json.dumps(experience_opened_payload, sort_keys=True),
+                ),
+            )
+            if _fail_inject_at == "before_perception_completed":
+                raise RuntimeError("injected_fail:before_perception_completed")
+            seq += 1
+            conn.execute(
+                """
+                INSERT INTO episode_events
+                (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
+                VALUES (?, ?, ?, 'perception_completed', ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    episode_id,
+                    run.run_id,
+                    seq,
+                    now,
+                    perception_hash,
+                    json.dumps({"perception_artefact_hash": perception_hash}, sort_keys=True),
+                ),
+            )
+            if retrieval_performed_payload is not None:
+                if _fail_inject_at == "before_retrieval_event":
+                    raise RuntimeError("injected_fail:before_retrieval_event")
+                seq += 1
+                conn.execute(
+                    """
+                    INSERT INTO episode_events
+                    (event_id, episode_id, run_id, event_type, sequence_num, recorded_at, artefact_hash, payload_json)
+                    VALUES (?, ?, ?, 'retrieval_performed', ?, ?, NULL, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        episode_id,
+                        run.run_id,
+                        seq,
+                        now,
+                        json.dumps(retrieval_performed_payload, sort_keys=True),
+                    ),
+                )
+            if memory_refs:
+                if _fail_inject_at == "before_memory_refs":
+                    raise RuntimeError("injected_fail:before_memory_refs")
+                for ref in memory_refs:
+                    conn.execute(
+                        """
+                        INSERT INTO memory_references
+                        (memory_ref_id, run_id, target_episode_id, source_episode_id, source_event_id,
+                         source_run_id, source_asset_id, source_run_purpose, eligibility_decision,
+                         ref_type, epistemic_status, lifecycle_status, memory_role, trust_level,
+                         category_score, scene_score, goal_score, relation_score, recency_score, final_score,
+                         contamination_flags_json, match_reason, artefact_hash, retrieved_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            ref.memory_ref_id,
+                            run.run_id,
+                            episode_id,
+                            ref.source_episode_id,
+                            ref.source_event_id,
+                            ref.source_run_id,
+                            ref.source_asset_id,
+                            ref.source_run_purpose,
+                            ref.eligibility_decision,
+                            ref.memory_role,
+                            ref.epistemic_status,
+                            ref.lifecycle_status,
+                            ref.memory_role,
+                            ref.trust_level,
+                            ref.scores.category_score,
+                            ref.scores.scene_score,
+                            ref.scores.goal_score,
+                            ref.scores.relation_score,
+                            ref.scores.recency_score,
+                            ref.scores.final_score,
+                            json.dumps(list(ref.scores.contamination_flags)),
+                            ref.match_reason,
+                            ref.artefact_hash,
+                            now,
+                        ),
+                    )
+            if _fail_inject_at == "before_commit":
+                raise RuntimeError("injected_fail:before_commit")
+            conn.commit()
 
     def close_episode(
         self,
@@ -883,6 +1198,14 @@ class CognitionLedger:
                 (e.get("artefact_hash") for e in run_events if e.get("event_type") == "deliberation_snapshot"),
                 None,
             )
+            frozen_hash = next(
+                (
+                    e.get("artefact_hash")
+                    for e in run_events
+                    if e.get("event_type") == "frozen_deliberation_input_recorded"
+                ),
+                None,
+            )
             delta_hashes = sorted(
                 [
                     e.get("artefact_hash")
@@ -890,10 +1213,51 @@ class CognitionLedger:
                     if e.get("event_type") == "deliberation_delta" and e.get("artefact_hash")
                 ]
             )
+            snap_payload = None
+            for e in run_events:
+                if e.get("event_type") == "deliberation_snapshot" and e.get("payload_json"):
+                    try:
+                        snap_payload = json.loads(e["payload_json"])
+                    except json.JSONDecodeError:
+                        snap_payload = None
+                    break
+            confidence_provenance = (snap_payload or {}).get("confidence_provenance") or {}
+            confidence_provenance_hash = (
+                compute_artefact_hash(confidence_provenance) if confidence_provenance else None
+            )
+            retrieval_as_of = None
+            try:
+                manifest = json.loads(run.get("provenance_manifest_json") or "{}")
+                retrieval_as_of = manifest.get("retrieval_as_of")
+            except (TypeError, json.JSONDecodeError):
+                retrieval_as_of = None
+            if not retrieval_as_of:
+                for e in run_events:
+                    if e.get("event_type") == "retrieval_performed" and e.get("payload_json"):
+                        try:
+                            retrieval_as_of = json.loads(e["payload_json"]).get("retrieval_as_of")
+                        except json.JSONDecodeError:
+                            retrieval_as_of = None
+                        break
+            if not retrieval_as_of:
+                retrieval_as_of = run.get("started_at")
             expected_hashes["runs"][run["run_id"]] = {
                 "deliberation_snapshot_hash": snap_hash,
                 "deliberation_delta_hashes": delta_hashes,
+                "frozen_deliberation_input_hash": frozen_hash,
+                "confidence_provenance_hash": confidence_provenance_hash,
+                "confidence_provenance": confidence_provenance,
                 "context_fingerprint": run.get("context_fingerprint"),
+                "retrieval_as_of": retrieval_as_of,
+                "perception_artefact_hash": next(
+                    (
+                        json.loads(e["payload_json"]).get("perception_artefact_hash")
+                        for e in run_events
+                        if e.get("event_type") == "perception_completed" and e.get("payload_json")
+                    ),
+                    None,
+                ),
+                "state_version_id": run.get("state_version_id"),
             }
 
         return {
