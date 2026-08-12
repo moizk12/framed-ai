@@ -1,0 +1,14 @@
+{
+  "request_id": "req-xss",
+  "analysis_id": "ana-xss",
+  "status": "complete",
+  "critique": "<img src=x onerror=\"window.__xss=1\"> critique",
+  "evidence": {
+    "recognition": { "text": "<img src=x onerror=\"window.__xss=1\"> recognition", "confidence": 0.5 },
+    "scene": { "type": "<svg onload=\"window.__xss=1\">scene</svg>" },
+    "grounding": { "state": "empty", "boxes": [] },
+    "claim_traces": ["<img src=x onerror=\"window.__xss=1\"> trace"]
+  },
+  "limitations": ["<img src=x onerror=\"window.__xss=1\"> limitation"],
+  "meta": { "duration_ms": 10, "cached": false, "contract_version": "1" }
+}

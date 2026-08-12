@@ -313,7 +313,13 @@ def index():
 
 @main.route("/upload")
 def upload():
-    return render_template("upload.html")
+    return render_template("index.html")
+
+
+@main.get("/privacy")
+def privacy():
+    """Render the public beta privacy explanation."""
+    return render_template("privacy.html")
 
 @main.post("/analyze")
 def analyze():

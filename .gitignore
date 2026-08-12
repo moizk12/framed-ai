@@ -24,4 +24,5 @@ build/
 # Local eval artifacts
 eval_outputs/
 
- 
+# Frontend QA evidence
+test-results/

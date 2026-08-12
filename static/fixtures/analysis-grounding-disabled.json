@@ -1,0 +1,14 @@
+{
+  "request_id": "req-grounding-off",
+  "analysis_id": "ana-grounding-off",
+  "status": "complete",
+  "critique": "The subject reads clearly against the quieter background, though the edge spacing on the left feels tighter than the rest of the frame.",
+  "evidence": {
+    "recognition": { "text": "A single portrait subject against a subdued background.", "confidence": 0.72 },
+    "scene": { "type": "portrait" },
+    "grounding": { "state": "disabled", "boxes": [] },
+    "claim_traces": []
+  },
+  "limitations": ["Localized grounding was disabled for this analysis."],
+  "meta": { "duration_ms": 11000, "cached": false, "contract_version": "1" }
+}

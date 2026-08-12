@@ -1,5 +1,184 @@
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8" /><title>FRAMED</title></head>
-<body><p><a href="/upload">Upload image for critique</a></p></body>
-</html>
+{% extends "base.html" %}
+{% block content %}
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero-copy">
+    <p class="eyebrow">A visual-cognition companion for photographers</p>
+    <h1 id="hero-title">Look closer at the photograph you made.</h1>
+    <p class="hero-deck">FRAMED studies one photograph, grounds what it sees, and returns a specific critique with visible evidence you can evaluate.</p>
+    <div class="button-row">
+      <a class="button" href="#critique">Critique a photograph</a>
+      <a class="text-link" href="#example">See an example <span aria-hidden="true">↘</span></a>
+    </div>
+    <dl class="hero-facts" aria-label="Public beta characteristics">
+      <div><dt>01</dt><dd>One photograph</dd></div>
+      <div><dt>02</dt><dd>Balanced critique</dd></div>
+      <div><dt>03</dt><dd>Visible evidence</dd></div>
+    </dl>
+  </div>
+  <figure class="hero-image frame-figure">
+    <img src="{{ url_for('main.static', filename='images/example-landscape.jpg') }}" alt="Green mountain valley under low cloud at sunrise" width="800" height="600">
+    <figcaption><span>Study 01</span><span>Light · scale · atmosphere</span></figcaption>
+  </figure>
+</section>
+
+<section class="critique-studio" id="critique" aria-labelledby="studio-title">
+  <div class="section-intro studio-intro">
+    <p class="section-number">01 / The critique studio</p>
+    <h2 id="studio-title">Bring one frame.<br>Leave with a clearer read.</h2>
+    <p>JPEG, PNG, or WebP up to 16 MB. Most critiques take a few minutes; first requests may take longer while the service starts.</p>
+  </div>
+
+  <div class="studio-shell" data-analysis-app>
+    <form class="upload-panel" id="analysis-form" novalidate>
+      <div class="drop-zone" data-drop-zone tabindex="0" role="button" aria-describedby="file-requirements privacy-note" aria-controls="image-input">
+        <input class="visually-hidden" id="image-input" name="image" type="file" accept="image/jpeg,image/png,image/webp" required>
+        <div class="drop-empty" data-drop-empty>
+          <span class="frame-icon" aria-hidden="true"></span>
+          <p class="drop-title">Place a photograph in the frame</p>
+          <p>Drop it here or <span class="inline-action">choose a file</span></p>
+        </div>
+        <div class="drop-selected" data-drop-selected hidden>
+          <img data-preview alt="Selected photograph preview">
+          <div class="selected-meta">
+            <strong data-file-name></strong>
+            <span data-file-size></span>
+          </div>
+        </div>
+      </div>
+      <div class="upload-meta">
+        <p id="file-requirements">JPEG, PNG or WebP · 16 MB maximum</p>
+        <div class="file-actions" data-file-actions hidden>
+          <button class="button-link" type="button" data-replace-image>Replace</button>
+          <button class="button-link button-link-danger" type="button" data-remove-image>Remove</button>
+        </div>
+      </div>
+      <p class="field-error" id="file-error" data-file-error role="alert" hidden></p>
+      <p class="privacy-note" id="privacy-note">Your upload is sent only when you request a critique. Read how analysis records and feedback may be retained in our <a href="{{ url_for('main.privacy') }}">privacy note</a>.</p>
+      <div class="submit-row">
+        <input type="hidden" name="mentor_mode" value="balanced">
+        <button class="button button-submit" type="submit" data-submit disabled>
+          <span>Make the critique</span><span aria-hidden="true">→</span>
+        </button>
+      </div>
+    </form>
+
+    <section class="analysis-progress" data-progress aria-labelledby="progress-title" hidden>
+      <div class="progress-header">
+        <p class="eyebrow">Analysis in progress</p>
+        <span class="progress-time">This may take a few minutes</span>
+      </div>
+      <h3 id="progress-title" tabindex="-1" data-progress-title>Reading the photograph</h3>
+      <div class="progress-rule" aria-hidden="true"><span data-progress-bar></span></div>
+      <ol class="progress-stages" aria-label="Presentation progress">
+        <li data-stage="0" aria-current="step">Reading the photograph</li>
+        <li data-stage="1">Reviewing visual evidence</li>
+        <li data-stage="2">Composing the critique</li>
+      </ol>
+      <p class="status-note">These labels describe the presentation flow, not live server telemetry.</p>
+      <button class="button button-secondary progress-cancel" type="button" data-cancel>Cancel analysis</button>
+      <div class="sr-status" data-live-status role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="analysis-error" data-error-state tabindex="-1" hidden aria-labelledby="error-title">
+      <p class="eyebrow">The critique could not be completed</p>
+      <h3 id="error-title" data-error-title>Something interrupted the analysis.</h3>
+      <p data-error-message></p>
+      <div class="button-row">
+        <button class="button" type="button" data-retry>Try again</button>
+        <button class="text-button" type="button" data-error-reset>Choose another photograph</button>
+      </div>
+    </section>
+
+    <article class="result" data-result tabindex="-1" hidden aria-labelledby="result-title">
+      <header class="result-header">
+        <div><p class="eyebrow">Balanced Mentor · critique complete</p><h2 id="result-title">Your critique</h2></div>
+        <dl class="result-meta"><div><dt>Analysis</dt><dd data-analysis-id>—</dd></div><div><dt>Duration</dt><dd data-duration>—</dd></div></dl>
+      </header>
+      <div class="result-layout">
+        <aside class="result-image"><img data-result-image alt="Photograph submitted for critique"></aside>
+        <div class="result-content">
+          <section class="critique-copy" aria-labelledby="critique-heading">
+            <p class="result-kicker">A / Critique</p>
+            <h3 id="critique-heading" class="visually-hidden">Critique</h3>
+            <div data-critique></div>
+          </section>
+
+          <section class="evidence-section" aria-labelledby="evidence-heading">
+            <div class="result-section-heading"><div><p class="result-kicker">B / Evidence</p><h3 id="evidence-heading">What FRAMED noticed</h3></div><button class="disclosure-button" type="button" aria-expanded="true" aria-controls="evidence-content" data-evidence-toggle><span data-disclosure-label>Hide evidence</span><span aria-hidden="true">−</span></button></div>
+            <div id="evidence-content" data-evidence-content>
+              <dl class="evidence-grid">
+                <div><dt>Recognition</dt><dd data-recognition></dd><span class="confidence" data-confidence></span></div>
+                <div><dt>Scene</dt><dd data-scene></dd></div>
+                <div><dt>Grounding</dt><dd data-grounding></dd></div>
+              </dl>
+              <div class="claim-traces" data-claim-traces hidden><h4>Claim traces</h4><ul data-claim-trace-list></ul></div>
+              <p class="evidence-empty" data-evidence-empty hidden>FRAMED completed the critique, but detailed evidence was not available for this photograph.</p>
+            </div>
+          </section>
+
+          <section class="limitations-section" aria-labelledby="limitations-heading">
+            <p class="result-kicker">C / Limitations</p>
+            <h3 id="limitations-heading">Where to keep your judgment</h3>
+            <ul data-limitations></ul>
+          </section>
+
+          <section class="feedback-section" aria-labelledby="feedback-heading">
+            <p class="result-kicker">D / Feedback</p>
+            <h3 id="feedback-heading">Was this useful?</h3>
+            <p>Your feedback is recorded to help evaluate and improve future versions.</p>
+            <div class="feedback-actions" role="group" aria-label="Critique usefulness">
+              <button type="button" class="feedback-button" data-feedback-value="useful">Yes, useful</button>
+              <button type="button" class="feedback-button" data-feedback-value="not_useful">Not useful</button>
+            </div>
+            <button class="button-link feedback-note-toggle" type="button" aria-expanded="false" aria-controls="feedback-note" data-feedback-note-toggle>Add a comment or correction</button>
+            <div id="feedback-note" data-feedback-note hidden>
+              <label for="feedback-comment">Comment <span>(optional)</span></label>
+              <textarea id="feedback-comment" maxlength="1000" rows="4" placeholder="What did FRAMED miss or get wrong?"></textarea>
+            </div>
+            <p class="feedback-status" data-feedback-status role="status" aria-live="polite"></p>
+          </section>
+
+          <button class="text-button new-analysis" type="button" data-new-analysis>Critique another photograph</button>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="example-section" id="example" aria-labelledby="example-title">
+  <div class="section-intro"><p class="section-number">02 / Example critique</p><h2 id="example-title">A critique you can inspect,<br>not just accept.</h2></div>
+  <div class="example-layout">
+    <figure class="example-image frame-figure"><img src="{{ url_for('main.static', filename='images/example-landscape.jpg') }}" alt="Green mountain valley under low cloud at sunrise" width="800" height="600"><figcaption><span>Example photograph</span><span>Landscape study</span></figcaption></figure>
+    <div class="example-copy">
+      <p class="example-label">Critique excerpt</p>
+      <blockquote>“The road gives the eye an entry point, but the brightest cloud pulls attention away from the valley’s strongest rhythm. A slightly tighter crop from the right would let the ridge and mist carry the frame.”</blockquote>
+      <dl class="example-evidence"><div><dt>Noticed</dt><dd>A winding road, layered ridges, low cloud and a bright horizon.</dd></div><div><dt>Evidence</dt><dd>The road creates a lower-right leading line; the brightest values sit at upper right.</dd></div><div><dt>Limitation</dt><dd>Atmospheric haze reduces detail, so depth and edge relationships may be interpreted conservatively.</dd></div></dl>
+      <p class="example-note">Static editorial example using a repository test photograph. It is not a live analysis or performance claim.</p>
+    </div>
+  </div>
+</section>
+
+<section class="how-section" id="how-it-works" aria-labelledby="how-title">
+  <div class="section-intro"><p class="section-number">03 / How it works</p><h2 id="how-title">From pixels to a practical read.</h2></div>
+  <ol class="how-grid">
+    <li><span class="how-number">01</span><h3>See</h3><p>FRAMED identifies visual structure, scene cues and available evidence in the photograph.</p><small>Perception</small></li>
+    <li><span class="how-number">02</span><h3>Weigh</h3><p>It considers plausible readings and calibrates them against the strength of that evidence.</p><small>Deliberation</small></li>
+    <li><span class="how-number">03</span><h3>Critique</h3><p>It turns the strongest supported reading into specific, practical photographic feedback.</p><small>Balanced critique</small></li>
+  </ol>
+</section>
+
+<section class="proof-section" aria-labelledby="proof-title">
+  <div class="proof-copy"><p class="section-number">04 / Under the frame</p><h2 id="proof-title">A layered system, with evidence kept visible.</h2><p>FRAMED separates visual perception, evidence grounding and structured reasoning before producing a Balanced critique. The public beta keeps that path inspectable without exposing research controls or model internals.</p><ul class="proof-list"><li>Layered</li><li>Evidence-aware</li><li>Regression-tested</li><li>Authored and researched by Moiz</li></ul><p class="build-note">Build evidence will be published with the beta release.</p></div>
+  <ol class="architecture-flow" aria-label="FRAMED public critique architecture"><li><span>01</span>Image</li><li><span>02</span>Visual perception</li><li><span>03</span>Evidence / grounding</li><li><span>04</span>Structured reasoning</li><li><span>05</span>Balanced critique</li></ol>
+</section>
+
+<section class="about-section" id="about" aria-labelledby="about-title">
+  <p class="section-number">05 / About the maker</p>
+  <div><h2 id="about-title">Built where photography and engineering meet.</h2><p>Moiz designed and built FRAMED as a long-running exploration of photography, computer vision, software engineering and AI research. The work begins with a simple standard: if a critique cannot show what it noticed and where it is uncertain, it should not ask for a photographer’s trust.</p><a class="text-link" href="https://github.com/moizk12/framed-ai" rel="noreferrer">View the project on GitHub <span aria-hidden="true">↗</span></a></div>
+</section>
+
+<section class="privacy-band" aria-labelledby="privacy-title"><div><p class="section-number">06 / Privacy</p><h2 id="privacy-title">A critique should not quietly become an identity.</h2></div><div><p>Public beta sessions are not treated as memory or continuity. Analysis metadata, response records and feedback may be retained for evaluation, security and product improvement; the current application removes the raw upload after the request completes.</p><a class="text-link" href="{{ url_for('main.privacy') }}">Read the privacy note <span aria-hidden="true">→</span></a></div></section>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="{{ url_for('main.static', filename='js/upload.js') }}"></script>
+{% endblock %}

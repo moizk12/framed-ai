@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10110f">
+  <meta name="description" content="FRAMED is an evidence-aware visual critique companion for photographers.">
+  <title>{% block title %}FRAMED — a visual-cognition companion for photographers{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('main.static', filename='css/design-system.css') }}">
+  <link rel="stylesheet" href="{{ url_for('main.static', filename='css/public-beta.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="site-header" data-site-header>
+    <a class="wordmark" href="{{ url_for('main.index') }}" aria-label="FRAMED home">
+      <span class="wordmark-mark" aria-hidden="true"></span>
+      FRAMED
+    </a>
+    <nav class="site-nav" aria-label="Primary navigation">
+      <a href="{{ url_for('main.index') }}#how-it-works">How it works</a>
+      <a href="{{ url_for('main.index') }}#example">Example</a>
+      <a href="{{ url_for('main.index') }}#about">About</a>
+      <a href="{{ url_for('main.privacy') }}">Privacy</a>
+    </nav>
+    <a class="button button-small header-cta" href="{{ url_for('main.index') }}#critique">Critique a photograph</a>
+  </header>
+
+  <main id="main-content">{% block content %}{% endblock %}</main>
+
+  <footer class="site-footer">
+    <div class="footer-wordmark">FRAMED</div>
+    <div class="footer-links">
+      <a href="https://github.com/moizk12/framed-ai" rel="noreferrer">GitHub</a>
+      <a href="{{ url_for('main.privacy') }}">Privacy</a>
+      <span>Beta build evidence pending</span>
+    </div>
+    <p>Designed and built by Moiz.</p>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
