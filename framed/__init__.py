@@ -7,12 +7,12 @@ from flask_cors import CORS
 def create_app(config=None):
     """Create and configure the Flask app."""
     from pathlib import Path
-    base_dir = Path(__file__).parent
-    
+    repo_root = Path(__file__).parent.parent
+
     app = Flask(
         __name__,
-        template_folder=str(base_dir / 'templates'),
-        static_folder=str(base_dir / 'static')
+        template_folder=str(repo_root / 'templates'),
+        static_folder=str(repo_root / 'static'),
     )
     
     # Basic configuration

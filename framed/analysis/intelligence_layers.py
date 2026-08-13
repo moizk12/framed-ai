@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 def reason_about_recognition(
     visual_evidence: Dict[str, Any],
     require_multiple_hypotheses: bool = False,
+    cognition_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Layer 1: Certain Recognition
@@ -52,8 +53,15 @@ def reason_about_recognition(
     or with hypotheses: {"hypotheses": [...], "what_i_see": primary, "alternatives": [...]}
     """
     try:
+        from framed.cognition.context.formatting import format_cognition_context_for_prompt
+
         routing_block = routing_prompt_blocks(visual_evidence)
         domain_guard_section = f"\n{routing_block}\n" if routing_block else ""
+        cognition_section = ""
+        if cognition_context:
+            formatted = format_cognition_context_for_prompt(cognition_context)
+            if formatted:
+                cognition_section = f"\n{formatted}\n"
 
         if require_multiple_hypotheses:
             prompt = f"""
@@ -61,7 +69,7 @@ You are FRAMED's recognition engine. This image has conflicting or weak signalsâ
 
 VISUAL EVIDENCE (ground truth from pixels):
 {format_visual_evidence(visual_evidence)}
-{domain_guard_section}
+{domain_guard_section}{cognition_section}
 REASONING TASK:
 Generate AT LEAST 2 plausible interpretations. Do not collapse to one. Each hypothesis must include:
 - conclusion: What you might be seeing
@@ -100,7 +108,7 @@ You are FRAMED's recognition engine. You see images with certainty, not tentativ
 
 VISUAL EVIDENCE (ground truth from pixels):
 {format_visual_evidence(visual_evidence)}
-{domain_guard_section}
+{domain_guard_section}{cognition_section}
 REASONING TASK:
 What are you seeing? Be certain, not tentative. Provide evidence for your recognition.
 

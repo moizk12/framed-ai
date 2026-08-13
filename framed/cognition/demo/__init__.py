@@ -1,0 +1,1 @@
+"""Slice A demonstration harness."""

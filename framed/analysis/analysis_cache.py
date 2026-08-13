@@ -10,6 +10,41 @@ from .runtime_paths import ANALYSIS_CACHE_DIR, CACHE_VERSION, ensure_directories
 
 logger = logging.getLogger(__name__)
 
+# Fields that must never be reused from cache under cognition-v1
+COGNITION_IDENTITY_KEYS = (
+    "intelligence",
+    "cognition_provenance",
+    "pattern_signature",
+    "interpretive_conclusions",
+)
+
+
+def strip_cognition_from_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove cognitive execution identity for perception-only cache reuse."""
+    stripped = dict(result)
+    for key in COGNITION_IDENTITY_KEYS:
+        stripped.pop(key, None)
+    return stripped
+
+
+def merge_perception_from_cache(cached: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy perception/visual evidence from cache into a fresh result skeleton."""
+    for key in (
+        "perception",
+        "visual_evidence",
+        "semantic_anchors",
+        "scene_understanding",
+        "derived",
+        "metadata",
+    ):
+        if key in cached and cached[key]:
+            if key == "metadata":
+                result.setdefault("metadata", {}).update(dict(cached["metadata"]))
+            else:
+                result[key] = cached[key]
+    result.setdefault("_perception_reused_from_cache", True)
+    return result
+
 
 def compute_file_hash(file_path: str) -> str:
     """SHA-256 of file contents; empty string on error."""
