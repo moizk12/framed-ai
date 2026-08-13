@@ -7,7 +7,9 @@
 
 # Python virtual environment
 .venv
+.venv-*
 venv
+venv-*
 env
 
 # Python cache
@@ -22,6 +24,7 @@ __pycache__/
 
 # Test files
 tests/
+test-results/
 pytest.ini
 .pytest_cache/
 coverage.xml
@@ -30,3 +33,9 @@ coverage.xml
 # IDE files
 .idea/
 .vscode/
+
+# Evaluation material is not part of the public runtime image
+framed/tests/
+stress_test_master/
+memory/
+eval_outputs/

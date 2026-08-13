@@ -1,3 +1,4 @@
+# Production Track A dependencies. Compile with scripts/lock_runtime_dependencies.ps1.
 flask
 flask-cors
 gunicorn
@@ -11,5 +12,4 @@ opencv-python-headless
 scikit-learn
 requests
 python-dotenv
-psycopg[binary]>=3.2,<4
-fiftyone>=0.23.0
+psycopg[binary]

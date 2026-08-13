@@ -9,17 +9,17 @@ pinned: true
 license: mit
 ---
 
-# FRAMED — Visual Soul Companion
+# FRAMED — Public Photography Critique Beta
 
-> **AI-Powered Photography Mentor** | Analyze your photographs through classical vision signals and modern embeddings, then receive thoughtful, mentor-like guidance on composition, lighting, mood, and artistic direction.
+> **Evidence-aware photography critique** | Upload a photograph, receive one Balanced Mentor critique with evidence and limitations, then attach feedback to that analysis.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/Flask-3.0.0-green.svg)](https://flask.palletsprojects.com/)
 
-**🌐 Live Application:** [Try FRAMED on Hugging Face Spaces](https://huggingface.co/spaces/moizk12/framed-ai)  
-**🔗 Direct URL:** https://moizk12-framed-ai.hf.space  
 **📦 GitHub Repository:** https://github.com/moizk12/framed-ai
+
+The public beta exposes only `/api/v1/analyses` and `/api/v1/feedback`. Research cognition, ECHO, memory controls, research identities, ledgers, run IDs, and mentor-mode switching are not public capabilities.
 
 ---
 
@@ -29,8 +29,8 @@ FRAMED is a **visual-cognition companion for photographers**. It analyzes a phot
 
 - **Classical Vision Signals**: Frames, objects, symmetry, color, tonality
 - **Modern Embeddings**: CLIP (semantic understanding) and YOLOv8 (object detection)
-- **Mentor-Like Response**: Diagnoses what's working, what isn't, and suggests specific experiments ("Remix") and next shots
-- **AskECHO**: A conversational Q&A endpoint grounded in image analysis and a light memory scaffold
+- **Mentor-Like Response**: Diagnoses what is working, what is uncertain, and offers a specific photographic experiment
+- **Public feedback**: A durable PostgreSQL relationship between an analysis and the user’s useful/not-useful response
 
 Unlike simple image classifiers, FRAMED responds like a thoughtful human mentor—blending technical critique with artistic inspiration, referencing the wisdom of legendary photographers (Ansel Adams, Cartier-Bresson, Dorothea Lange, Fan Ho, and more).
 
@@ -39,22 +39,16 @@ Unlike simple image classifiers, FRAMED responds like a thoughtful human mentor�
 - 📸 **Comprehensive Image Analysis**: Technical metrics (brightness, contrast, sharpness) + AI semantic understanding
 - 🎨 **Color & Composition Analysis**: Color harmony, tonal range, lighting direction, symmetry, framing
 - 🧠 **Genre & Mood Detection**: Automatically identifies genre (Portrait, Street, Landscape, etc.) and emotional mood
-- 💬 **AskECHO**: Conversational AI that reflects on your photographic style and patterns
-- 🎭 **Mentor Modes**: Choose from Balanced Mentor, Gentle Guide, Radical Visionary, Philosopher, or Curator
-- 🔄 **Remix Suggestions**: AI-generated shot recipes and experimental ideas for your next shoot
-- ☁️ **Server-Side Cloud Enhance**: OpenAI integration runs on the host—no user API keys required
+- 💬 **Evidence and limitations**: Public responses expose an allowlisted, versioned contract
+- 🎭 **Balanced Mentor**: The only public critique mode
+- 🔄 **Durable feedback**: Useful/not-useful responses attach to the originating public analysis
+- ☁️ **Host-only providers**: Model credentials remain server-side; users do not submit API keys
 
 ---
 
 ## 🚀 Quick Start
 
-### Option 1: Try the Live Application
-
-**[Click here to use FRAMED on Hugging Face Spaces](https://huggingface.co/spaces/moizk12/framed-ai)**
-
-No setup required—just upload a photo and get instant analysis!
-
-### Option 2: Local Development
+### Local Development
 
 #### Prerequisites
 
@@ -161,8 +155,8 @@ Try these types of images for interesting results:
        │
        ▼
 ┌─────────────────────────────────────┐
-│    JSON Response + Remix            │
-│    + ECHO Memory Update             │
+│    Allowlisted v1 response          │
+│    + PostgreSQL feedback link       │
 └─────────────────────────────────────┘
 ```
 
@@ -209,7 +203,7 @@ FRAMED bridges this gap by:
 1. **Combining Technical and Artistic Analysis**: Not just "brightness: 120" but "moody low-key exposure, reserved and atmospheric"
 2. **Referencing Photography Masters**: Drawing from the wisdom of Ansel Adams, Cartier-Bresson, Dorothea Lange, Fan Ho, and others
 3. **Providing Actionable Guidance**: Not just critique, but "Remix" suggestions—specific experiments to try next
-4. **Building Context**: ECHO memory tracks your photographic patterns, allowing for deeper, personalized insights
+4. **Keeping boundaries explicit**: Public analysis/feedback persistence remains separate from research cognition state
 
 ### Origin Story
 
@@ -219,17 +213,29 @@ The constraint: simple hosting, no user API keys, low RAM targets; evolve into s
 
 ---
 
-## 🔧 Configuration
+## 🔧 Public production configuration
 
 ### Environment Variables
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `OPENAI_API_KEY` | OpenAI API key for Cloud Enhance features | No | None (features disabled) |
-| `DEEPFACE_ENABLE` | Enable DeepFace for emotion analysis | No | `false` |
-| `DATA_ROOT` | Root directory for persistent data | No | `/data` |
-| `UPLOAD_DIR` | Directory for uploaded images | No | `/data/uploads` |
-| `SECRET_KEY` | Flask secret key (change in production!) | No | `dev-secret-key-change-in-production` |
+| `DATABASE_URL` | Dedicated Track A PostgreSQL connection URL | Yes | — |
+| `SECRET_KEY` | Random Flask secret, at least 32 characters | Yes | — |
+| `FRAMED_ENV` | Runtime validation mode | Yes | `production` in container |
+| `FRAMED_PUBLIC_BETA_ONLY` | Fail closed around legacy/research-capable routes | Yes | `true` in container |
+| `FRAMED_COGNITION_V1` | Research cognition switch; must remain false publicly | Yes | `false` in container |
+| `OPENAI_API_KEY` | Required only when configured models use OpenAI | Conditional | — |
+| `FRAMED_MODEL_A`, `FRAMED_MODEL_B` | Configured analysis/expression providers | Yes | See `.env.example` |
+| `FRAMED_VERSION` | Safe release identifier returned by `/version` | Build metadata | `dev` |
+| `FRAMED_BUILD_SHA` | Lowercase Git SHA returned by `/version` | Build metadata | `unknown` |
+| `FRAMED_MAX_UPLOAD_BYTES` | Request body limit, 1–25 MiB | No | `12582912` |
+| `FRAMED_MAX_IMAGE_PIXELS` | Decoded image pixel limit | No | `40000000` |
+| `FRAMED_DATA_DIR` | Writable model cache and temporary upload root | No | `/data/framed` |
+| `PUBLIC_AUTO_MIGRATE` | In-process migration fallback | No | `false` |
+
+PostgreSQL must be reachable before application startup. Use a dedicated public database/user with permission to create and alter the `public_schema_migrations`, `public_analyses`, and `public_feedback` tables and their index. Do not point `DATABASE_URL` at the research cognition store. The container runs `python -m framed.public_migrations` transactionally under a PostgreSQL advisory lock before starting Gunicorn.
+
+Runtime probes are deliberately separate: `/health` is process liveness, `/ready` checks public PostgreSQL connectivity, and `/version` returns only service/version/build/API-contract metadata.
 
 ### LM Studio (default local LLM)
 
@@ -297,21 +303,31 @@ Outputs are saved under `eval_outputs/`.
 
 ## 🚢 Deployment
 
-### Hugging Face Spaces
-
-The project is configured for one-click deployment on Hugging Face Spaces:
-
-1. Push to your Hugging Face Space repository
-2. Set the `OPENAI_API_KEY` secret in Space settings
-3. The Dockerfile handles all dependencies and configuration
+Deploy the production container on a host that provides persistent writable cache storage, a reachable dedicated PostgreSQL database, and the required environment variables below. No deployment occurs automatically from this branch or PR.
 
 ### Docker
 
 Build and run locally:
 
 ```bash
-docker build -t framed-ai .
-docker run -p 7860:7860 -e OPENAI_API_KEY=your_key framed-ai
+docker build -t framed-ai --build-arg FRAMED_VERSION=beta.1 --build-arg FRAMED_BUILD_SHA=$(git rev-parse HEAD) .
+docker run --read-only --tmpfs /tmp --mount type=volume,src=framed-data,dst=/data/framed -p 7860:7860 -e DATABASE_URL=postgresql://... -e SECRET_KEY=replace-with-32-random-characters -e OPENAI_API_KEY=... framed-ai
+```
+
+The public v1 API requires a PostgreSQL `DATABASE_URL`. App startup applies pending
+public-only migrations automatically; they can also be applied explicitly with:
+
+```bash
+python -m framed.public_migrations
+```
+
+The public tables are independent of all research cognition and SQLite state.
+
+The image installs `requirements.lock` with `pip --require-hashes`. Regenerate the lock intentionally with Python 3.11 resolution using `scripts/lock_runtime_dependencies.ps1` (requires `uv`), then review and commit the lock diff. The production startup sequence is:
+
+```bash
+python -m framed.public_migrations
+exec gunicorn -k gthread --threads 4 -w 1 --timeout 120 --keep-alive 5 -b 0.0.0.0:${PORT:-7860} run:app
 ```
 
 ---
@@ -327,7 +343,7 @@ docker run -p 7860:7860 -e OPENAI_API_KEY=your_key framed-ai
 
 ## Future ideas
 
-- ECHO clustering/graph view
+- Research-only ECHO clustering/graph experiments (not a public capability)
 - Assignment cards + export
 - Remix improvements
 - More mentor voices

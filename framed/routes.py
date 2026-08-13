@@ -1,23 +1,39 @@
-from flask import Blueprint, render_template, request, jsonify, current_app
+from flask import Blueprint, abort, render_template, request, jsonify, current_app
 import copy
 import os
+import re
+import tempfile
 import uuid
 import time
+from datetime import datetime, timezone
+from pathlib import Path
+from PIL import Image, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
-from framed.analysis.stage_timing import log_stage_done
-
-from framed.analysis.vision import (
-    run_full_analysis,
-    load_echo_memory,
-    save_echo_memory,
-    update_echo_memory,
-    ask_echo,
-    generate_merged_critique,
-    client
-)
+from framed.public_api import PublicAnalysisUnavailable
+from framed.public_store import PublicPersistenceUnavailable
 
 ALLOWED_EXTENSIONS = {"png","jpg","jpeg","webp","bmp","tiff"}
+PUBLIC_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+PUBLIC_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
+PUBLIC_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
+PUBLIC_EXTENSION_FORMATS = {"jpg": "JPEG", "jpeg": "JPEG", "png": "PNG", "webp": "WEBP"}
+PUBLIC_MAX_PIXELS = 40_000_000
+
+
+def _open_public_image(stream):
+    """Use Pillow's decoder even if an ML dependency monkey-patched Image.open."""
+    image_open = Image.open
+    if getattr(image_open, "__module__", "") == "ultralytics.utils.patches":
+        image_open = getattr(image_open, "__globals__", {}).get("_image_open", image_open)
+    return image_open(stream)
+
+
+def run_full_analysis(*args, **kwargs):
+    """Lazy legacy/research hook retained without loading ML at app startup."""
+    from framed.analysis.vision import run_full_analysis as analysis_runner
+
+    return analysis_runner(*args, **kwargs)
 
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -307,16 +323,196 @@ main = Blueprint(
     static_url_path="/static",
 )
 
+
+@main.before_request
+def enforce_public_beta_route_boundary():
+    """Hide every legacy/research-capable route in the public runtime."""
+    if not current_app.config.get("PUBLIC_BETA_ONLY", True):
+        return None
+    allowed = {
+        "main.index",
+        "main.upload",
+        "main.privacy",
+        "main.static",
+        "main.create_public_analysis",
+        "main.create_public_feedback",
+    }
+    if request.endpoint not in allowed:
+        abort(404)
+    return None
+
 @main.route("/")
 def index():
     return render_template("index.html")
 
 @main.route("/upload")
 def upload():
-    return render_template("upload.html")
+    return render_template("index.html")
+
+
+@main.get("/privacy")
+def privacy():
+    """Render the public beta privacy explanation."""
+    return render_template("privacy.html")
+
+
+def _public_request_id() -> str:
+    return f"req-{uuid.uuid4().hex}"
+
+
+def public_error_payload(code: str, message: str, request_id: str | None = None) -> dict:
+    return {
+        "request_id": request_id or _public_request_id(),
+        "error": {"code": code},
+        "message": message,
+    }
+
+
+def _public_error(code: str, message: str, status: int, request_id: str):
+    return jsonify(public_error_payload(code, message, request_id)), status
+
+
+def _validate_public_upload(upload) -> tuple[bool, str, str, int]:
+    if upload is None or not upload.filename:
+        return False, "missing_image", "A photograph is required in the image field.", 400
+    safe_name = secure_filename(upload.filename)
+    extension = Path(safe_name).suffix.lower().lstrip(".")
+    if not safe_name or extension not in PUBLIC_IMAGE_EXTENSIONS or upload.mimetype not in PUBLIC_IMAGE_MIMES:
+        return False, "unsupported_media_type", "Use a JPEG, PNG, or WebP photograph.", 415
+    try:
+        upload.stream.seek(0)
+        with _open_public_image(upload.stream) as image:
+            width, height = image.size
+            max_pixels = current_app.config.get("PUBLIC_MAX_IMAGE_PIXELS", PUBLIC_MAX_PIXELS)
+            if width <= 0 or height <= 0 or width * height > max_pixels:
+                return False, "invalid_image", "This photograph has invalid or unsupported dimensions.", 400
+            image.verify()
+            detected_format = image.format
+        upload.stream.seek(0)
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
+        return False, "invalid_image", "This file could not be decoded as a photograph.", 400
+    if detected_format not in PUBLIC_IMAGE_FORMATS or PUBLIC_EXTENSION_FORMATS.get(extension) != detected_format:
+        return False, "unsupported_media_type", "Use a JPEG, PNG, or WebP photograph.", 415
+    return True, safe_name, "", 200
+
+
+@main.post("/api/v1/analyses")
+def create_public_analysis():
+    """Create a Track A analysis through the versioned public contract."""
+    request_id = _public_request_id()
+    mentor_mode = (request.form.get("mentor_mode") or "balanced").strip().lower()
+    if mentor_mode not in {"balanced", "balanced mentor"}:
+        return _public_error("invalid_mentor_mode", "Balanced Mentor is the only public critique mode.", 400, request_id)
+
+    upload = request.files.get("image")
+    valid, value, message, status = _validate_public_upload(upload)
+    if not valid:
+        return _public_error(value, message, status, request_id)
+    safe_name = value
+
+    suffix = Path(safe_name).suffix.lower()
+    temp_path = None
+    try:
+        upload_dir = current_app.config.get("PUBLIC_UPLOAD_TEMP_DIR")
+        with tempfile.NamedTemporaryFile(suffix=suffix, dir=upload_dir, delete=False) as temp_file:
+            temp_path = temp_file.name
+            upload.save(temp_file)
+
+        from framed.public_api import build_public_analysis_dto, run_public_analysis
+
+        runner = current_app.config.get("PUBLIC_ANALYSIS_RUNNER") or run_public_analysis
+        internal, duration_ms = runner(temp_path, safe_name)
+        analysis_id = f"ana-{uuid.uuid4().hex}"
+        payload = build_public_analysis_dto(
+            internal,
+            request_id=request_id,
+            analysis_id=analysis_id,
+            duration_ms=duration_ms,
+        )
+        if not payload["critique"]:
+            raise PublicAnalysisUnavailable("critique_unavailable")
+        current_app.extensions["framed_public_store"].record_analysis(analysis_id)
+        return jsonify(payload), 201
+    except PublicAnalysisUnavailable:
+        current_app.logger.warning("Public analysis unavailable request_id=%s", request_id)
+        return _public_error(
+            "analysis_unavailable",
+            "The critique service could not complete this analysis.",
+            503,
+            request_id,
+        )
+    except PublicPersistenceUnavailable:
+        current_app.logger.exception("Public persistence unavailable request_id=%s", request_id)
+        return _public_error(
+            "persistence_unavailable",
+            "The analysis could not be recorded. Please try again.",
+            503,
+            request_id,
+        )
+    except Exception:
+        current_app.logger.exception("Public analysis failed request_id=%s", request_id)
+        return _public_error("internal_error", "The analysis could not be completed.", 500, request_id)
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                current_app.logger.warning("Could not remove temporary public upload request_id=%s", request_id)
+
+
+@main.post("/api/v1/feedback")
+def create_public_feedback():
+    """Attach public feedback to a process-local analysis identifier."""
+    request_id = _public_request_id()
+    if not request.is_json:
+        return _public_error("unsupported_media_type", "Feedback must be JSON.", 415, request_id)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _public_error("invalid_json", "Feedback must be a JSON object.", 400, request_id)
+
+    analysis_id = payload.get("analysis_id")
+    useful = payload.get("useful")
+    comment = payload.get("comment", "")
+    if not isinstance(analysis_id, str) or not re.fullmatch(r"ana-[0-9a-f]{32}", analysis_id.strip()) or not isinstance(useful, bool):
+        return _public_error("invalid_feedback", "analysis_id and a boolean useful value are required.", 400, request_id)
+    analysis_id = analysis_id.strip()
+    if not isinstance(comment, str) or len(comment) > 2000:
+        return _public_error("invalid_feedback", "comment must be text no longer than 2000 characters.", 400, request_id)
+
+    store = current_app.extensions["framed_public_store"]
+    try:
+        if not store.has_analysis(analysis_id):
+            return _public_error("analysis_not_found", "The analysis_id was not found.", 404, request_id)
+        store.record_feedback(
+            {
+                "analysis_id": analysis_id,
+                "useful": useful,
+                "comment": comment.strip(),
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    except PublicPersistenceUnavailable:
+        current_app.logger.exception("Public persistence unavailable request_id=%s", request_id)
+        return _public_error(
+            "persistence_unavailable",
+            "Feedback could not be recorded. Please try again.",
+            503,
+            request_id,
+        )
+    return jsonify(
+        {
+            "request_id": request_id,
+            "analysis_id": analysis_id,
+            "status": "recorded",
+            "meta": {"contract_version": "1"},
+        }
+    ), 201
 
 @main.post("/analyze")
 def analyze():
+    from framed.analysis.stage_timing import log_stage_done
+    from framed.analysis.vision import generate_merged_critique
+
     current_app.logger.info(f"FILES: {list(request.files.keys())}")
     current_app.logger.info(f"FORM: {dict(request.form)}")
     
@@ -549,6 +745,8 @@ def analyze():
 
 @main.post("/reset")
 def reset():
+    from framed.analysis.vision import save_echo_memory
+
     save_echo_memory([])
     return jsonify({"ok": True, "message": "History cleared"})
 
@@ -576,6 +774,8 @@ def feedback_route():
 
 @main.post("/ask-echo")
 def ask_echo_route():
+    from framed.analysis.vision import ask_echo, client, load_echo_memory
+
     try:
         payload = request.get_json(force=True) or {}
         question = payload.get("question","").strip()

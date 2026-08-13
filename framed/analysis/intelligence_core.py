@@ -49,6 +49,8 @@ def framed_intelligence(
     temporal_memory: Optional[Dict[str, Any]] = None,
     user_history: Optional[Dict[str, Any]] = None,
     pattern_signature: Optional[str] = None,
+    *,
+    public_safe: bool = False,
     cognition_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
@@ -85,11 +87,12 @@ def framed_intelligence(
 
         # === HITL calibration (load before plausibility for ambiguity/multi-hyp bias) ===
         hitl_calibration = {}
-        try:
-            from framed.feedback.calibration import get_hitl_calibration
-            hitl_calibration = get_hitl_calibration(pattern_signature)
-        except Exception:
-            pass
+        if not public_safe:
+            try:
+                from framed.feedback.calibration import get_hitl_calibration
+                hitl_calibration = get_hitl_calibration(pattern_signature)
+            except Exception:
+                pass
 
         # === PLAUSIBILITY GATE ===
         plausibility = compute_plausibility(
@@ -144,7 +147,7 @@ def framed_intelligence(
         # === CONFIDENCE GOVERNOR (Option 2: self-assessment bias) ===
         raw_conf = recognition.get("confidence", 0.5)
         multi_present = recognition.get("multiple_hypotheses_present", False)
-        governor_bias = get_governor_bias(signature=pattern_signature)
+        governor_bias = 0.0 if public_safe else get_governor_bias(signature=pattern_signature)
         governed_conf, gov_rationale = apply_confidence_governor(
             raw_conf,
             ambiguity.get("ambiguity_score", 0),
