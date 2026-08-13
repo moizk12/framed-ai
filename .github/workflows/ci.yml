@@ -6,6 +6,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: framed_public
+          POSTGRES_USER: framed
+          POSTGRES_PASSWORD: framed-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U framed -d framed_public"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,5 +35,27 @@ jobs:
         run: bandit -r framed -q || true
       - name: Tests
         run: pytest -q
+      - name: Verify fresh PostgreSQL bootstrap and runtime probes
+        env:
+          DATABASE_URL: postgresql://framed:framed-ci-password@127.0.0.1:5432/framed_public
+          SECRET_KEY: framed-ci-secret-key-at-least-32-characters
+          FRAMED_ENV: production
+          FRAMED_PUBLIC_BETA_ONLY: "true"
+          FRAMED_COGNITION_V1: "false"
+          FRAMED_VERSION: ci
+          FRAMED_BUILD_SHA: ${{ github.sha }}
+        run: |
+          python -m framed.public_migrations
+          python - <<'PY'
+          from framed import create_app
+
+          app = create_app()
+          client = app.test_client()
+          assert client.get("/health").status_code == 200
+          assert client.get("/ready").status_code == 200
+          version = client.get("/version")
+          assert version.status_code == 200
+          assert version.get_json()["api_contract"] == "v1"
+          PY
       - name: Build production container
         run: docker build --build-arg FRAMED_VERSION=ci --build-arg FRAMED_BUILD_SHA=${{ github.sha }} -t framed-public-beta:${{ github.sha }} .
