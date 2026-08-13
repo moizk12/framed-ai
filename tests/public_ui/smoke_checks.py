@@ -20,6 +20,9 @@ with app.test_client() as client:
     require("public promise is present", "A visual-cognition companion for photographers" in home_html)
     require("legacy controls are absent", all(term not in home_html for term in ("AskECHO", "Remix", "trajectory", "cognition_run_purpose", 'action="/reset"')))
     require("balanced mode is fixed", 'name="mentor_mode" value="balanced"' in home_html)
+    require("hero image is independent", "images/hero-photograph.jpg" in home_html)
+    require("example image is independent", "images/example-landscape.jpg" in home_html)
+    require("preview image is not on the public page", "images/preview-photograph.jpg" not in home_html)
     require("upload route is cohesive", client.get("/upload").status_code == 200)
     privacy = client.get("/privacy")
     require("privacy route responds", privacy.status_code == 200 and b"No public continuity" in privacy.data)
@@ -30,4 +33,4 @@ client_source = (ROOT / "static" / "js" / "analysis-client.js").read_text(encodi
 require("versioned analysis endpoint", '"/api/v1/analyses"' in client_source)
 require("versioned feedback endpoint", '"/api/v1/feedback"' in client_source)
 
-print('{"passed":10,"suite":"public-ui-smoke"}')
+print('{"passed":13,"suite":"public-ui-smoke"}')

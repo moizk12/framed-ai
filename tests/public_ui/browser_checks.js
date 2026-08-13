@@ -4,7 +4,7 @@ const path = require("path");
 
 const ROOT = path.resolve(__dirname, "../..");
 const BASE = "http://127.0.0.1:4173";
-const IMAGE = path.join(ROOT, "static/images/example-landscape.jpg");
+const IMAGE = path.join(ROOT, "static/images/preview-photograph.jpg");
 const FIXTURES = path.join(ROOT, "static/fixtures");
 const EVIDENCE = path.join(ROOT, "test-results/public-ui");
 fs.mkdirSync(EVIDENCE, { recursive: true });

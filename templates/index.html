@@ -15,8 +15,9 @@
       <div><dt>03</dt><dd>Visible evidence</dd></div>
     </dl>
   </div>
+  {# RELEASE: replace hero-photograph.jpg independently of the example and preview images. #}
   <figure class="hero-image frame-figure">
-    <img src="{{ url_for('main.static', filename='images/example-landscape.jpg') }}" alt="Green mountain valley under low cloud at sunrise" width="800" height="600">
+    <img src="{{ url_for('main.static', filename='images/hero-photograph.jpg') }}" alt="Green mountain valley under low cloud at sunrise" width="800" height="600">
     <figcaption><span>Study 01</span><span>Light · scale · atmosphere</span></figcaption>
   </figure>
 </section>
@@ -148,6 +149,7 @@
 <section class="example-section" id="example" aria-labelledby="example-title">
   <div class="section-intro"><p class="section-number">02 / Example critique</p><h2 id="example-title">A critique you can inspect,<br>not just accept.</h2></div>
   <div class="example-layout">
+    {# RELEASE: replace example-landscape.jpg independently of the hero and preview images. #}
     <figure class="example-image frame-figure"><img src="{{ url_for('main.static', filename='images/example-landscape.jpg') }}" alt="Green mountain valley under low cloud at sunrise" width="800" height="600"><figcaption><span>Example photograph</span><span>Landscape study</span></figcaption></figure>
     <div class="example-copy">
       <p class="example-label">Critique excerpt</p>
