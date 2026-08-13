@@ -262,3 +262,22 @@ def test_public_safe_pipeline_disables_echo_and_cache_path():
     assert "if not critical_errors and not public_safe:" in source
     assert "if file_hash and not public_safe:" in source
     assert "if not public_safe:" in source
+
+
+@pytest.mark.parametrize("path", ["/analyze", "/feedback", "/reset", "/ask-echo"])
+def test_public_beta_runtime_hides_legacy_and_cognition_routes(path):
+    app = create_app({"TESTING": True, "PUBLIC_BETA_ONLY": True})
+    assert app.test_client().post(path).status_code == 404
+
+
+def test_production_config_fails_closed(monkeypatch):
+    monkeypatch.setenv("FRAMED_COGNITION_V1", "true")
+    with pytest.raises(RuntimeError, match="COGNITION"):
+        create_app(
+            {
+                "FRAMED_ENV": "production",
+                "DATABASE_URL": "postgresql://public.example/framed",
+                "SECRET_KEY": "x" * 32,
+                "PUBLIC_AUTO_MIGRATE": False,
+            }
+        )

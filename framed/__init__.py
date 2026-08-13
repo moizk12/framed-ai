@@ -16,16 +16,23 @@ def create_app(config=None):
         static_folder=None,
     )
     
-    # Basic configuration
-    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+    from framed.public_runtime import runtime_defaults, validate_runtime
+
+    # Public runtime configuration is environment-driven and validated after
+    # callers have had a chance to inject test-only dependencies.
+    app.config.update(runtime_defaults())
     app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL', '')
-    app.config['PUBLIC_AUTO_MIGRATE'] = True
     default_data_dir = os.environ.get("FRAMED_DATA_DIR", os.path.join(tempfile.gettempdir(), "framed"))
     app.config['UPLOAD_FOLDER'] = os.path.join(default_data_dir, "uploads")
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
     
+    public_boundary_explicit = bool(config and "PUBLIC_BETA_ONLY" in config)
     if config:
         app.config.update(config)
+    if app.config.get("TESTING") and not public_boundary_explicit:
+        app.config["PUBLIC_BETA_ONLY"] = False
+
+    validate_runtime(app.config)
     
     CORS(app, resources={r"/*": {"origins": "*"}})
     
@@ -55,5 +62,21 @@ def create_app(config=None):
     def health():
         """Health check endpoint."""
         return {'status': 'healthy', 'service': 'framed'}, 200
+
+    @app.route('/ready')
+    def ready():
+        """Readiness includes the public PostgreSQL authority."""
+        try:
+            app.extensions["framed_public_store"].ready()
+        except Exception:
+            app.logger.warning("Public persistence readiness check failed", exc_info=True)
+            return {'status': 'not_ready', 'service': 'framed'}, 503
+        return {'status': 'ready', 'service': 'framed'}, 200
+
+    @app.route('/version')
+    def version():
+        from framed.public_runtime import safe_version_payload
+
+        return safe_version_payload(app.config), 200
     
     return app

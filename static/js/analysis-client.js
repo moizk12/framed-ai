@@ -46,7 +46,7 @@ function messageForStatus(status, payload) {
   void payload;
   if (status === 400) return new AnalysisError("invalid_image", "This file could not be read as a supported photograph.", { retryable: false, status });
   if (status === 415) return new AnalysisError("invalid_image", "This file is not a supported JPEG, PNG, or WebP photograph.", { retryable: false, status });
-  if (status === 413) return new AnalysisError("oversized", "The photograph is larger than the 16 MB upload limit.", { retryable: false, status });
+  if (status === 413) return new AnalysisError("oversized", "The photograph is larger than the 12 MB upload limit.", { retryable: false, status });
   if (status === 429) return new AnalysisError("rate_limited", "FRAMED is receiving more requests than it can process right now. Please wait a moment and try again.", { status });
   if (status === 504) return new AnalysisError("timeout", "The critique took longer than expected and was stopped. You can safely try again.", { status });
   if (status === 503) return new AnalysisError("unavailable", "The critique service is temporarily unavailable. Your photograph was not successfully analyzed.", { status });

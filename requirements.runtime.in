@@ -1,0 +1,15 @@
+# Production Track A dependencies. Compile with scripts/lock_runtime_dependencies.ps1.
+flask
+flask-cors
+gunicorn
+openai
+Pillow
+torch
+transformers
+ultralytics
+colorthief
+opencv-python-headless
+scikit-learn
+requests
+python-dotenv
+psycopg[binary]

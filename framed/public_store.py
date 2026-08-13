@@ -21,6 +21,8 @@ class PublicRepository(Protocol):
 
     def feedback_for(self, analysis_id: str) -> list[dict]: ...
 
+    def ready(self) -> None: ...
+
 
 class PublicPersistenceUnavailable(RuntimeError):
     """The public persistence authority could not complete an operation."""
@@ -56,6 +58,12 @@ class PublicBetaStore:
         except Exception as exc:
             raise PublicPersistenceUnavailable("feedback_lookup_failed") from exc
 
+    def ready(self) -> None:
+        try:
+            self._repository.ready()
+        except Exception as exc:
+            raise PublicPersistenceUnavailable("readiness_failed") from exc
+
 
 class MemoryPublicRepository:
     """Isolated test repository; inject one instance across app recreations."""
@@ -81,6 +89,9 @@ class MemoryPublicRepository:
         with self._lock:
             return [deepcopy(item) for item in self._feedback if item["analysis_id"] == analysis_id]
 
+    def ready(self) -> None:
+        return None
+
 
 class PostgresPublicRepository:
     """Small psycopg repository for durable Track A state."""
@@ -102,6 +113,7 @@ class PostgresPublicRepository:
         migrations_dir = Path(__file__).with_name("public_migrations")
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtext('framed_public_migrations'))")
                 cursor.execute(
                     """
                     CREATE TABLE IF NOT EXISTS public_schema_migrations (
@@ -122,6 +134,13 @@ class PostgresPublicRepository:
                         "INSERT INTO public_schema_migrations (version) VALUES (%s) ON CONFLICT DO NOTHING",
                         (migration.name,),
                     )
+
+    def ready(self) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                if cursor.fetchone() != (1,):
+                    raise RuntimeError("public PostgreSQL readiness query failed")
 
     def record_analysis(self, analysis_id: str) -> None:
         with self._connect() as connection:

@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, current_app
+from flask import Blueprint, abort, render_template, request, jsonify, current_app
 import copy
 import os
 import re
@@ -19,6 +19,21 @@ PUBLIC_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 PUBLIC_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
 PUBLIC_EXTENSION_FORMATS = {"jpg": "JPEG", "jpeg": "JPEG", "png": "PNG", "webp": "WEBP"}
 PUBLIC_MAX_PIXELS = 40_000_000
+
+
+def _open_public_image(stream):
+    """Use Pillow's decoder even if an ML dependency monkey-patched Image.open."""
+    image_open = Image.open
+    if getattr(image_open, "__module__", "") == "ultralytics.utils.patches":
+        image_open = getattr(image_open, "__globals__", {}).get("_image_open", image_open)
+    return image_open(stream)
+
+
+def run_full_analysis(*args, **kwargs):
+    """Lazy legacy/research hook retained without loading ML at app startup."""
+    from framed.analysis.vision import run_full_analysis as analysis_runner
+
+    return analysis_runner(*args, **kwargs)
 
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -308,6 +323,24 @@ main = Blueprint(
     static_url_path="/static",
 )
 
+
+@main.before_request
+def enforce_public_beta_route_boundary():
+    """Hide every legacy/research-capable route in the public runtime."""
+    if not current_app.config.get("PUBLIC_BETA_ONLY", True):
+        return None
+    allowed = {
+        "main.index",
+        "main.upload",
+        "main.privacy",
+        "main.static",
+        "main.create_public_analysis",
+        "main.create_public_feedback",
+    }
+    if request.endpoint not in allowed:
+        abort(404)
+    return None
+
 @main.route("/")
 def index():
     return render_template("index.html")
@@ -348,9 +381,10 @@ def _validate_public_upload(upload) -> tuple[bool, str, str, int]:
         return False, "unsupported_media_type", "Use a JPEG, PNG, or WebP photograph.", 415
     try:
         upload.stream.seek(0)
-        with Image.open(upload.stream) as image:
+        with _open_public_image(upload.stream) as image:
             width, height = image.size
-            if width <= 0 or height <= 0 or width * height > PUBLIC_MAX_PIXELS:
+            max_pixels = current_app.config.get("PUBLIC_MAX_IMAGE_PIXELS", PUBLIC_MAX_PIXELS)
+            if width <= 0 or height <= 0 or width * height > max_pixels:
                 return False, "invalid_image", "This photograph has invalid or unsupported dimensions.", 400
             image.verify()
             detected_format = image.format
@@ -477,7 +511,7 @@ def create_public_feedback():
 @main.post("/analyze")
 def analyze():
     from framed.analysis.stage_timing import log_stage_done
-    from framed.analysis.vision import generate_merged_critique, run_full_analysis
+    from framed.analysis.vision import generate_merged_critique
 
     current_app.logger.info(f"FILES: {list(request.files.keys())}")
     current_app.logger.info(f"FORM: {dict(request.form)}")

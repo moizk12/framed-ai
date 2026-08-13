@@ -2,7 +2,7 @@ import { AnalysisError, requestAnalysis } from "./analysis-client.js";
 import { renderResult } from "./result-renderer.js";
 import { setupFeedback } from "./feedback.js";
 
-const MAX_BYTES = 16 * 1024 * 1024;
+const MAX_BYTES = 12 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const app = document.querySelector("[data-analysis-app]");
 
@@ -50,7 +50,7 @@ if (app) {
   const validateFile = (candidate) => {
     if (!candidate) return "Choose a photograph before requesting a critique.";
     if (!ALLOWED_TYPES.has(candidate.type)) return "Use a JPEG, PNG, or WebP photograph.";
-    if (candidate.size > MAX_BYTES) return "This photograph is larger than 16 MB. Export a smaller copy and try again.";
+    if (candidate.size > MAX_BYTES) return "This photograph is larger than 12 MB. Export a smaller copy and try again.";
     return "";
   };
 
@@ -97,7 +97,7 @@ if (app) {
     showOnly(errorState);
     const messages = {
       invalid_image: ["This file is not a usable photograph.", "Choose a JPEG, PNG, or WebP image and try again."],
-      oversized: ["This photograph is too large.", "Export a copy under 16 MB, then choose it here."],
+      oversized: ["This photograph is too large.", "Export a copy under 12 MB, then choose it here."],
       rate_limited: ["FRAMED is at capacity.", error.message], unavailable: ["The critique service is unavailable.", error.message],
       timeout: ["The critique took too long.", error.message], aborted: ["Analysis cancelled.", "Your photograph remains selected. Restart whenever you are ready."],
       network_error: ["FRAMED could not be reached.", error.message], malformed_response: ["The response was incomplete.", error.message],
