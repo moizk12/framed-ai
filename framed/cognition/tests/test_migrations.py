@@ -104,8 +104,11 @@ def test_fresh_install_upgrade_and_retrieval(migration_env):
 
     with ledger._connect() as conn:
         version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        assert version == 3
+        assert version == 4
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "update_proposals" in tables
+        assert "promotion_decisions" in tables
 
     ws, actor = str(uuid.uuid4()), str(uuid.uuid4())
     baseline_id, _ = ledger.ensure_demo_states(ws)
@@ -180,7 +183,7 @@ def test_upgrade_from_001_is_fail_closed_and_preserves_history(migration_env):
 
     with ledger._connect() as conn:
         version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        assert version == 3
+        assert version == 4
         upgraded_live = conn.execute(
             "SELECT run_purpose, retrieval_eligible FROM cognitive_runs WHERE run_id='run-live'"
         ).fetchone()
@@ -224,7 +227,7 @@ def test_reopen_upgraded_database_does_not_reapply_migration(migration_env):
 
     with reopened._connect() as conn:
         versions = conn.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
-        assert [row["version"] for row in versions] == [1, 2, 3]
+        assert [row["version"] for row in versions] == [1, 2, 3, 4]
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 """

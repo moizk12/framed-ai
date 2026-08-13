@@ -6,6 +6,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from framed.cognition.constants import MAX_MEMORY_REFS
+from framed.cognition.contracts.learning import promoted_episode_ids_from_snapshot
 from framed.cognition.contracts.memory import MemoryReference, RetrievalQuery, RetrievalResult, ScoreComponents
 from framed.cognition.contracts.runs import RETRIEVAL_ELIGIBLE_PURPOSES, SameAssetPolicy
 from framed.cognition.ledger.sqlite_store import CognitionLedger, get_ledger
@@ -136,6 +137,19 @@ def retrieve_memories(
         if not _row_val(row, "source_run_id"):
             _reject(result.rejected, row, "incomplete_source_provenance", missing_source_run_id=True)
             continue
+        promoted_ids = set(promoted_episode_ids_from_snapshot(state_snapshot))
+        if row["episode_id"] in promoted_ids:
+            epistemic_status = "accepted"
+            trust_level = "medium"
+            memory_role = "promoted_belief"
+        else:
+            epistemic_status = "provisional"
+            trust_level = "low"
+            memory_role = "prior_experience"
+        allowed_epistemic = (state_snapshot or {}).get("allowed_epistemic_states")
+        if allowed_epistemic and epistemic_status not in allowed_epistemic:
+            _reject(result.rejected, row, "epistemic_status_not_allowed", epistemic_status=epistemic_status)
+            continue
         deterministic_memory_ref_id = _deterministic_memory_ref_id(
             query=query,
             source_episode_id=row["episode_id"],
@@ -149,10 +163,10 @@ def retrieve_memories(
             source_event_id=event_id,
             source_asset_id=_row_val(row, "asset_id"),
             source_run_purpose=_row_val(row, "run_purpose", "live"),
-            epistemic_status="provisional",
+            epistemic_status=epistemic_status,
             lifecycle_status="closed",
-            memory_role="prior_experience",
-            trust_level="low",
+            memory_role=memory_role,
+            trust_level=trust_level,
             artefact_hash=source_artefact_hash,
             scene_signature=row["scene_signature"] or "",
             category_signature=row["category_signature"] or "",

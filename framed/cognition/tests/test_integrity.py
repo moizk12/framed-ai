@@ -71,10 +71,13 @@ def test_migration_003_applies(integrity_env):
     ledger, tmp_path = integrity_env
     with ledger._connect() as conn:
         version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        assert version == 3
+        assert version == 4
         cols = {row[1] for row in conn.execute("PRAGMA table_info(cognitive_runs)").fetchall()}
         assert "provenance_manifest_json" in cols
         assert "failure_code" in cols
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "update_proposals" in tables
+        assert "outcomes" in tables
 
 
 def test_append_event_concurrency(integrity_env):

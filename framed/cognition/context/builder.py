@@ -48,7 +48,10 @@ def build_deliberation_context(
     ctx.prior_confidence = baseline_confidence
     ctx.confidence_delta_cap = 0.0
     ctx.requested_evidence = ["verify_scene_consistency", "check_prior_failure_mode"]
-    ctx.strategy_hint = "consider_prior_provisional_experience"
+    if any(r.epistemic_status == "accepted" for r in references):
+        ctx.strategy_hint = "consider_promoted_belief"
+    else:
+        ctx.strategy_hint = "consider_prior_provisional_experience"
     from framed.cognition.context.formatting import build_cognition_context
 
     cog = build_cognition_context(references)
