@@ -747,6 +747,15 @@ def analyze_image(
                         internal_exception_type=type(exc).__name__,
                     )
                     result.setdefault("cognition_provenance", {}).update(fail_info)
+                elif cognition_enabled():
+                    result.setdefault("cognition_provenance", {}).update(
+                        {
+                            "status": "failed",
+                            "error_code": "cognition_pipeline_failed",
+                            "stage": "begin_cognition_run",
+                            "run_id": None,
+                        }
+                    )
                 result["intelligence"] = {}
         else:
             result["intelligence"] = {}

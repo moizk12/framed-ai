@@ -24,8 +24,7 @@ from framed.cognition.contracts.runs import (
     RunPurpose,
     SameAssetPolicy,
     is_retrieval_eligible,
-    purpose_from_mode,
-    validate_mode_purpose,
+    resolve_mode_purpose,
 )
 from framed.cognition.contracts.snapshot import (
     DeliberationSnapshot,
@@ -168,7 +167,7 @@ def begin_cognition_run(
     asset_filename: Optional[str],
     goal_type: str = "critique",
     goal_instance_id: Optional[str] = None,
-    run_mode: RunMode = RunMode.MEMORY_ENABLED,
+    run_mode: Optional[RunMode] = None,
     run_purpose: Optional[RunPurpose] = None,
     state_label: Optional[str] = None,
     baseline_run_id: Optional[str] = None,
@@ -192,14 +191,7 @@ def begin_cognition_run(
         state_version_id = state["state_version_id"]
     state = ledger.get_active_state(workspace_id)
     snap = state["snapshot"]
-    purpose = run_purpose or purpose_from_mode(run_mode)
-    if run_mode == RunMode.BASELINE and run_purpose is None:
-        purpose = RunPurpose.BASELINE
-    elif run_mode == RunMode.CONTROL and run_purpose is None:
-        purpose = RunPurpose.CONTROL
-    elif run_mode == RunMode.REPLAY and run_purpose is None:
-        purpose = RunPurpose.REPLAY
-    validate_mode_purpose(run_mode, purpose)
+    run_mode, purpose = resolve_mode_purpose(run_mode, run_purpose)
     retrieval_enabled = (
         bool(snap.get("retrieval_enabled", True))
         and purpose not in (RunPurpose.BASELINE, RunPurpose.CONTROL, RunPurpose.REPLAY)
@@ -558,6 +550,7 @@ def finalize_cognition_run(
             "deliberation_event_id": event_id,
             "deltas": deltas,
             "cognition_context_used": bool(session.cognition_context),
+            "run_mode": session.run_mode.value,
             "run_purpose": session.run_purpose.value,
             "baseline_run_id": session.baseline_run_id,
             "rejected_candidates": session.rejected_candidates,

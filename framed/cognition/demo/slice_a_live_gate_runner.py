@@ -13,6 +13,39 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from framed.cognition.demo.server_process import ManagedServer, flask_env
+
+GATE_ROOT = Path(
+    os.environ.get(
+        "FRAMED_LIVE_GATE_ROOT",
+        "C:/Users/moizk/OneDrive/Pictures/framed-clean.tmp/slice_a_live_gate",
+    )
+)
+COGNITION_DIR = GATE_ROOT / "cognition_data"
+ARCHIVE_ROOT = Path(
+    os.environ.get(
+        "FRAMED_LIVE_GATE_ARCHIVE",
+        "C:/Users/moizk/Music/FRAMED_AGI_Research_Starter/FRAMED_AGI_Research_Starter/local_lab/archdaemon/status/slice_a",
+    )
+)
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MUTATION_KINDS = (
+    "deliberation_hash",
+    "expected_snapshot_hash",
+    "memory_ref",
+    "e1_hypothesis",
+    "frozen_hypothesis",
+    "raw_confidence",
+    "baseline_confidence",
+    "changed_memory_reference",
+    "state_cutoff",
+    "removed_source_event",
+    "perception_snapshot",
+    "context_fingerprint",
+    "expected_delta_hash",
+    "policy_version",
+)
+
 GATE_ROOT = Path(
     os.environ.get(
         "FRAMED_LIVE_GATE_ROOT",
@@ -108,6 +141,7 @@ def _record_from_response(tag: str, resp: Dict[str, Any]) -> Dict[str, Any]:
         "form_data": resp.get("form_data"),
         "episode_id": prov.get("episode_id"),
         "run_id": prov.get("run_id"),
+        "run_mode": prov.get("run_mode"),
         "run_purpose": prov.get("run_purpose"),
         "baseline_run_id": prov.get("baseline_run_id"),
         "state_version_id": prov.get("state_version_id"),
@@ -144,6 +178,45 @@ def _ledger_export(run_id: Optional[str]) -> Dict[str, Any]:
     return {"bundle": bundle, "memory_references": refs}
 
 
+def _should_start_server() -> bool:
+    return os.environ.get("FRAMED_LIVE_GATE_START_SERVER", "true").lower() in ("1", "true", "yes")
+
+
+def _make_server(log_path: Path) -> ManagedServer:
+    env = flask_env()
+    env["FRAMED_COGNITION_V1"] = "true"
+    env["FRAMED_COGNITION_DIR"] = str(COGNITION_DIR)
+    return ManagedServer(
+        command=[sys.executable, str(REPO_ROOT / "run.py")],
+        cwd=REPO_ROOT,
+        env=env,
+        url=BASE_URL,
+        log_path=log_path,
+        health_path="/upload",
+    )
+
+
+def _episode_status(episode_id: Optional[str]) -> Optional[str]:
+    if not episode_id:
+        return None
+    with _ledger()._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM episodes WHERE episode_id=?", (episode_id,)
+        ).fetchone()
+    return None if row is None else row["status"]
+
+
+def _run_row(run_id: Optional[str]) -> Dict[str, Any]:
+    if not run_id:
+        return {}
+    with _ledger()._connect() as conn:
+        row = conn.execute(
+            "SELECT run_id, mode, run_purpose, retrieval_eligible, completed_at FROM cognitive_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    return dict(row) if row else {}
+
+
 def _save(name: str, obj: Any) -> Path:
     ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
     path = ARCHIVE_ROOT / name
@@ -173,6 +246,20 @@ def _browser_click_smoke() -> Dict[str, Any]:
             if not IMAGES["e1"].exists():
                 browser.close()
                 return {"skipped": True, "reason": "e1 image missing for browser smoke"}
+            page.evaluate(
+                """() => {
+                  const form = document.getElementById("upload-form");
+                  if (!form) return;
+                  let input = form.querySelector('input[name="cognition_run_purpose"]');
+                  if (!input) {
+                    input = document.createElement("input");
+                    input.type = "hidden";
+                    input.name = "cognition_run_purpose";
+                    form.appendChild(input);
+                  }
+                  input.value = "diagnostic";
+                }"""
+            )
             page.set_input_files('input[type="file"]', str(IMAGES["e1"]))
             page.click('button:has-text("Analyze"), input[type="submit"][value*="Analyze"], #analyze-btn')
             page.wait_for_timeout(5000)
@@ -196,7 +283,26 @@ def run_live_gate() -> Dict[str, Any]:
         "phases": {},
         "checks": {},
     }
+    server: Optional[ManagedServer] = None
+    manage_server = _should_start_server()
+    try:
+        if manage_server:
+            log_path = ARCHIVE_ROOT / "server" / "flask.log"
+            server = _make_server(log_path)
+            server.start(timeout=180.0)
+            report["phases"]["server_start"] = {
+                "pid": server.pid,
+                "cognition_dir": str(COGNITION_DIR),
+                "log_path": str(log_path),
+            }
 
+        return _run_live_gate_body(report, server)
+    finally:
+        if server is not None:
+            server.stop()
+
+
+def _run_live_gate_body(report: Dict[str, Any], server: Optional[ManagedServer]) -> Dict[str, Any]:
     active = _activate("state_memory_enabled")
     from framed.cognition.identity import get_identity
 
@@ -255,19 +361,36 @@ def run_live_gate() -> Dict[str, Any]:
     rb["active_state_after"] = _ledger().get_active_state(ident["workspace_id"]).get("label")
     report["phases"]["rollback"] = rb
 
-    # Restart durability: release singleton and reopen the same cognition dir from disk.
+    # Restart durability: stop Flask, checkpoint, start a new process, same cognition dir.
+    from framed.cognition.demo.server_process import wait_for_http_gone
     from framed.cognition.ledger.sqlite_store import release_ledger_store, reset_ledger
 
     db_path = COGNITION_DIR / "cognition_ledger.sqlite3"
-    release_ledger_store(db_path)
+    old_pid = server.pid if server is not None else None
+    new_pid = None
+    if server is not None:
+        health_url = server.health_url
+        server.stop()
+        wait_for_http_gone(health_url, timeout=20.0)
+        release_ledger_store(db_path)
+        new_pid = server.start(timeout=180.0)
+        if old_pid == new_pid:
+            raise RuntimeError(f"Flask restart reused PID {old_pid}")
+    else:
+        release_ledger_store(db_path)
     reopened = reset_ledger(db_path)
     post_restart_state = reopened.get_active_state(ident["workspace_id"])
     rb_after_restart = _post_analyze(IMAGES["e2"], cognition_run_purpose="baseline")
     rb_after = _record_from_response("rollback_after_restart", rb_after_restart)
     report["phases"]["restart_durability"] = {
+        "old_pid": old_pid,
+        "new_pid": new_pid,
+        "pid_changed": bool(old_pid and new_pid and old_pid != new_pid),
+        "cognition_dir": str(COGNITION_DIR),
         "active_state_label": post_restart_state.get("label"),
         "snapshot_retrieval_enabled": post_restart_state.get("snapshot", {}).get("retrieval_enabled"),
         "post_restart_baseline_refs": len(rb_after.get("memory_reference_ids") or []),
+        "post_restart_run_id": rb_after.get("run_id"),
     }
 
     _activate("state_memory_enabled")
@@ -286,14 +409,7 @@ def run_live_gate() -> Dict[str, Any]:
     bundle_path.write_text(json.dumps(bundle, indent=2, default=str), encoding="utf-8")
     replay_report = execute_replay(bundle_path)
     mutation_results = {}
-    for kind in (
-        "deliberation_hash",
-        "frozen_hypothesis",
-        "raw_confidence",
-        "expected_delta_hash",
-        "context_fingerprint",
-        "policy_version",
-    ):
+    for kind in MUTATION_KINDS:
         mutation_results[kind] = execute_replay(bundle_path, mutate=kind).get("status")
     report["phases"]["replay"] = {
         "bundle_path": str(bundle_path),
@@ -320,29 +436,58 @@ def run_live_gate() -> Dict[str, Any]:
             "SELECT COUNT(*) AS c FROM episodes WHERE status='open'"
         ).fetchone()["c"]
 
+    e1_run = _run_row(e1.get("run_id"))
+    e2b_run_row = _run_row(e2b.get("run_id"))
+    e2m_run_row = _run_row(e2m.get("run_id"))
+    ctrl_run_row = _run_row(ctrl.get("run_id"))
+    rb_run_row = _run_row(rb.get("run_id"))
+    rb_after_run_row = _run_row(rb_after.get("run_id"))
+    restart = report["phases"]["restart_durability"]
+    e1_artefacts = bool(((e1.get("ledger") or {}).get("bundle") or {}).get("artefact_manifest"))
+
     checks = {
+        "e1_http_success": e1.get("status_code") == 200,
         "e1_stored": bool(e1_id),
-        "e1_closed": bool(e1_id),
+        "e1_fresh_run": bool(e1.get("run_id")),
+        "e1_purpose_live": e1.get("run_purpose") == "live" or e1_run.get("run_purpose") == "live",
+        "e1_closed": _episode_status(e1_id) == "closed",
+        "e1_retrieval_eligible": bool(e1_run.get("retrieval_eligible")),
+        "e1_artefacts_recorded": e1_artefacts,
+        "e2_baseline_http_success": e2b.get("status_code") == 200,
+        "e2_baseline_has_run": bool(e2b.get("run_id")),
         "e2_baseline_fresh_run": e2b.get("run_id") and e2b.get("run_id") != e1.get("run_id"),
+        "e2_baseline_mode": (e2b.get("run_mode") or e2b_run_row.get("mode")) == "baseline",
+        "e2_baseline_purpose": (e2b.get("run_purpose") or e2b_run_row.get("run_purpose")) == "baseline",
         "e2_baseline_zero_refs": len(e2b.get("memory_reference_ids") or []) == 0,
         "e2_baseline_not_indexed": e2b_id not in source_eps,
+        "e2_baseline_ineligible": not bool(e2b_run_row.get("retrieval_eligible")),
         "e2_memory_fresh_run": e2m.get("run_id") and e2m.get("run_id") != e2b.get("run_id"),
+        "e2_memory_mode": (e2m.get("run_mode") or e2m_run_row.get("mode")) == "memory_enabled",
         "e2_memory_retrieved_e1_only": source_eps == {e1_id} and len(mem_refs) >= 1,
         "e2_baseline_rejected": bool(baseline_rejects),
         "e2_baseline_rejected_same_asset": any(r.get("same_asset") for r in baseline_rejects),
         "e2_baseline_rejected_purpose": any(r.get("ineligible_run_purpose") == "baseline" for r in baseline_rejects),
         "cognition_context_used": bool(e2m.get("cognition_context_used")),
         "meaningful_delta": len(e2m.get("deltas") or []) >= 1,
+        "control_has_run": bool(ctrl.get("run_id")),
+        "control_mode": (ctrl.get("run_mode") or ctrl_run_row.get("mode")) == "control",
+        "control_purpose": (ctrl.get("run_purpose") or ctrl_run_row.get("run_purpose")) == "control",
         "control_no_e1": e1_id not in {
             r.get("source_episode_id") for r in (ctrl.get("ledger", {}).get("memory_references") or [])
         },
+        "control_ineligible": not bool(ctrl_run_row.get("retrieval_eligible")),
+        "rollback_has_run": bool(rb.get("run_id")),
         "rollback_zero_refs": len(rb.get("memory_reference_ids") or []) == 0,
         "rollback_state_durable": post_restart_state.get("label") == "state_baseline",
+        "restart_pid_changed": bool(restart.get("pid_changed")),
+        "restart_same_cognition_dir": restart.get("cognition_dir") == str(COGNITION_DIR),
+        "restart_baseline_has_run": bool(rb_after.get("run_id") or rb_after_run_row.get("run_id")),
         "restart_baseline_zero_refs": len(rb_after.get("memory_reference_ids") or []) == 0,
         "feedback_js_200": ui.get("feedback_js_status") == 200,
         "browser_post_analyze": browser.get("post_analyze_seen") is True
         or (browser.get("skipped") and not playwright_available),
         "fresco_not_ui": (fresco.get("scene_gate") or {}).get("scene_type") != "screenshot_ui",
+        "required_runs_present": all(bool(x.get("run_id")) for x in (e1, e2b, e2m, ctrl, rb, rb_after)),
         "all_post_analyze": all(
             x.get("status_code") == 200
             for x in (e1_resp, e2b_resp, e2m_resp, ctrl_resp, rb_resp, fresco_resp, rb_after_restart)
@@ -359,8 +504,14 @@ def run_live_gate() -> Dict[str, Any]:
             if mem_check
             else False
         ),
-        "replay_mutations_fail": all(v == "FAIL" for v in mutation_results.values()) and bool(mutation_results),
+        "replay_mutations_fail": all(v == "FAIL" for v in mutation_results.values())
+        and len(mutation_results) == len(MUTATION_KINDS),
         "no_open_episodes": open_episode_count == 0,
+        "terminal_runs": all(
+            bool(row.get("completed_at"))
+            for row in (e1_run, e2b_run_row, e2m_run_row, ctrl_run_row, rb_run_row)
+            if row
+        ),
     }
     report["checks"] = checks
     report["verdict"] = "PASS" if all(checks.values()) else "FAIL"

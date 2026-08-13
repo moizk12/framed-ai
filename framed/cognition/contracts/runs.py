@@ -52,6 +52,36 @@ def purpose_from_mode(mode: RunMode, *, explicit: Optional[RunPurpose] = None) -
     return mapping.get(mode, RunPurpose.LIVE)
 
 
+def mode_from_purpose(purpose: RunPurpose) -> RunMode:
+    mapping = {
+        RunPurpose.BASELINE: RunMode.BASELINE,
+        RunPurpose.CONTROL: RunMode.CONTROL,
+        RunPurpose.REPLAY: RunMode.REPLAY,
+        RunPurpose.LIVE: RunMode.MEMORY_ENABLED,
+        RunPurpose.MEMORY_ENABLED: RunMode.MEMORY_ENABLED,
+        RunPurpose.DEMO_SEED: RunMode.MEMORY_ENABLED,
+        RunPurpose.DIAGNOSTIC: RunMode.MEMORY_ENABLED,
+    }
+    inferred = mapping.get(purpose)
+    if inferred is None:
+        raise ValueError(f"Cannot infer RunMode from RunPurpose {purpose.value!r}")
+    return inferred
+
+
+def resolve_mode_purpose(
+    run_mode: Optional[RunMode],
+    run_purpose: Optional[RunPurpose],
+) -> tuple[RunMode, RunPurpose]:
+    """Infer omitted mode from explicit purpose; keep explicit incompatible pairs invalid."""
+    if run_mode is None and run_purpose is not None:
+        run_mode = mode_from_purpose(run_purpose)
+    elif run_mode is None:
+        run_mode = RunMode.MEMORY_ENABLED
+    purpose = purpose_from_mode(run_mode, explicit=run_purpose)
+    validate_mode_purpose(run_mode, purpose)
+    return run_mode, purpose
+
+
 VALID_MODE_PURPOSE_PAIRS = frozenset(
     {
         (RunMode.BASELINE, RunPurpose.BASELINE),
