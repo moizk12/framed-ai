@@ -368,10 +368,15 @@ def predict_nima_score(model, img_path):
         return {"mean_score": None, "distribution": {}}
     
 
-def run_full_analysis(image_path, photo_id: str = "", filename: str = ""):
+def run_full_analysis(image_path, photo_id: str = "", filename: str = "", *, public_safe: bool = False):
     from .pipeline import run_full_analysis as _run_full_analysis
 
-    return _run_full_analysis(image_path, photo_id=photo_id, filename=filename)
+    return _run_full_analysis(
+        image_path,
+        photo_id=photo_id,
+        filename=filename,
+        public_safe=public_safe,
+    )
 
 
 def analyze_lines_and_symmetry(image_path):

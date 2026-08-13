@@ -37,17 +37,33 @@ from .perception import (
 logger = logging.getLogger(__name__)
 
 
-def run_full_analysis(image_path: str, photo_id: str = "", filename: str = "") -> Dict[str, Any]:
-    """Run the full pipeline and update ECHO memory on success."""
+def run_full_analysis(
+    image_path: str,
+    photo_id: str = "",
+    filename: str = "",
+    *,
+    public_safe: bool = False,
+) -> Dict[str, Any]:
+    """Run the full pipeline.
+
+    ``public_safe`` keeps the public beta on the existing analysis core while
+    disabling research memory, learning, and cache persistence.
+    """
     ensure_directories()
     try:
-        analysis_result = analyze_image(image_path, photo_id=photo_id, filename=filename)
+        analysis_result = analyze_image(
+            image_path,
+            photo_id=photo_id,
+            filename=filename,
+            disable_cache=public_safe,
+            public_safe=public_safe,
+        )
         if not validate_schema(analysis_result):
             analysis_result.setdefault("errors", {})["schema_validation"] = "Result does not conform to canonical schema"
         critical_errors = (analysis_result.get("errors", {}) or {}).get("critical") or (analysis_result.get("errors", {}) or {}).get(
             "image_load"
         )
-        if not critical_errors:
+        if not critical_errors and not public_safe:
             update_echo_memory(analysis_result)
         return analysis_result
     except Exception as e:
@@ -57,7 +73,14 @@ def run_full_analysis(image_path: str, photo_id: str = "", filename: str = "") -
         return result
 
 
-def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cache: bool = False) -> Dict[str, Any]:
+def analyze_image(
+    path: str,
+    photo_id: str = "",
+    filename: str = "",
+    disable_cache: bool = False,
+    *,
+    public_safe: bool = False,
+) -> Dict[str, Any]:
     ensure_directories()
     logger.info("Analyzing image: %s", path)
     t_request = time.perf_counter()
@@ -539,7 +562,7 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
             logger.warning("Scene gate failed (non-fatal): %s", e)
 
         USE_INTELLIGENCE_CORE = os.getenv("FRAMED_USE_INTELLIGENCE_CORE", "true").lower() == "true"
-        if not USE_INTELLIGENCE_CORE:
+        if not USE_INTELLIGENCE_CORE and not public_safe:
             try:
                 from .interpret_scene import interpret_scene
                 from .interpretive_memory import create_pattern_signature, query_memory_patterns, store_interpretation
@@ -612,21 +635,25 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
             try:
                 t_stage = time.perf_counter()
                 from .intelligence_core import framed_intelligence
-                from .temporal_memory import (
-                    create_pattern_signature as create_temporal_signature,
-                    format_temporal_memory_for_intelligence,
-                    store_interpretation as store_temporal_interpretation,
-                    track_user_trajectory,
-                )
-
                 semantic_signals_for_intelligence = {
                     "objects": object_data.get("objects", []),
                     "tags": clip_data.get("tags", []),
                     "caption_keywords": clip_data.get("caption", "").split()[:20] if clip_data.get("caption") else [],
                 }
-                temporal_signature = create_temporal_signature(visual_evidence, semantic_signals_for_intelligence)
-                temporal_memory_data = format_temporal_memory_for_intelligence(temporal_signature, user_id=photo_id)
-                user_history = temporal_memory_data.get("user_trajectory", {})
+                temporal_signature = ""
+                temporal_memory_data = {}
+                user_history = {}
+                if not public_safe:
+                    from .temporal_memory import (
+                        create_pattern_signature as create_temporal_signature,
+                        format_temporal_memory_for_intelligence,
+                        store_interpretation as store_temporal_interpretation,
+                        track_user_trajectory,
+                    )
+
+                    temporal_signature = create_temporal_signature(visual_evidence, semantic_signals_for_intelligence)
+                    temporal_memory_data = format_temporal_memory_for_intelligence(temporal_signature, user_id=photo_id)
+                    user_history = temporal_memory_data.get("user_trajectory", {})
 
                 intelligence_output = framed_intelligence(
                     visual_evidence=visual_evidence,
@@ -634,6 +661,7 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                     temporal_memory=temporal_memory_data,
                     user_history=user_history,
                     pattern_signature=temporal_signature,
+                    public_safe=public_safe,
                 )
                 log_stage_done("intelligence_core", t_request, t_stage)
 
@@ -641,21 +669,22 @@ def analyze_image(path: str, photo_id: str = "", filename: str = "", disable_cac
                 result["pattern_signature"] = temporal_signature
 
                 confidence = intelligence_output.get("meta_cognition", {}).get("confidence", 0.85)
-                store_temporal_interpretation(signature=temporal_signature, interpretation=intelligence_output, confidence=confidence)
-                track_user_trajectory(analysis_result=result, intelligence_output=intelligence_output, user_id=photo_id)
+                if not public_safe:
+                    store_temporal_interpretation(signature=temporal_signature, interpretation=intelligence_output, confidence=confidence)
+                    track_user_trajectory(analysis_result=result, intelligence_output=intelligence_output, user_id=photo_id)
 
-                try:
-                    from .learning_system import learn_implicitly
+                    try:
+                        from .learning_system import learn_implicitly
 
-                    learn_implicitly(analysis_result=result, intelligence_output=intelligence_output, user_history=user_history)
-                except Exception:
-                    pass
+                        learn_implicitly(analysis_result=result, intelligence_output=intelligence_output, user_history=user_history)
+                    except Exception:
+                        pass
             except Exception:
                 result["intelligence"] = {}
         else:
             result["intelligence"] = {}
 
-        if file_hash:
+        if file_hash and not public_safe:
             t_stage = time.perf_counter()
             save_cached_analysis(file_hash, result)
             log_stage_done("analysis_cache_save", t_request, t_stage)

@@ -6,8 +6,7 @@ from framed import create_app
 
 
 @pytest.fixture()
-def client(monkeypatch):
-    monkeypatch.setattr("framed.analysis.vision.ensure_directories", lambda: None)
+def client():
     return create_app({"TESTING": True}).test_client()
 
 
@@ -32,6 +31,15 @@ def test_upload_route_serves_same_cohesive_experience(client):
     response = client.get("/upload")
     assert response.status_code == 200
     assert "id=\"critique\"" in response.get_data(as_text=True)
+
+
+def test_production_app_serves_repository_static_assets(client):
+    css = client.get("/static/css/public-beta.css")
+    image = client.get("/static/images/hero-photograph.jpg")
+    assert css.status_code == 200
+    assert css.mimetype == "text/css"
+    assert image.status_code == 200
+    assert image.mimetype == "image/jpeg"
 
 
 def test_privacy_page_is_simple_get_only(client):
@@ -87,4 +95,5 @@ def test_preview_server_is_isolated_from_production_app(client, monkeypatch):
         assert feedback.status_code == 200
 
     missing = client.post("/api/v1/analyses")
-    assert missing.status_code == 404
+    assert missing.status_code == 400
+    assert missing.get_json()["error"] == {"code": "missing_image"}

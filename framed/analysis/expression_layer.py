@@ -367,6 +367,8 @@ def _apply_expression_finalizers(
 def generate_poetic_critique(
     intelligence_output: Dict[str, Any],
     mentor_mode: str = "Balanced Mentor",
+    *,
+    public_safe: bool = False,
 ) -> str:
     """
     Transform structured intelligence output into poetic critique.
@@ -383,8 +385,8 @@ def generate_poetic_critique(
     """
     try:
         # Expression cache: same intelligence + mentor_mode + HITL state => same critique
-        cache_key = _expression_cache_key(intelligence_output, mentor_mode)
-        cached = _get_cached_expression(cache_key)
+        cache_key = _expression_cache_key(intelligence_output, mentor_mode) if not public_safe else ""
+        cached = _get_cached_expression(cache_key) if not public_safe else None
         if cached is not None:
             logger.info("Expression layer: cache hit (skipping Model B)")
             return cached
@@ -469,15 +471,16 @@ def generate_poetic_critique(
 """
 
         rules_section = ""
-        try:
-            from framed.analysis.interpretive_memory import get_active_rules
-            active_rules = get_active_rules()
-            if active_rules:
-                rules_section = "\n**CORRECTION RULES (must follow):**\n" + "\n".join(
-                    f"- {rule}" for rule in active_rules[:20]
-                )
-        except Exception as exc:
-            logger.debug("correction rules unavailable: %s", exc)
+        if not public_safe:
+            try:
+                from framed.analysis.interpretive_memory import get_active_rules
+                active_rules = get_active_rules()
+                if active_rules:
+                    rules_section = "\n**CORRECTION RULES (must follow):**\n" + "\n".join(
+                        f"- {rule}" for rule in active_rules[:20]
+                    )
+            except Exception as exc:
+                logger.debug("correction rules unavailable: %s", exc)
         
         prompt = f"""
 You are FRAMED's mentor voice. You speak with wisdom, warmth, and poetry.
@@ -593,7 +596,8 @@ End not with advice — but with a question or unresolved pull."""
                     critique2 = (retry.get("content", "") or "").strip()
                     if critique2:
                         critique2 = _apply_expression_finalizers(critique2, intelligence_output)
-                        _save_cached_expression(cache_key, critique2)
+                        if not public_safe:
+                            _save_cached_expression(cache_key, critique2)
                         logger.info(f"Expression layer (Model B) retry succeeded: {len(critique2)} characters")
                         return critique2
                 except Exception as e:
@@ -613,7 +617,8 @@ End not with advice — but with a question or unresolved pull."""
 
         critique = _apply_expression_finalizers(critique, intelligence_output)
 
-        _save_cached_expression(cache_key, critique)
+        if not public_safe:
+            _save_cached_expression(cache_key, critique)
         logger.info(f"Expression layer (Model B) completed: {len(critique)} characters")
         return critique
     

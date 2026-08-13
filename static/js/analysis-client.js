@@ -29,6 +29,15 @@ export function validateAnalysisDTO(payload) {
   return isObject(payload.meta) && payload.meta.contract_version === "1";
 }
 
+export function validateFeedbackDTO(payload, analysisId) {
+  return isObject(payload)
+    && payload.status === "recorded"
+    && payload.analysis_id === analysisId
+    && typeof payload.request_id === "string"
+    && isObject(payload.meta)
+    && payload.meta.contract_version === "1";
+}
+
 async function parseJSON(response) {
   try { return await response.json(); } catch { return null; }
 }
@@ -36,6 +45,7 @@ async function parseJSON(response) {
 function messageForStatus(status, payload) {
   void payload;
   if (status === 400) return new AnalysisError("invalid_image", "This file could not be read as a supported photograph.", { retryable: false, status });
+  if (status === 415) return new AnalysisError("invalid_image", "This file is not a supported JPEG, PNG, or WebP photograph.", { retryable: false, status });
   if (status === 413) return new AnalysisError("oversized", "The photograph is larger than the 16 MB upload limit.", { retryable: false, status });
   if (status === 429) return new AnalysisError("rate_limited", "FRAMED is receiving more requests than it can process right now. Please wait a moment and try again.", { status });
   if (status === 504) return new AnalysisError("timeout", "The critique took longer than expected and was stopped. You can safely try again.", { status });
@@ -78,6 +88,9 @@ export async function sendFeedback({ analysisId, useful, comment }) {
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ analysis_id: analysisId, useful, comment: comment || "" }),
   });
-  if (!response.ok) throw new AnalysisError("feedback_failed", "Feedback could not be saved. Your critique remains available on this page.");
-  return parseJSON(response);
+  const payload = await parseJSON(response);
+  if (!response.ok || !validateFeedbackDTO(payload, analysisId)) {
+    throw new AnalysisError("feedback_failed", "Feedback could not be saved. Your critique remains available on this page.");
+  }
+  return payload;
 }
