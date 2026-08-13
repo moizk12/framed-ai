@@ -11,7 +11,13 @@ from typing import Any, Dict, Optional
 import cv2
 import numpy as np
 
-from .analysis_cache import compute_file_hash, get_cached_analysis, save_cached_analysis
+from .analysis_cache import (
+    compute_file_hash,
+    get_cached_analysis,
+    save_cached_analysis,
+    strip_cognition_from_result,
+)
+from framed.cognition.config import cognition_enabled
 from .derived_fields import detect_genre, infer_emotion, interpret_visual_features
 from .echo_memory import update_echo_memory
 from .models import get_nima_model
@@ -43,11 +49,16 @@ def run_full_analysis(
     filename: str = "",
     *,
     public_safe: bool = False,
+    cognition_run_purpose: Optional[str] = None,
+    baseline_run_id: Optional[str] = None,
+    comparison_group_id: Optional[str] = None,
+    exclude_run_ids: Optional[str] = None,
+    exclude_episode_ids: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run the full pipeline.
+    """Run the full pipeline with an explicit public/research boundary.
 
-    ``public_safe`` keeps the public beta on the existing analysis core while
-    disabling research memory, learning, and cache persistence.
+    ``public_safe`` disables legacy memory, learning, caches, and cognition.
+    Cognition parameters are available only to non-public research callers.
     """
     ensure_directories()
     try:
@@ -57,6 +68,11 @@ def run_full_analysis(
             filename=filename,
             disable_cache=public_safe,
             public_safe=public_safe,
+            cognition_run_purpose=cognition_run_purpose,
+            baseline_run_id=baseline_run_id,
+            comparison_group_id=comparison_group_id,
+            exclude_run_ids=exclude_run_ids,
+            exclude_episode_ids=exclude_episode_ids,
         )
         if not validate_schema(analysis_result):
             analysis_result.setdefault("errors", {})["schema_validation"] = "Result does not conform to canonical schema"
@@ -64,7 +80,10 @@ def run_full_analysis(
             "image_load"
         )
         if not critical_errors and not public_safe:
-            update_echo_memory(analysis_result)
+            from framed.cognition.integration.pipeline_hook import legacy_writes_allowed
+
+            if legacy_writes_allowed():
+                update_echo_memory(analysis_result)
         return analysis_result
     except Exception as e:
         logger.error("Fatal error in run_full_analysis: %s", e, exc_info=True)
@@ -80,6 +99,11 @@ def analyze_image(
     disable_cache: bool = False,
     *,
     public_safe: bool = False,
+    cognition_run_purpose: Optional[str] = None,
+    baseline_run_id: Optional[str] = None,
+    comparison_group_id: Optional[str] = None,
+    exclude_run_ids: Optional[str] = None,
+    exclude_episode_ids: Optional[str] = None,
 ) -> Dict[str, Any]:
     ensure_directories()
     logger.info("Analyzing image: %s", path)
@@ -90,7 +114,7 @@ def analyze_image(
         photo_id = file_hash[:16] if file_hash else str(uuid.uuid4())
 
     cached_result = None if disable_cache else get_cached_analysis(file_hash)
-    if cached_result:
+    if cached_result and not cognition_enabled():
         cached_result["metadata"]["photo_id"] = photo_id
         cached_result["metadata"]["filename"] = filename
         return cached_result
@@ -447,16 +471,24 @@ def analyze_image(
                 and scene_category in ("artificial", "indoor", "man-made", "")
                 and not (has_physical_interior and (has_interior_cues or has_clutter_cues))
             )
+            from framed.analysis.intelligence_formatting import is_likely_art_reproduction
+
+            _art_repro = is_likely_art_reproduction(result.get("visual_evidence") or {})
             route_screenshot_ui = (
                 (has_ui_signal or looks_like_screen_capture)
                 and not has_street_cues
                 and num_vehicles == 0
                 and not (has_physical_interior and (has_interior_cues or has_clutter_cues))
                 and not (has_clutter_cues and num_people == 0 and not has_ui_yolo)
+                and not _art_repro
             )
 
+            looks_painting = any(
+                k in text_blob
+                for k in ["painting", "fresco", "mural", "michelangelo", "sistine", "artwork", "canvas", "museum"]
+            )
             scene_type = "unknown"
-            if looks_painting or (looks_abstract_terms and ("painting" in text_blob or "canvas" in text_blob)):
+            if looks_painting or (looks_abstract_terms and ("painting" in text_blob or "canvas" in text_blob or "fresco" in text_blob)):
                 scene_type = "abstract_art"
             elif avg_saturation is not None and avg_saturation > 0.50 and num_people == 0 and num_vehicles == 0 and not num_buildings:
                 scene_type = "abstract_art"
@@ -561,8 +593,10 @@ def analyze_image(
         except Exception as e:
             logger.warning("Scene gate failed (non-fatal): %s", e)
 
+        from framed.cognition.integration.pipeline_hook import legacy_writes_allowed
+
         USE_INTELLIGENCE_CORE = os.getenv("FRAMED_USE_INTELLIGENCE_CORE", "true").lower() == "true"
-        if not USE_INTELLIGENCE_CORE and not public_safe:
+        if not USE_INTELLIGENCE_CORE and not public_safe and legacy_writes_allowed():
             try:
                 from .interpret_scene import interpret_scene
                 from .interpretive_memory import create_pattern_signature, query_memory_patterns, store_interpretation
@@ -631,19 +665,22 @@ def analyze_image(
             pass
 
         ENABLE_INTELLIGENCE_CORE = os.getenv("FRAMED_ENABLE_INTELLIGENCE_CORE", "true").lower() == "true"
+        cognition_session = None
         if ENABLE_INTELLIGENCE_CORE:
             try:
                 t_stage = time.perf_counter()
+                from framed.cognition.integration.pipeline_hook import (
+                    begin_cognition_run,
+                    finalize_cognition_run,
+                    legacy_writes_allowed,
+                )
                 from .intelligence_core import framed_intelligence
-                semantic_signals_for_intelligence = {
-                    "objects": object_data.get("objects", []),
-                    "tags": clip_data.get("tags", []),
-                    "caption_keywords": clip_data.get("caption", "").split()[:20] if clip_data.get("caption") else [],
-                }
-                temporal_signature = ""
+
                 temporal_memory_data = {}
                 user_history = {}
-                if not public_safe:
+                temporal_signature = None
+                allow_legacy_writes = not public_safe and legacy_writes_allowed()
+                if allow_legacy_writes:
                     from .temporal_memory import (
                         create_pattern_signature as create_temporal_signature,
                         format_temporal_memory_for_intelligence,
@@ -651,42 +688,94 @@ def analyze_image(
                         track_user_trajectory,
                     )
 
+                    semantic_signals_for_intelligence = {
+                        "objects": object_data.get("objects", []),
+                        "tags": clip_data.get("tags", []),
+                        "caption_keywords": clip_data.get("caption", "").split()[:20] if clip_data.get("caption") else [],
+                    }
                     temporal_signature = create_temporal_signature(visual_evidence, semantic_signals_for_intelligence)
                     temporal_memory_data = format_temporal_memory_for_intelligence(temporal_signature, user_id=photo_id)
                     user_history = temporal_memory_data.get("user_trajectory", {})
+                elif not public_safe:
+                    from framed.cognition.contracts.runs import RunPurpose
+
+                    purpose = None
+                    if cognition_run_purpose:
+                        purpose = RunPurpose(cognition_run_purpose)
+                    ex_runs = tuple(x.strip() for x in (exclude_run_ids or "").split(",") if x.strip())
+                    ex_eps = tuple(x.strip() for x in (exclude_episode_ids or "").split(",") if x.strip())
+                    cognition_session = begin_cognition_run(
+                        result=result,
+                        image_path=path,
+                        asset_filename=filename or os.path.basename(path),
+                        run_purpose=purpose,
+                        baseline_run_id=baseline_run_id,
+                        comparison_group_id=comparison_group_id,
+                        exclude_run_ids=ex_runs or None,
+                        exclude_episode_ids=ex_eps or None,
+                    )
 
                 intelligence_output = framed_intelligence(
                     visual_evidence=visual_evidence,
                     analysis_result=result,
-                    temporal_memory=temporal_memory_data,
+                    temporal_memory=temporal_memory_data if allow_legacy_writes else None,
                     user_history=user_history,
                     pattern_signature=temporal_signature,
                     public_safe=public_safe,
+                    cognition_context=cognition_session.cognition_context if cognition_session else None,
                 )
                 log_stage_done("intelligence_core", t_request, t_stage)
 
                 result["intelligence"] = intelligence_output
-                result["pattern_signature"] = temporal_signature
+                if temporal_signature:
+                    result["pattern_signature"] = temporal_signature
 
-                confidence = intelligence_output.get("meta_cognition", {}).get("confidence", 0.85)
-                if not public_safe:
+                if allow_legacy_writes:
+                    from .temporal_memory import (
+                        store_interpretation as store_temporal_interpretation,
+                        track_user_trajectory,
+                    )
+
+                    confidence = intelligence_output.get("meta_cognition", {}).get("confidence", 0.85)
                     store_temporal_interpretation(signature=temporal_signature, interpretation=intelligence_output, confidence=confidence)
                     track_user_trajectory(analysis_result=result, intelligence_output=intelligence_output, user_id=photo_id)
-
                     try:
                         from .learning_system import learn_implicitly
 
                         learn_implicitly(analysis_result=result, intelligence_output=intelligence_output, user_history=user_history)
                     except Exception:
                         pass
-            except Exception:
+                elif cognition_session:
+                    finalize_cognition_run(cognition_session, result, intelligence_output)
+            except Exception as exc:
+                if cognition_session is not None:
+                    from framed.cognition.integration.pipeline_hook import fail_cognition_run
+
+                    fail_info = fail_cognition_run(
+                        cognition_session,
+                        error_code="cognition_pipeline_failed",
+                        safe_message="Cognition run failed during intelligence execution",
+                        stage="intelligence_core",
+                        internal_exception_type=type(exc).__name__,
+                    )
+                    result.setdefault("cognition_provenance", {}).update(fail_info)
+                elif not public_safe and cognition_enabled():
+                    result.setdefault("cognition_provenance", {}).update(
+                        {
+                            "status": "failed",
+                            "error_code": "cognition_pipeline_failed",
+                            "stage": "begin_cognition_run",
+                            "run_id": None,
+                        }
+                    )
                 result["intelligence"] = {}
         else:
             result["intelligence"] = {}
 
         if file_hash and not public_safe:
             t_stage = time.perf_counter()
-            save_cached_analysis(file_hash, result)
+            to_cache = strip_cognition_from_result(result) if cognition_enabled() else result
+            save_cached_analysis(file_hash, to_cache)
             log_stage_done("analysis_cache_save", t_request, t_stage)
 
         return result

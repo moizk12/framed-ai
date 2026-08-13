@@ -51,6 +51,7 @@ def framed_intelligence(
     pattern_signature: Optional[str] = None,
     *,
     public_safe: bool = False,
+    cognition_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Main intelligence core function.
@@ -112,7 +113,14 @@ def framed_intelligence(
             ve_l1["perception_technical"] = technical
         if category_key:
             ve_l1["inferred_category_key"] = category_key
-        recognition = reason_about_recognition(ve_l1, require_multiple_hypotheses=force_multi)
+        recognition = reason_about_recognition(
+            ve_l1,
+            require_multiple_hypotheses=force_multi,
+            cognition_context=cognition_context,
+        )
+        if cognition_context:
+            recognition["_cognition_context_used"] = True
+            recognition["_memory_reference_ids"] = cognition_context.get("memory_reference_ids", [])
 
         theme_license = compute_theme_claim_license(visual_evidence)
         theme_license_dict = theme_license.to_dict()
@@ -155,7 +163,9 @@ def framed_intelligence(
         # === LAYERS 2–7: combined (one call) or fallback (6 calls) ===
         combined_ok = False
         if USE_COMBINED_LAYERS_2_7:
-            combined = reason_about_layers_2_7(recognition, temporal_memory, user_history)
+            # Cognition-v1: do not pass provisional memory through legacy temporal formatter
+            layers_temporal = None if cognition_context else temporal_memory
+            combined = reason_about_layers_2_7(recognition, layers_temporal, user_history)
             if combined and _validate_combined_layers_2_7(combined):
                 meta_cognition = combined["meta_cognition"]
                 temporal = combined["temporal"]
@@ -176,7 +186,7 @@ def framed_intelligence(
         if not combined_ok:
             # Fallback: 6 separate Model A calls (recognition is read-only evidence for each)
             logger.info("Layer 2: Meta-Cognition...")
-            meta_cognition = reason_about_thinking(recognition, temporal_memory)
+            meta_cognition = reason_about_thinking(recognition, None if cognition_context else temporal_memory)
             mc_raw = meta_cognition.get("confidence", governed_conf)
             mc_governed, _ = apply_confidence_governor(
                 mc_raw, ambiguity.get("ambiguity_score", 0), multi_present, disagreement.get("exists", False),
@@ -185,7 +195,7 @@ def framed_intelligence(
             meta_cognition["confidence"] = mc_governed
             meta_cognition["rejected_alternatives"] = recognition.get("rejected_alternatives", []) or meta_cognition.get("rejected_alternatives", [])
             logger.info("Layer 3: Temporal Consciousness...")
-            temporal = reason_about_evolution(meta_cognition, temporal_memory)
+            temporal = reason_about_evolution(meta_cognition, None if cognition_context else temporal_memory)
             logger.info("Layer 4: Emotional Resonance...")
             emotion = reason_about_feeling(meta_cognition, temporal)
             logger.info("Layer 5: Continuity of Self...")
@@ -193,7 +203,7 @@ def framed_intelligence(
             logger.info("Layer 6: Mentor Voice (Reasoning)...")
             mentor = reason_about_mentorship(continuity, user_history)
             logger.info("Layer 7: Self-Critique...")
-            self_critique = reason_about_past_errors(mentor, temporal_memory)
+            self_critique = reason_about_past_errors(mentor, None if cognition_context else temporal_memory)
         
         # Reasoning cost profile
         cost_profile = compute_reasoning_cost_profile(plausibility, ambiguity, disagreement)
