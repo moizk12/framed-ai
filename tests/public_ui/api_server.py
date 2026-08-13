@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from framed import create_app
+from framed.public_store import MemoryPublicRepository
 
 
 def deterministic_analysis_runner(_path: str, _filename: str):
@@ -43,7 +44,12 @@ def deterministic_analysis_runner(_path: str, _filename: str):
     )
 
 
-app = create_app({"PUBLIC_ANALYSIS_RUNNER": deterministic_analysis_runner})
+app = create_app(
+    {
+        "PUBLIC_ANALYSIS_RUNNER": deterministic_analysis_runner,
+        "PUBLIC_REPOSITORY": MemoryPublicRepository(),
+    }
+)
 
 
 if __name__ == "__main__":

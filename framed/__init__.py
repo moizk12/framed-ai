@@ -18,6 +18,8 @@ def create_app(config=None):
     
     # Basic configuration
     app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+    app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL', '')
+    app.config['PUBLIC_AUTO_MIGRATE'] = True
     default_data_dir = os.environ.get("FRAMED_DATA_DIR", os.path.join(tempfile.gettempdir(), "framed"))
     app.config['UPLOAD_FOLDER'] = os.path.join(default_data_dir, "uploads")
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -30,8 +32,8 @@ def create_app(config=None):
     from framed.routes import main
     app.register_blueprint(main)
 
-    from framed.public_store import PublicBetaStore
-    app.extensions["framed_public_store"] = PublicBetaStore()
+    from framed.public_store import PublicBetaStore, build_public_repository
+    app.extensions["framed_public_store"] = PublicBetaStore(build_public_repository(app.config))
 
     from werkzeug.exceptions import RequestEntityTooLarge
 

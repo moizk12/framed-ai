@@ -311,8 +311,17 @@ Build and run locally:
 
 ```bash
 docker build -t framed-ai .
-docker run -p 7860:7860 -e OPENAI_API_KEY=your_key framed-ai
+docker run -p 7860:7860 -e OPENAI_API_KEY=your_key -e DATABASE_URL=postgresql://... framed-ai
 ```
+
+The public v1 API requires a PostgreSQL `DATABASE_URL`. App startup applies pending
+public-only migrations automatically; they can also be applied explicitly with:
+
+```bash
+python -m framed.public_migrations
+```
+
+The public tables are independent of all research cognition and SQLite state.
 
 ---
 

@@ -11,6 +11,7 @@ from PIL import Image, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
 from framed.public_api import PublicAnalysisUnavailable
+from framed.public_store import PublicPersistenceUnavailable
 
 ALLOWED_EXTENSIONS = {"png","jpg","jpeg","webp","bmp","tiff"}
 PUBLIC_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
@@ -406,6 +407,14 @@ def create_public_analysis():
             503,
             request_id,
         )
+    except PublicPersistenceUnavailable:
+        current_app.logger.exception("Public persistence unavailable request_id=%s", request_id)
+        return _public_error(
+            "persistence_unavailable",
+            "The analysis could not be recorded. Please try again.",
+            503,
+            request_id,
+        )
     except Exception:
         current_app.logger.exception("Public analysis failed request_id=%s", request_id)
         return _public_error("internal_error", "The analysis could not be completed.", 500, request_id)
@@ -437,16 +446,25 @@ def create_public_feedback():
         return _public_error("invalid_feedback", "comment must be text no longer than 2000 characters.", 400, request_id)
 
     store = current_app.extensions["framed_public_store"]
-    if not store.has_analysis(analysis_id):
-        return _public_error("analysis_not_found", "The analysis_id was not found in this public session.", 404, request_id)
-    store.record_feedback(
-        {
-            "analysis_id": analysis_id,
-            "useful": useful,
-            "comment": comment.strip(),
-            "recorded_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
+    try:
+        if not store.has_analysis(analysis_id):
+            return _public_error("analysis_not_found", "The analysis_id was not found.", 404, request_id)
+        store.record_feedback(
+            {
+                "analysis_id": analysis_id,
+                "useful": useful,
+                "comment": comment.strip(),
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    except PublicPersistenceUnavailable:
+        current_app.logger.exception("Public persistence unavailable request_id=%s", request_id)
+        return _public_error(
+            "persistence_unavailable",
+            "Feedback could not be recorded. Please try again.",
+            503,
+            request_id,
+        )
     return jsonify(
         {
             "request_id": request_id,
