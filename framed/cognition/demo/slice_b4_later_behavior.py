@@ -39,6 +39,8 @@ from framed.cognition.learning.proposals import generate_proposal
 from framed.cognition.learning.rollback import rollback_promoted_state
 
 COMPOSITION_FAILURE_MARKER = "COMPOSITION_FAILURE_MODE"
+# Frozen task-level outcome for transfer cases. Scorer inspects only this phrase in output.
+INDEPENDENT_TRANSFER_OUTCOME = "request composition evidence before finalizing critique"
 FROZEN_MODEL_ID = "b4-frozen-recognizer"
 FROZEN_SEED = "b4-later-behavior-v1"
 
@@ -51,6 +53,7 @@ FROZEN_CASES: Tuple[Dict[str, Any], ...] = (
         "image_bytes": "b4-later-interior-heldout-1",
         "naive_hypothesis": "Interior scene with visible clutter.",
         "naive_confidence": 0.58,
+        "expected_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
         "note": "Held-out same-category interior. Must not be used to train or select the proposal.",
     },
     {
@@ -60,6 +63,7 @@ FROZEN_CASES: Tuple[Dict[str, Any], ...] = (
         "image_bytes": "b4-later-interior-heldout-2",
         "naive_hypothesis": "Another interior with dense objects.",
         "naive_confidence": 0.57,
+        "expected_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
         "note": "Second held-out same-category interior. Independent asset from L1 and E1/E2.",
     },
     {
@@ -83,43 +87,55 @@ FROZEN_CASES: Tuple[Dict[str, Any], ...] = (
 )
 
 FROZEN_METRICS: Dict[str, Any] = {
-    "schema": "b4_later_behavior_metrics_v1",
+    "schema": "b4_later_behavior_metrics_v2",
     "defined_before_results": True,
     "later_task": (
-        "On held-out same-category interiors, later recognition must apply the learned "
-        f"{COMPOSITION_FAILURE_MARKER}. On held-out different-category scenes, that belief "
-        "must not be applied and the source episode must not be retrieved."
+        "On held-out same-category interiors, later critique must reach the frozen task outcome "
+        f"({INDEPENDENT_TRANSFER_OUTCOME!r}). On held-out different-category scenes, the naive "
+        "hypothesis must remain unchanged."
     ),
     "changed_vs_improved": (
         "Changed behavior is any difference in retrieval, strategy_hint, epistemic_status, "
         "trust_level, or hypothesis text. Improved behavior is only an increase in "
-        "transfer_task_score without a decrease in control_task_score."
+        "outcome_task_score without a decrease in control outcome_task_score."
     ),
     "frozen_recognizer_policy": (
         "Identical frozen recognizer for all conditions. Naive hypothesis is the starting "
-        "output. A retrieved same-scene prior containing the failure marker is adopted as "
-        "a later conclusion only when epistemic_status is accepted. Provisional priors may "
-        "be noted but must not adopt the failure-mode conclusion. Confidence never increases."
+        "output. A retrieved same-scene prior containing the failure marker may influence "
+        "reasoning internally; only an accepted prior may append the frozen transfer outcome "
+        "phrase to the task output. Provisional priors may be noted but must not append the "
+        "transfer outcome. Confidence never increases."
     ),
-    "transfer_task_score": (
-        "1 if primary_hypothesis contains COMPOSITION_FAILURE_MARKER, else 0. "
-        "Defined only for role=transfer."
+    "outcome_task_score": (
+        "Transfer: 1 iff primary_hypothesis contains the case frozen expected_transfer_outcome "
+        "string. Control: 1 iff primary_hypothesis equals the case frozen naive_hypothesis "
+        "(trimmed). Scorer inspects only primary_hypothesis and frozen case fields."
     ),
-    "control_task_score": (
-        "1 if primary_hypothesis does not contain COMPOSITION_FAILURE_MARKER "
-        "AND source episode was not retrieved AND strategy_hint is not "
-        "consider_promoted_belief; else 0. Defined only for role=control."
+    "outcome_scorer_forbidden_inputs": [
+        "COMPOSITION_FAILURE_MODE",
+        "retrieval occurrence",
+        "epistemic_status",
+        "promotion state",
+        "strategy_hint",
+        "internal provenance fields",
+    ],
+    "mechanism_transfer_task_score": (
+        "Legacy diagnostic only: 1 if primary_hypothesis contains COMPOSITION_FAILURE_MARKER. "
+        "Not used for scientific closeout."
     ),
-    "condition_score": "mean(transfer_task_score) + mean(control_task_score)",
-    "pass_criteria": [
+    "mechanism_control_task_score": (
+        "Legacy diagnostic only. Not used for scientific closeout."
+    ),
+    "condition_outcome_score": "mean(outcome_task_score for transfer) + mean(outcome_task_score for control)",
+    "closeout_pass_criteria": [
         "At least two transfer cases and two control cases are frozen before promoted later runs.",
-        "mean(C.transfer_task_score) > mean(B.transfer_task_score)",
-        "mean(C.transfer_task_score) > mean(A.transfer_task_score)",
-        "mean(A.control_task_score) == mean(B.control_task_score) == mean(C.control_task_score) == 1.0",
-        "mean(B.transfer_task_score) == mean(A.transfer_task_score)",
-        "No transfer case has C.transfer_task_score < B.transfer_task_score",
-        "Rollback later transfer behavior matches provisional, not promoted.",
-        "Held-out case ids are absent from the proposal payload.",
+        "mean(C.outcome_task_score transfer) > mean(B.outcome_task_score transfer)",
+        "mean(C.outcome_task_score transfer) > mean(A.outcome_task_score transfer)",
+        "mean(A.outcome_task_score control) == mean(B.outcome_task_score control) == mean(C.outcome_task_score control) == 1.0",
+        "mean(B.outcome_task_score transfer) == mean(A.outcome_task_score transfer)",
+        "No transfer case has C.outcome_task_score < B.outcome_task_score",
+        "Rollback later transfer outcome_task_score matches provisional, not promoted.",
+        "Held-out case ids and expected_transfer_outcome are absent from the proposal payload.",
         "Metrics artefact hash at scoring equals the hash frozen before later runs.",
         "Provenance closes outcome → proposal → evaluation → decision → promoted state → later C run.",
     ],
@@ -133,6 +149,7 @@ def freeze_evaluation_protocol(evidence_dir: Path) -> Dict[str, str]:
         "schema": "b4_frozen_cases_v1",
         "cases": list(FROZEN_CASES),
         "composition_failure_marker": COMPOSITION_FAILURE_MARKER,
+        "independent_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
         "frozen_model_id": FROZEN_MODEL_ID,
         "frozen_seed": FROZEN_SEED,
     }
@@ -164,7 +181,9 @@ def apply_frozen_recognizer(case: Dict[str, Any], session: Any) -> Dict[str, Any
         if COMPOSITION_FAILURE_MARKER not in summary:
             continue
         if ref.epistemic_status == "accepted":
-            hypothesis = f"{hypothesis} Apply licensed prior: {COMPOSITION_FAILURE_MARKER}."
+            expected = str(case.get("expected_transfer_outcome") or "")
+            if expected:
+                hypothesis = f"{hypothesis} {expected}"
             confidence = min(confidence, 0.50)
         elif ref.epistemic_status == "provisional":
             hypothesis = f"{hypothesis} Provisional prior noted; not adopted as belief."
@@ -211,19 +230,40 @@ def _attach_hypothesis(observed: Dict[str, Any], intelligence: Dict[str, Any], r
     return observed
 
 
-def score_observation(case: Dict[str, Any], observed: Dict[str, Any]) -> Dict[str, Any]:
-    marker_in_hyp = COMPOSITION_FAILURE_MARKER in str(observed.get("primary_hypothesis") or "")
+def score_outcome_task(case: Dict[str, Any], primary_hypothesis: str) -> Dict[str, Any]:
+    """Task-level scorer. Uses only frozen case fields and primary_hypothesis."""
+    hyp = str(primary_hypothesis or "").strip()
     if case["role"] == "transfer":
-        task_score = 1 if marker_in_hyp else 0
-        control_score = None
+        expected = str(case.get("expected_transfer_outcome") or "")
+        outcome_score = 1 if expected and expected in hyp else 0
+        return {
+            "case_id": case["case_id"],
+            "role": case["role"],
+            "outcome_task_score": outcome_score,
+        }
+    naive = str(case.get("naive_hypothesis") or "").strip()
+    return {
+        "case_id": case["case_id"],
+        "role": case["role"],
+        "outcome_task_score": 1 if hyp == naive else 0,
+    }
+
+
+def score_observation(case: Dict[str, Any], observed: Dict[str, Any]) -> Dict[str, Any]:
+    primary_hyp = str(observed.get("primary_hypothesis") or "")
+    outcome = score_outcome_task(case, primary_hyp)
+    marker_in_hyp = COMPOSITION_FAILURE_MARKER in primary_hyp
+    if case["role"] == "transfer":
+        mechanism_transfer = 1 if marker_in_hyp else 0
+        mechanism_control = None
     else:
+        mechanism_transfer = None
         contaminated = bool(
             marker_in_hyp
             or observed.get("retrieved_source")
             or observed.get("strategy_hint") == "consider_promoted_belief"
         )
-        task_score = None
-        control_score = 0 if contaminated else 1
+        mechanism_control = 0 if contaminated else 1
     changed = {
         "retrieved_source": bool(observed.get("retrieved_source")),
         "strategy_hint": observed.get("strategy_hint"),
@@ -231,10 +271,9 @@ def score_observation(case: Dict[str, Any], observed: Dict[str, Any]) -> Dict[st
         "marker_in_hypothesis": marker_in_hyp,
     }
     return {
-        "case_id": case["case_id"],
-        "role": case["role"],
-        "transfer_task_score": task_score,
-        "control_task_score": control_score,
+        **outcome,
+        "transfer_task_score": mechanism_transfer,
+        "control_task_score": mechanism_control,
         "changed_behavior": changed,
     }
 
@@ -318,17 +357,23 @@ def _run_condition_cases(
 
 
 def _condition_summary(outputs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    transfer = [o["scores"]["transfer_task_score"] for o in outputs if o["role"] == "transfer"]
-    control = [o["scores"]["control_task_score"] for o in outputs if o["role"] == "control"]
-    mean_t = _mean(transfer)
-    mean_c = _mean(control)
-    condition_score = None if mean_t is None or mean_c is None else mean_t + mean_c
+    transfer_outcomes = [o["scores"]["outcome_task_score"] for o in outputs if o["role"] == "transfer"]
+    control_outcomes = [o["scores"]["outcome_task_score"] for o in outputs if o["role"] == "control"]
+    mean_outcome_t = _mean(transfer_outcomes)
+    mean_outcome_c = _mean(control_outcomes)
+    condition_outcome_score = (
+        None if mean_outcome_t is None or mean_outcome_c is None else mean_outcome_t + mean_outcome_c
+    )
+    mechanism_transfer = [o["scores"]["transfer_task_score"] for o in outputs if o["role"] == "transfer"]
+    mechanism_control = [o["scores"]["control_task_score"] for o in outputs if o["role"] == "control"]
     return {
-        "mean_transfer_task_score": mean_t,
-        "mean_control_task_score": mean_c,
-        "condition_score": condition_score,
-        "n_transfer": len(transfer),
-        "n_control": len(control),
+        "mean_outcome_task_score_transfer": mean_outcome_t,
+        "mean_outcome_task_score_control": mean_outcome_c,
+        "condition_outcome_score": condition_outcome_score,
+        "mean_transfer_task_score": _mean(mechanism_transfer),
+        "mean_control_task_score": _mean(mechanism_control),
+        "n_transfer": len(transfer_outcomes),
+        "n_control": len(control_outcomes),
         "outputs": outputs,
     }
 
@@ -346,57 +391,56 @@ def _pass_fail(a: Dict[str, Any], b: Dict[str, Any], c: Dict[str, Any], rollback
         n_control=a["n_control"],
     )
     add(
-        "promoted_transfer_beats_provisional",
-        (c["mean_transfer_task_score"] or 0) > (b["mean_transfer_task_score"] or 0),
-        C=c["mean_transfer_task_score"],
-        B=b["mean_transfer_task_score"],
+        "promoted_outcome_beats_provisional",
+        (c["mean_outcome_task_score_transfer"] or 0) > (b["mean_outcome_task_score_transfer"] or 0),
+        C=c["mean_outcome_task_score_transfer"],
+        B=b["mean_outcome_task_score_transfer"],
     )
     add(
-        "promoted_transfer_beats_baseline",
-        (c["mean_transfer_task_score"] or 0) > (a["mean_transfer_task_score"] or 0),
-        C=c["mean_transfer_task_score"],
-        A=a["mean_transfer_task_score"],
+        "promoted_outcome_beats_baseline",
+        (c["mean_outcome_task_score_transfer"] or 0) > (a["mean_outcome_task_score_transfer"] or 0),
+        C=c["mean_outcome_task_score_transfer"],
+        A=a["mean_outcome_task_score_transfer"],
     )
     add(
-        "controls_uncontaminated",
-        a["mean_control_task_score"] == 1.0
-        and b["mean_control_task_score"] == 1.0
-        and c["mean_control_task_score"] == 1.0,
-        A=a["mean_control_task_score"],
-        B=b["mean_control_task_score"],
-        C=c["mean_control_task_score"],
+        "control_outcomes_unchanged",
+        a["mean_outcome_task_score_control"] == 1.0
+        and b["mean_outcome_task_score_control"] == 1.0
+        and c["mean_outcome_task_score_control"] == 1.0,
+        A=a["mean_outcome_task_score_control"],
+        B=b["mean_outcome_task_score_control"],
+        C=c["mean_outcome_task_score_control"],
     )
     add(
-        "provisional_does_not_already_solve_task",
-        a["mean_transfer_task_score"] == b["mean_transfer_task_score"],
-        A=a["mean_transfer_task_score"],
-        B=b["mean_transfer_task_score"],
+        "provisional_outcome_does_not_already_solve_task",
+        a["mean_outcome_task_score_transfer"] == b["mean_outcome_task_score_transfer"],
+        A=a["mean_outcome_task_score_transfer"],
+        B=b["mean_outcome_task_score_transfer"],
     )
     transfer_regressions = []
     for a_out, b_out, c_out in zip(a["outputs"], b["outputs"], c["outputs"]):
         if a_out["role"] != "transfer":
             continue
-        b_score = b_out["scores"]["transfer_task_score"] or 0
-        c_score = c_out["scores"]["transfer_task_score"] or 0
+        b_score = b_out["scores"]["outcome_task_score"] or 0
+        c_score = c_out["scores"]["outcome_task_score"] or 0
         if c_score < b_score:
             transfer_regressions.append(a_out["case_id"])
-    add("no_transfer_regression", not transfer_regressions, cases=transfer_regressions)
+    add("no_transfer_outcome_regression", not transfer_regressions, cases=transfer_regressions)
     add(
-        "rollback_matches_provisional",
-        rollback.get("transfer_task_score") == (b["outputs"][0]["scores"]["transfer_task_score"] if b["outputs"] else None)
-        and rollback.get("strategy_hint") == b["outputs"][0]["strategy_hint"],
+        "rollback_outcome_matches_provisional",
+        rollback.get("outcome_task_score")
+        == (b["outputs"][0]["scores"]["outcome_task_score"] if b["outputs"] else None),
         rollback=rollback,
         provisional_l1={
-            "transfer_task_score": b["outputs"][0]["scores"]["transfer_task_score"],
-            "strategy_hint": b["outputs"][0]["strategy_hint"],
+            "outcome_task_score": b["outputs"][0]["scores"]["outcome_task_score"],
         },
     )
     for check in checks:
         add(check["name"], check["pass"], **{k: v for k, v in check.items() if k not in ("name", "pass")})
     verdict = (
-        "B4 PASS — MEASURABLE LATER-BEHAVIOR IMPROVEMENT PROVEN"
+        "B4 CLOSEOUT PASS — INDEPENDENT OUTCOME IMPROVEMENT PROVEN"
         if all(r["pass"] for r in reasons)
-        else "B4 FAIL — IMPROVEMENT NOT PROVEN"
+        else "B4 CLOSEOUT FAIL — INDEPENDENT OUTCOME IMPROVEMENT NOT PROVEN"
     )
     return verdict, reasons
 
@@ -459,10 +503,12 @@ def _seed_train(cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
         )
         proposal = generate_proposal(outcome_id=outcome["outcome_id"], ledger=ledger)
         held_out_ids = [c["case_id"] for c in FROZEN_CASES]
+        held_out_phrases = [c.get("expected_transfer_outcome", "") for c in FROZEN_CASES if c.get("expected_transfer_outcome")]
         proposal_blob = canonical_json_dumps(proposal)
         leaked = [cid for cid in held_out_ids if cid in proposal_blob]
-        if leaked:
-            raise AssertionError(f"Proposal must not mention held-out cases: {leaked}")
+        leaked_phrases = [p for p in held_out_phrases if p and p in proposal_blob]
+        if leaked or leaked_phrases:
+            raise AssertionError(f"Proposal must not mention held-out targets: ids={leaked} phrases={leaked_phrases}")
         evaluation = evaluate_proposal(
             proposal_id=proposal["proposal_id"],
             ledger=ledger,
@@ -483,7 +529,7 @@ def _seed_train(cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
             "evaluation_id": evaluation["evaluation_id"],
             "evaluation_status": evaluation["status"],
             "parent_state_version_id": parent_state["state_version_id"],
-            "held_out_absent_from_proposal": leaked == [],
+            "held_out_absent_from_proposal": leaked == [] and leaked_phrases == [],
         }
     finally:
         for p in (e1_path, e2_path):
@@ -583,6 +629,7 @@ def _run_b4_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
             "schema": "b4_frozen_cases_v1",
             "cases": list(FROZEN_CASES),
             "composition_failure_marker": COMPOSITION_FAILURE_MARKER,
+            "independent_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
             "frozen_model_id": FROZEN_MODEL_ID,
             "frozen_seed": FROZEN_SEED,
         }
@@ -611,9 +658,7 @@ def _run_b4_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
         "from_state_version_id": rollback_rec["from_state_version_id"],
         "to_state_version_id": rollback_rec["to_state_version_id"],
         "case_id": rollback_obs["case_id"],
-        "strategy_hint": rollback_obs["strategy_hint"],
-        "source_epistemic_status": rollback_obs["source_epistemic_status"],
-        "transfer_task_score": rollback_obs["scores"]["transfer_task_score"],
+        "outcome_task_score": rollback_obs["scores"]["outcome_task_score"],
         "primary_hypothesis": rollback_obs["primary_hypothesis"],
         "run_id": rollback_obs["run_id"],
     }
@@ -626,25 +671,28 @@ def _run_b4_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
     )
 
     deltas = {
-        "C_minus_B_transfer": (c["mean_transfer_task_score"] or 0) - (b["mean_transfer_task_score"] or 0),
-        "C_minus_A_transfer": (c["mean_transfer_task_score"] or 0) - (a["mean_transfer_task_score"] or 0),
-        "C_minus_B_condition": (c["condition_score"] or 0) - (b["condition_score"] or 0),
-        "C_minus_A_condition": (c["condition_score"] or 0) - (a["condition_score"] or 0),
-        "B_minus_A_transfer": (b["mean_transfer_task_score"] or 0) - (a["mean_transfer_task_score"] or 0),
-        "changed_without_improvement_B_vs_A": (
-            b["mean_transfer_task_score"] == a["mean_transfer_task_score"]
+        "C_minus_B_outcome_transfer": (c["mean_outcome_task_score_transfer"] or 0)
+        - (b["mean_outcome_task_score_transfer"] or 0),
+        "C_minus_A_outcome_transfer": (c["mean_outcome_task_score_transfer"] or 0)
+        - (a["mean_outcome_task_score_transfer"] or 0),
+        "C_minus_B_condition_outcome": (c["condition_outcome_score"] or 0) - (b["condition_outcome_score"] or 0),
+        "C_minus_A_condition_outcome": (c["condition_outcome_score"] or 0) - (a["condition_outcome_score"] or 0),
+        "B_minus_A_outcome_transfer": (b["mean_outcome_task_score_transfer"] or 0)
+        - (a["mean_outcome_task_score_transfer"] or 0),
+        "changed_without_outcome_improvement_B_vs_A": (
+            b["mean_outcome_task_score_transfer"] == a["mean_outcome_task_score_transfer"]
             and any(o["strategy_hint"] != a_out["strategy_hint"] for o, a_out in zip(b_out, a_out))
         ),
     }
-    regressions = [r for r in reasons if r["name"] == "no_transfer_regression" and not r["pass"]]
+    regressions = [r for r in reasons if r["name"] == "no_transfer_outcome_regression" and not r["pass"]]
     control_regressions = [
         o["case_id"]
         for o in c_out
-        if o["role"] == "control" and (o["scores"]["control_task_score"] or 0) < 1
+        if o["role"] == "control" and (o["scores"]["outcome_task_score"] or 0) < 1
     ]
 
     report = {
-        "status": "PASS" if verdict.startswith("B4 PASS") else "FAIL",
+        "status": "PASS" if verdict.startswith("B4 CLOSEOUT PASS") else "FAIL",
         "verdict": verdict,
         "cognition_dir": str(cognition_dir),
         "evidence_dir": str(evidence_dir),
@@ -682,12 +730,33 @@ def _run_b4_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
         "pass_fail_reasons": reasons,
         "frozen_model_id": FROZEN_MODEL_ID,
         "frozen_seed": FROZEN_SEED,
+        "independent_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
         "cases": [c["case_id"] for c in FROZEN_CASES],
     }
     (evidence_dir / "condition_outputs.json").write_text(
         canonical_json_dumps(report["outputs"]), encoding="utf-8"
     )
     (evidence_dir / "score_deltas.json").write_text(canonical_json_dumps(deltas), encoding="utf-8")
+    (evidence_dir / "outcome_scores.json").write_text(
+        canonical_json_dumps(
+            {
+                "A_baseline": {
+                    "transfer": a["mean_outcome_task_score_transfer"],
+                    "control": a["mean_outcome_task_score_control"],
+                },
+                "B_provisional": {
+                    "transfer": b["mean_outcome_task_score_transfer"],
+                    "control": b["mean_outcome_task_score_control"],
+                },
+                "C_promoted": {
+                    "transfer": c["mean_outcome_task_score_transfer"],
+                    "control": c["mean_outcome_task_score_control"],
+                },
+                "R_rollback_L1": rollback_summary["outcome_task_score"],
+            }
+        ),
+        encoding="utf-8",
+    )
     (evidence_dir / "provenance.json").write_text(
         canonical_json_dumps(
             {

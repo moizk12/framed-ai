@@ -11,10 +11,12 @@ from framed.cognition.demo.slice_b4_later_behavior import (
     COMPOSITION_FAILURE_MARKER,
     FROZEN_CASES,
     FROZEN_METRICS,
+    INDEPENDENT_TRANSFER_OUTCOME,
     apply_frozen_recognizer,
     freeze_evaluation_protocol,
     run_b4_evaluation,
     score_observation,
+    score_outcome_task,
 )
 from framed.cognition.ledger.artefact_store import artefact_hash
 from framed.cognition.ledger.sqlite_store import reset_ledger
@@ -35,13 +37,36 @@ def test_frozen_protocol_is_defined_before_results():
     assert roles.count("transfer") >= 2
     assert roles.count("control") >= 2
     assert FROZEN_METRICS["defined_before_results"] is True
-    assert "mean(C.transfer_task_score) > mean(B.transfer_task_score)" in FROZEN_METRICS["pass_criteria"]
-    assert COMPOSITION_FAILURE_MARKER in FROZEN_METRICS["later_task"]
+    assert "mean(C.outcome_task_score transfer) > mean(B.outcome_task_score transfer)" in FROZEN_METRICS[
+        "closeout_pass_criteria"
+    ]
+    assert INDEPENDENT_TRANSFER_OUTCOME in FROZEN_METRICS["later_task"]
     naive = " ".join(c["naive_hypothesis"] for c in FROZEN_CASES)
+    assert INDEPENDENT_TRANSFER_OUTCOME not in naive
     assert COMPOSITION_FAILURE_MARKER not in naive
 
 
-def test_frozen_recognizer_adopts_only_accepted_belief():
+def test_outcome_scorer_uses_only_task_output():
+    transfer = next(c for c in FROZEN_CASES if c["role"] == "transfer")
+    control = next(c for c in FROZEN_CASES if c["role"] == "control")
+    success = score_outcome_task(
+        transfer,
+        f"{transfer['naive_hypothesis']} {INDEPENDENT_TRANSFER_OUTCOME}",
+    )
+    fail = score_outcome_task(transfer, transfer["naive_hypothesis"])
+    assert success["outcome_task_score"] == 1
+    assert fail["outcome_task_score"] == 0
+    assert score_outcome_task(control, control["naive_hypothesis"])["outcome_task_score"] == 1
+    assert (
+        score_outcome_task(
+            control,
+            f"{control['naive_hypothesis']} {INDEPENDENT_TRANSFER_OUTCOME}",
+        )["outcome_task_score"]
+        == 0
+    )
+
+
+def test_frozen_recognizer_appends_outcome_only_for_accepted_belief():
     class _Ref:
         def __init__(self, status: str):
             self.scene_signature = "interior_scene"
@@ -63,35 +88,16 @@ def test_frozen_recognizer_adopts_only_accepted_belief():
     none_sess = _Session("accepted")
     none_sess.deliberation_context.memory_references = []
     baseline = apply_frozen_recognizer(case, none_sess)
-    assert COMPOSITION_FAILURE_MARKER in accepted["recognition"]["what_i_see"]
-    assert COMPOSITION_FAILURE_MARKER not in provisional["recognition"]["what_i_see"]
-    assert COMPOSITION_FAILURE_MARKER not in baseline["recognition"]["what_i_see"]
-    assert "Provisional prior noted" in provisional["recognition"]["what_i_see"]
+    accepted_hyp = accepted["recognition"]["what_i_see"]
+    provisional_hyp = provisional["recognition"]["what_i_see"]
+    assert INDEPENDENT_TRANSFER_OUTCOME in accepted_hyp
+    assert COMPOSITION_FAILURE_MARKER not in accepted_hyp
+    assert INDEPENDENT_TRANSFER_OUTCOME not in provisional_hyp
+    assert INDEPENDENT_TRANSFER_OUTCOME not in baseline["recognition"]["what_i_see"]
+    assert "Provisional prior noted" in provisional_hyp
 
 
-def test_control_score_penalizes_promoted_bias():
-    case = next(c for c in FROZEN_CASES if c["role"] == "control")
-    clean = score_observation(
-        case,
-        {
-            "primary_hypothesis": case["naive_hypothesis"],
-            "retrieved_source": False,
-            "strategy_hint": "standard",
-        },
-    )
-    biased = score_observation(
-        case,
-        {
-            "primary_hypothesis": f"{case['naive_hypothesis']} {COMPOSITION_FAILURE_MARKER}",
-            "retrieved_source": True,
-            "strategy_hint": "consider_promoted_belief",
-        },
-    )
-    assert clean["control_task_score"] == 1
-    assert biased["control_task_score"] == 0
-
-
-def test_b4_later_behavior_evaluation(cognition_env):
+def test_b4_later_behavior_closeout(cognition_env):
     _, tmp_path = cognition_env
     evidence = tmp_path / "b4_evidence"
     freeze_evaluation_protocol(evidence)
@@ -117,35 +123,30 @@ def test_b4_later_behavior_evaluation(cognition_env):
     n1_c = next(o for o in report["outputs"]["C_promoted"] if o["case_id"] == "N1")
     n2_c = next(o for o in report["outputs"]["C_promoted"] if o["case_id"] == "N2")
 
-    assert a_l1["retrieved_source"] is False
-    assert a_l1["strategy_hint"] == "standard"
-    assert b_l1["retrieved_source"] is True
-    assert b_l1["source_epistemic_status"] == "provisional"
-    assert b_l1["strategy_hint"] == "consider_prior_provisional_experience"
-    assert c_l1["retrieved_source"] is True
-    assert c_l1["source_epistemic_status"] == "accepted"
-    assert c_l1["source_memory_role"] == "promoted_belief"
-    assert c_l1["strategy_hint"] == "consider_promoted_belief"
-    assert n1_c["retrieved_source"] is False
-    assert n2_c["retrieved_source"] is False
-    assert n1_c["strategy_hint"] != "consider_promoted_belief"
-    assert n2_c["strategy_hint"] != "consider_promoted_belief"
+    assert a_l1["scores"]["outcome_task_score"] == 0
+    assert b_l1["scores"]["outcome_task_score"] == 0
+    assert c_l1["scores"]["outcome_task_score"] == 1
+    assert INDEPENDENT_TRANSFER_OUTCOME in c_l1["primary_hypothesis"]
+    assert COMPOSITION_FAILURE_MARKER not in c_l1["primary_hypothesis"]
+    assert n1_c["scores"]["outcome_task_score"] == 1
+    assert n2_c["scores"]["outcome_task_score"] == 1
+    assert n1_c["primary_hypothesis"] == next(x for x in FROZEN_CASES if x["case_id"] == "N1")["naive_hypothesis"]
+    assert n2_c["primary_hypothesis"] == next(x for x in FROZEN_CASES if x["case_id"] == "N2")["naive_hypothesis"]
 
-    assert report["score_deltas"]["changed_without_improvement_B_vs_A"] is True
-    assert report["score_deltas"]["C_minus_B_transfer"] > 0
-    assert report["score_deltas"]["B_minus_A_transfer"] == 0
-    assert c["mean_control_task_score"] == 1.0
+    assert report["score_deltas"]["changed_without_outcome_improvement_B_vs_A"] is True
+    assert report["score_deltas"]["C_minus_B_outcome_transfer"] > 0
+    assert report["score_deltas"]["B_minus_A_outcome_transfer"] == 0
+    assert c["mean_outcome_task_score_control"] == 1.0
     assert report["regressions"]["control_case_ids"] == []
 
     rollback = report["rollback"]
-    assert rollback["transfer_task_score"] == b_l1["scores"]["transfer_task_score"]
-    assert rollback["strategy_hint"] == b_l1["strategy_hint"]
-    assert rollback["source_epistemic_status"] == "provisional"
+    assert rollback["outcome_task_score"] == b_l1["scores"]["outcome_task_score"]
     assert rollback["to_state_version_id"] == report["train"]["parent_state_version_id"]
 
     assert report["outputs"]["C_promoted"][0]["state_version_id"] == report["promoted_state_version_id"]
-    assert report["verdict"] == "B4 PASS — MEASURABLE LATER-BEHAVIOR IMPROVEMENT PROVEN"
+    assert report["verdict"] == "B4 CLOSEOUT PASS — INDEPENDENT OUTCOME IMPROVEMENT PROVEN"
     assert report["status"] == "PASS"
+    assert (evidence / "outcome_scores.json").exists()
 
 
 def test_b4_metrics_are_not_weakened_after_results(cognition_env):
