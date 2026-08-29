@@ -1,8 +1,8 @@
 """B4 held-out later-behavior evaluation.
 
 Proves or fails the claim that promotion produces measurably better later
-behavior on untouched later cases. Frozen cases and metrics are written before
-any promoted-state later run. Proposal generation never sees held-out cases.
+behavior on untouched later cases. Observable case inputs are separated from
+hidden evaluator-only ground truth. Proposal generation never sees held-out cases.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from framed.cognition.contracts.runs import RunMode, RunPurpose
 from framed.cognition.demo.slice_a_e1_e2 import (
@@ -28,7 +28,6 @@ from framed.cognition.identity import get_identity
 from framed.cognition.ledger.artefact_store import artefact_hash, canonical_json_dumps
 from framed.cognition.ledger.sqlite_store import (
     clear_ledger,
-    get_ledger,
     release_ledger_store,
     reset_ledger,
 )
@@ -39,12 +38,12 @@ from framed.cognition.learning.proposals import generate_proposal
 from framed.cognition.learning.rollback import rollback_promoted_state
 
 COMPOSITION_FAILURE_MARKER = "COMPOSITION_FAILURE_MODE"
-# Frozen task-level outcome for transfer cases. Scorer inspects only this phrase in output.
-INDEPENDENT_TRANSFER_OUTCOME = "request composition evidence before finalizing critique"
+ACTION_REQUEST_COMPOSITION = "request_composition_evidence"
+ACTION_FINALIZE_STANDARD = "finalize_standard_critique"
 FROZEN_MODEL_ID = "b4-frozen-recognizer"
 FROZEN_SEED = "b4-later-behavior-v1"
 
-# Frozen before any later-case execution. Do not edit after seeing results.
+# Observable inputs only. Recognizer/controller may read these fields.
 FROZEN_CASES: Tuple[Dict[str, Any], ...] = (
     {
         "case_id": "L1",
@@ -53,8 +52,7 @@ FROZEN_CASES: Tuple[Dict[str, Any], ...] = (
         "image_bytes": "b4-later-interior-heldout-1",
         "naive_hypothesis": "Interior scene with visible clutter.",
         "naive_confidence": 0.58,
-        "expected_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
-        "note": "Held-out same-category interior. Must not be used to train or select the proposal.",
+        "composition_risk_signal": "elevated",
     },
     {
         "case_id": "L2",
@@ -63,8 +61,16 @@ FROZEN_CASES: Tuple[Dict[str, Any], ...] = (
         "image_bytes": "b4-later-interior-heldout-2",
         "naive_hypothesis": "Another interior with dense objects.",
         "naive_confidence": 0.57,
-        "expected_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
-        "note": "Second held-out same-category interior. Independent asset from L1 and E1/E2.",
+        "composition_risk_signal": "elevated",
+    },
+    {
+        "case_id": "L3",
+        "role": "near_miss",
+        "scene_type": "interior_scene",
+        "image_bytes": "b4-later-interior-heldout-near-miss",
+        "naive_hypothesis": "Tidy interior with balanced framing.",
+        "naive_confidence": 0.59,
+        "composition_risk_signal": "low",
     },
     {
         "case_id": "N1",
@@ -73,7 +79,7 @@ FROZEN_CASES: Tuple[Dict[str, Any], ...] = (
         "image_bytes": "b4-control-street-heldout-1",
         "naive_hypothesis": "Layered street composition with pedestrian flow.",
         "naive_confidence": 0.60,
-        "note": "Negative control: different category. Promotion must not apply interior composition belief.",
+        "composition_risk_signal": "elevated",
     },
     {
         "case_id": "N2",
@@ -82,34 +88,42 @@ FROZEN_CASES: Tuple[Dict[str, Any], ...] = (
         "image_bytes": "b4-control-screenshot-heldout-1",
         "naive_hypothesis": "Software interface screenshot.",
         "naive_confidence": 0.62,
-        "note": "Negative control: screenshot/UI. Promotion must not bias all later outputs.",
+        "composition_risk_signal": "low",
     },
 )
 
+# Evaluator-only oracle. Never passed to recognizer, proposal generation, or runtime controller.
+FROZEN_ORACLE: Dict[str, Dict[str, str]] = {
+    "L1": {"expected_critique_action": ACTION_REQUEST_COMPOSITION},
+    "L2": {"expected_critique_action": ACTION_REQUEST_COMPOSITION},
+    "L3": {"expected_critique_action": ACTION_FINALIZE_STANDARD},
+    "N1": {"expected_critique_action": ACTION_FINALIZE_STANDARD},
+    "N2": {"expected_critique_action": ACTION_FINALIZE_STANDARD},
+}
+
 FROZEN_METRICS: Dict[str, Any] = {
-    "schema": "b4_later_behavior_metrics_v2",
+    "schema": "b4_later_behavior_metrics_v3",
     "defined_before_results": True,
     "later_task": (
-        "On held-out same-category interiors, later critique must reach the frozen task outcome "
-        f"({INDEPENDENT_TRANSFER_OUTCOME!r}). On held-out different-category scenes, the naive "
-        "hypothesis must remain unchanged."
+        "Choose critique_action from observable scene features and retrieved belief. "
+        "Elevated composition risk plus accepted same-scene composition-failure belief "
+        f"should yield {ACTION_REQUEST_COMPOSITION!r}; low-risk interiors and non-interior "
+        f"scenes should remain {ACTION_FINALIZE_STANDARD!r}."
     ),
-    "changed_vs_improved": (
-        "Changed behavior is any difference in retrieval, strategy_hint, epistemic_status, "
-        "trust_level, or hypothesis text. Improved behavior is only an increase in "
-        "outcome_task_score without a decrease in control outcome_task_score."
+    "observable_vs_hidden": (
+        "FROZEN_CASES are observable inputs only. FROZEN_ORACLE is evaluator-only ground "
+        "truth and is never read by apply_frozen_recognizer or proposal generation."
     ),
     "frozen_recognizer_policy": (
-        "Identical frozen recognizer for all conditions. Naive hypothesis is the starting "
-        "output. A retrieved same-scene prior containing the failure marker may influence "
-        "reasoning internally; only an accepted prior may append the frozen transfer outcome "
-        "phrase to the task output. Provisional priors may be noted but must not append the "
-        "transfer outcome. Confidence never increases."
+        "Identical frozen recognizer for all conditions. Default action is finalize_standard_critique. "
+        "A retrieved same-scene prior containing the failure marker may license "
+        "request_composition_evidence only when epistemic_status is accepted and the observable "
+        "composition_risk_signal is elevated. Provisional priors may be noted in hypothesis text "
+        "but must not change critique_action. Confidence never increases."
     ),
     "outcome_task_score": (
-        "Transfer: 1 iff primary_hypothesis contains the case frozen expected_transfer_outcome "
-        "string. Control: 1 iff primary_hypothesis equals the case frozen naive_hypothesis "
-        "(trimmed). Scorer inspects only primary_hypothesis and frozen case fields."
+        "1 iff emitted critique_action equals the hidden oracle expected_critique_action for case_id. "
+        "Scorer inspects only critique_action and FROZEN_ORACLE."
     ),
     "outcome_scorer_forbidden_inputs": [
         "COMPOSITION_FAILURE_MODE",
@@ -118,94 +132,117 @@ FROZEN_METRICS: Dict[str, Any] = {
         "promotion state",
         "strategy_hint",
         "internal provenance fields",
+        "observable case fields beyond emitted task output",
     ],
-    "mechanism_transfer_task_score": (
-        "Legacy diagnostic only: 1 if primary_hypothesis contains COMPOSITION_FAILURE_MARKER. "
-        "Not used for scientific closeout."
-    ),
-    "mechanism_control_task_score": (
-        "Legacy diagnostic only. Not used for scientific closeout."
-    ),
-    "condition_outcome_score": "mean(outcome_task_score for transfer) + mean(outcome_task_score for control)",
+    "condition_outcome_score": "mean(outcome_task_score for transfer) + mean(outcome_task_score for near_miss+control)",
     "closeout_pass_criteria": [
-        "At least two transfer cases and two control cases are frozen before promoted later runs.",
+        "At least two transfer cases, one near_miss, and two controls frozen before promoted later runs.",
         "mean(C.outcome_task_score transfer) > mean(B.outcome_task_score transfer)",
         "mean(C.outcome_task_score transfer) > mean(A.outcome_task_score transfer)",
-        "mean(A.outcome_task_score control) == mean(B.outcome_task_score control) == mean(C.outcome_task_score control) == 1.0",
+        "mean(A.outcome_task_score near_miss+control) == mean(B) == mean(C) == 1.0",
         "mean(B.outcome_task_score transfer) == mean(A.outcome_task_score transfer)",
+        "Near-miss L3 stays correct under promotion (no blind interior-wide action).",
         "No transfer case has C.outcome_task_score < B.outcome_task_score",
         "Rollback later transfer outcome_task_score matches provisional, not promoted.",
-        "Held-out case ids and expected_transfer_outcome are absent from the proposal payload.",
-        "Metrics artefact hash at scoring equals the hash frozen before later runs.",
+        "Held-out case ids and oracle actions absent from proposal payload.",
+        "Metrics and oracle hashes at scoring equal hashes frozen before later runs.",
         "Provenance closes outcome → proposal → evaluation → decision → promoted state → later C run.",
     ],
 }
 
 
+def observable_case(case: Mapping[str, Any]) -> Dict[str, Any]:
+    """Fields visible to the recognizer/controller under evaluation."""
+    return {
+        "case_id": case["case_id"],
+        "role": case["role"],
+        "scene_type": case["scene_type"],
+        "image_bytes": case["image_bytes"],
+        "naive_hypothesis": case["naive_hypothesis"],
+        "naive_confidence": case["naive_confidence"],
+        "composition_risk_signal": case["composition_risk_signal"],
+    }
+
+
 def freeze_evaluation_protocol(evidence_dir: Path) -> Dict[str, str]:
-    """Persist cases and metrics before any promoted later-case execution."""
+    """Persist observable cases, hidden oracle, and metrics before promoted later runs."""
     evidence_dir.mkdir(parents=True, exist_ok=True)
     cases_payload = {
-        "schema": "b4_frozen_cases_v1",
-        "cases": list(FROZEN_CASES),
-        "composition_failure_marker": COMPOSITION_FAILURE_MARKER,
-        "independent_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
+        "schema": "b4_frozen_observable_cases_v1",
+        "cases": [observable_case(c) for c in FROZEN_CASES],
         "frozen_model_id": FROZEN_MODEL_ID,
         "frozen_seed": FROZEN_SEED,
     }
+    oracle_payload = {
+        "schema": "b4_frozen_oracle_v1",
+        "oracle": dict(FROZEN_ORACLE),
+    }
     metrics_payload = dict(FROZEN_METRICS)
     cases_hash = artefact_hash(cases_payload)
+    oracle_hash = artefact_hash(oracle_payload)
     metrics_hash = artefact_hash(metrics_payload)
     (evidence_dir / "frozen_cases.json").write_text(canonical_json_dumps(cases_payload), encoding="utf-8")
+    (evidence_dir / "frozen_oracle.json").write_text(canonical_json_dumps(oracle_payload), encoding="utf-8")
     (evidence_dir / "frozen_metrics.json").write_text(canonical_json_dumps(metrics_payload), encoding="utf-8")
     freeze_record = {
         "schema": "b4_freeze_record_v1",
         "cases_hash": cases_hash,
+        "oracle_hash": oracle_hash,
         "metrics_hash": metrics_hash,
         "case_ids": [c["case_id"] for c in FROZEN_CASES],
         "frozen_before_promoted_later_runs": True,
     }
     (evidence_dir / "freeze_record.json").write_text(canonical_json_dumps(freeze_record), encoding="utf-8")
-    return {"cases_hash": cases_hash, "metrics_hash": metrics_hash}
+    return {"cases_hash": cases_hash, "oracle_hash": oracle_hash, "metrics_hash": metrics_hash}
 
 
-def apply_frozen_recognizer(case: Dict[str, Any], session: Any) -> Dict[str, Any]:
-    """Frozen identical model. Consumes real cognition-path context only."""
-    hypothesis = str(case["naive_hypothesis"])
-    confidence = float(case["naive_confidence"])
+def _synthetic_intelligence_with_action(
+    hypothesis: str,
+    confidence: float,
+    critique_action: str,
+) -> Dict[str, Any]:
+    intel = _synthetic_intelligence(hypothesis, confidence)
+    intel["recognition"]["critique_action"] = critique_action
+    return intel
+
+
+def apply_frozen_recognizer(observable: Mapping[str, Any], session: Any) -> Dict[str, Any]:
+    """Frozen identical model. Reads observable inputs and cognition context only."""
+    hypothesis = str(observable["naive_hypothesis"])
+    confidence = float(observable["naive_confidence"])
+    critique_action = ACTION_FINALIZE_STANDARD
+    risk = str(observable.get("composition_risk_signal") or "low")
     refs = list(session.deliberation_context.memory_references)
     for ref in refs:
         summary = ref.hypothesis_summary or ""
-        if ref.scene_signature != case["scene_type"]:
+        if ref.scene_signature != observable["scene_type"]:
             continue
         if COMPOSITION_FAILURE_MARKER not in summary:
             continue
-        if ref.epistemic_status == "accepted":
-            expected = str(case.get("expected_transfer_outcome") or "")
-            if expected:
-                hypothesis = f"{hypothesis} {expected}"
+        if ref.epistemic_status == "accepted" and risk == "elevated":
+            critique_action = ACTION_REQUEST_COMPOSITION
             confidence = min(confidence, 0.50)
         elif ref.epistemic_status == "provisional":
             hypothesis = f"{hypothesis} Provisional prior noted; not adopted as belief."
             confidence = min(confidence, 0.50)
         break
-    return _synthetic_intelligence(hypothesis, confidence)
+    return _synthetic_intelligence_with_action(hypothesis, confidence, critique_action)
 
 
 def _observe(case: Dict[str, Any], session: Any, source_episode_id: str) -> Dict[str, Any]:
     refs = list(session.deliberation_context.memory_references)
     source_ref = next((r for r in refs if r.source_episode_id == source_episode_id), None)
-    hypothesis = session.deliberation_context.prior_hypothesis
     return {
         "case_id": case["case_id"],
         "role": case["role"],
         "scene_type": case["scene_type"],
+        "composition_risk_signal": case["composition_risk_signal"],
         "run_id": session.run_id,
         "episode_id": session.episode_id,
         "state_version_id": session.state_version_id,
         "strategy_hint": session.deliberation_context.strategy_hint or "standard",
         "requested_evidence": list(session.deliberation_context.requested_evidence),
-        "prior_hypothesis": hypothesis,
+        "prior_hypothesis": session.deliberation_context.prior_hypothesis,
         "retrieved_episode_ids": [r.source_episode_id for r in refs],
         "retrieved_source": source_ref is not None,
         "source_epistemic_status": None if source_ref is None else source_ref.epistemic_status,
@@ -218,11 +255,11 @@ def _observe(case: Dict[str, Any], session: Any, source_episode_id: str) -> Dict
     }
 
 
-def _attach_hypothesis(observed: Dict[str, Any], intelligence: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
-    hyp = str((intelligence.get("recognition") or {}).get("what_i_see") or "")
-    conf = float((intelligence.get("recognition") or {}).get("confidence") or 0.0)
-    observed["primary_hypothesis"] = hyp
-    observed["confidence"] = conf
+def _attach_task_output(observed: Dict[str, Any], intelligence: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    recognition = intelligence.get("recognition") or {}
+    observed["primary_hypothesis"] = str(recognition.get("what_i_see") or "")
+    observed["critique_action"] = str(recognition.get("critique_action") or "")
+    observed["confidence"] = float(recognition.get("confidence") or 0.0)
     prov = result.get("cognition_provenance") or {}
     observed["frozen_deliberation_input_hash"] = prov.get("frozen_deliberation_input_hash")
     observed["deliberation_snapshot_hash"] = prov.get("deliberation_snapshot_hash")
@@ -230,28 +267,22 @@ def _attach_hypothesis(observed: Dict[str, Any], intelligence: Dict[str, Any], r
     return observed
 
 
-def score_outcome_task(case: Dict[str, Any], primary_hypothesis: str) -> Dict[str, Any]:
-    """Task-level scorer. Uses only frozen case fields and primary_hypothesis."""
-    hyp = str(primary_hypothesis or "").strip()
-    if case["role"] == "transfer":
-        expected = str(case.get("expected_transfer_outcome") or "")
-        outcome_score = 1 if expected and expected in hyp else 0
-        return {
-            "case_id": case["case_id"],
-            "role": case["role"],
-            "outcome_task_score": outcome_score,
-        }
-    naive = str(case.get("naive_hypothesis") or "").strip()
+def score_outcome_task(case_id: str, critique_action: str, oracle: Optional[Mapping[str, Mapping[str, str]]] = None) -> Dict[str, Any]:
+    """Task-level scorer. Uses only emitted critique_action and hidden oracle."""
+    oracle = oracle or FROZEN_ORACLE
+    expected = str((oracle.get(case_id) or {}).get("expected_critique_action") or "")
+    emitted = str(critique_action or "")
     return {
-        "case_id": case["case_id"],
-        "role": case["role"],
-        "outcome_task_score": 1 if hyp == naive else 0,
+        "case_id": case_id,
+        "outcome_task_score": 1 if expected and emitted == expected else 0,
+        "expected_critique_action": expected,
+        "emitted_critique_action": emitted,
     }
 
 
 def score_observation(case: Dict[str, Any], observed: Dict[str, Any]) -> Dict[str, Any]:
+    outcome = score_outcome_task(case["case_id"], observed.get("critique_action", ""))
     primary_hyp = str(observed.get("primary_hypothesis") or "")
-    outcome = score_outcome_task(case, primary_hyp)
     marker_in_hyp = COMPOSITION_FAILURE_MARKER in primary_hyp
     if case["role"] == "transfer":
         mechanism_transfer = 1 if marker_in_hyp else 0
@@ -268,10 +299,11 @@ def score_observation(case: Dict[str, Any], observed: Dict[str, Any]) -> Dict[st
         "retrieved_source": bool(observed.get("retrieved_source")),
         "strategy_hint": observed.get("strategy_hint"),
         "source_epistemic_status": observed.get("source_epistemic_status"),
-        "marker_in_hypothesis": marker_in_hyp,
+        "critique_action": observed.get("critique_action"),
     }
     return {
         **outcome,
+        "role": case["role"],
         "transfer_task_score": mechanism_transfer,
         "control_task_score": mechanism_control,
         "changed_behavior": changed,
@@ -306,7 +338,6 @@ def _run_later_case(
     image_path = _write_temp_image(case["image_bytes"].encode("utf-8"))
     try:
         result = _synthetic_result(case["scene_type"])
-        session = None
         from framed.cognition.integration.pipeline_hook import begin_cognition_run, finalize_cognition_run
 
         session = begin_cognition_run(
@@ -319,10 +350,10 @@ def _run_later_case(
         )
         if session is None:
             raise RuntimeError("Cognition session failed for later case")
-        intelligence = apply_frozen_recognizer(case, session)
+        intelligence = apply_frozen_recognizer(observable_case(case), session)
         out = finalize_cognition_run(session, result, intelligence)
         observed = _observe(case, session, source_episode_id)
-        observed = _attach_hypothesis(observed, intelligence, out)
+        observed = _attach_task_output(observed, intelligence, out)
         observed["scores"] = score_observation(case, observed)
         return observed
     finally:
@@ -358,27 +389,33 @@ def _run_condition_cases(
 
 def _condition_summary(outputs: List[Dict[str, Any]]) -> Dict[str, Any]:
     transfer_outcomes = [o["scores"]["outcome_task_score"] for o in outputs if o["role"] == "transfer"]
-    control_outcomes = [o["scores"]["outcome_task_score"] for o in outputs if o["role"] == "control"]
+    guard_outcomes = [o["scores"]["outcome_task_score"] for o in outputs if o["role"] in ("near_miss", "control")]
     mean_outcome_t = _mean(transfer_outcomes)
-    mean_outcome_c = _mean(control_outcomes)
+    mean_outcome_g = _mean(guard_outcomes)
     condition_outcome_score = (
-        None if mean_outcome_t is None or mean_outcome_c is None else mean_outcome_t + mean_outcome_c
+        None if mean_outcome_t is None or mean_outcome_g is None else mean_outcome_t + mean_outcome_g
     )
     mechanism_transfer = [o["scores"]["transfer_task_score"] for o in outputs if o["role"] == "transfer"]
-    mechanism_control = [o["scores"]["control_task_score"] for o in outputs if o["role"] == "control"]
+    mechanism_control = [o["scores"]["control_task_score"] for o in outputs if o["role"] in ("near_miss", "control")]
     return {
         "mean_outcome_task_score_transfer": mean_outcome_t,
-        "mean_outcome_task_score_control": mean_outcome_c,
+        "mean_outcome_task_score_guard": mean_outcome_g,
         "condition_outcome_score": condition_outcome_score,
         "mean_transfer_task_score": _mean(mechanism_transfer),
         "mean_control_task_score": _mean(mechanism_control),
         "n_transfer": len(transfer_outcomes),
-        "n_control": len(control_outcomes),
+        "n_guard": len(guard_outcomes),
         "outputs": outputs,
     }
 
 
-def _pass_fail(a: Dict[str, Any], b: Dict[str, Any], c: Dict[str, Any], rollback: Dict[str, Any], checks: List[Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
+def _pass_fail(
+    a: Dict[str, Any],
+    b: Dict[str, Any],
+    c: Dict[str, Any],
+    rollback: Dict[str, Any],
+    checks: List[Dict[str, Any]],
+) -> Tuple[str, List[Dict[str, Any]]]:
     reasons: List[Dict[str, Any]] = []
 
     def add(name: str, passed: bool, **extra: Any) -> None:
@@ -386,9 +423,9 @@ def _pass_fail(a: Dict[str, Any], b: Dict[str, Any], c: Dict[str, Any], rollback
 
     add(
         "frozen_case_counts",
-        a["n_transfer"] >= 2 and a["n_control"] >= 2,
+        a["n_transfer"] >= 2 and a["n_guard"] >= 3,
         n_transfer=a["n_transfer"],
-        n_control=a["n_control"],
+        n_guard=a["n_guard"],
     )
     add(
         "promoted_outcome_beats_provisional",
@@ -403,13 +440,19 @@ def _pass_fail(a: Dict[str, Any], b: Dict[str, Any], c: Dict[str, Any], rollback
         A=a["mean_outcome_task_score_transfer"],
     )
     add(
-        "control_outcomes_unchanged",
-        a["mean_outcome_task_score_control"] == 1.0
-        and b["mean_outcome_task_score_control"] == 1.0
-        and c["mean_outcome_task_score_control"] == 1.0,
-        A=a["mean_outcome_task_score_control"],
-        B=b["mean_outcome_task_score_control"],
-        C=c["mean_outcome_task_score_control"],
+        "guard_outcomes_unchanged",
+        a["mean_outcome_task_score_guard"] == 1.0
+        and b["mean_outcome_task_score_guard"] == 1.0
+        and c["mean_outcome_task_score_guard"] == 1.0,
+        A=a["mean_outcome_task_score_guard"],
+        B=b["mean_outcome_task_score_guard"],
+        C=c["mean_outcome_task_score_guard"],
+    )
+    l3_c = next((o for o in c["outputs"] if o["case_id"] == "L3"), None)
+    add(
+        "near_miss_not_blindly_promoted",
+        l3_c is not None and l3_c.get("critique_action") == ACTION_FINALIZE_STANDARD,
+        L3_action=None if l3_c is None else l3_c.get("critique_action"),
     )
     add(
         "provisional_outcome_does_not_already_solve_task",
@@ -418,13 +461,13 @@ def _pass_fail(a: Dict[str, Any], b: Dict[str, Any], c: Dict[str, Any], rollback
         B=b["mean_outcome_task_score_transfer"],
     )
     transfer_regressions = []
-    for a_out, b_out, c_out in zip(a["outputs"], b["outputs"], c["outputs"]):
-        if a_out["role"] != "transfer":
+    for _a_out, b_out, c_out in zip(a["outputs"], b["outputs"], c["outputs"]):
+        if _a_out["role"] != "transfer":
             continue
         b_score = b_out["scores"]["outcome_task_score"] or 0
         c_score = c_out["scores"]["outcome_task_score"] or 0
         if c_score < b_score:
-            transfer_regressions.append(a_out["case_id"])
+            transfer_regressions.append(_a_out["case_id"])
     add("no_transfer_outcome_regression", not transfer_regressions, cases=transfer_regressions)
     add(
         "rollback_outcome_matches_provisional",
@@ -438,11 +481,18 @@ def _pass_fail(a: Dict[str, Any], b: Dict[str, Any], c: Dict[str, Any], rollback
     for check in checks:
         add(check["name"], check["pass"], **{k: v for k, v in check.items() if k not in ("name", "pass")})
     verdict = (
-        "B4 CLOSEOUT PASS — INDEPENDENT OUTCOME IMPROVEMENT PROVEN"
+        "B4 CLOSEOUT PASS — LEAKAGE-FREE INDEPENDENT OUTCOME IMPROVEMENT PROVEN"
         if all(r["pass"] for r in reasons)
         else "B4 CLOSEOUT FAIL — INDEPENDENT OUTCOME IMPROVEMENT NOT PROVEN"
     )
     return verdict, reasons
+
+
+def _oracle_leak_targets() -> List[str]:
+    targets = list(FROZEN_ORACLE.keys())
+    for entry in FROZEN_ORACLE.values():
+        targets.append(entry["expected_critique_action"])
+    return targets
 
 
 def _seed_train(cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
@@ -502,13 +552,11 @@ def _seed_train(cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
             ledger=ledger,
         )
         proposal = generate_proposal(outcome_id=outcome["outcome_id"], ledger=ledger)
-        held_out_ids = [c["case_id"] for c in FROZEN_CASES]
-        held_out_phrases = [c.get("expected_transfer_outcome", "") for c in FROZEN_CASES if c.get("expected_transfer_outcome")]
         proposal_blob = canonical_json_dumps(proposal)
-        leaked = [cid for cid in held_out_ids if cid in proposal_blob]
-        leaked_phrases = [p for p in held_out_phrases if p and p in proposal_blob]
-        if leaked or leaked_phrases:
-            raise AssertionError(f"Proposal must not mention held-out targets: ids={leaked} phrases={leaked_phrases}")
+        leaked_ids = [cid for cid in FROZEN_ORACLE if cid in proposal_blob]
+        leaked_targets = [t for t in _oracle_leak_targets() if t in proposal_blob]
+        if leaked_ids or leaked_targets:
+            raise AssertionError(f"Proposal must not mention held-out targets: ids={leaked_ids} targets={leaked_targets}")
         evaluation = evaluate_proposal(
             proposal_id=proposal["proposal_id"],
             ledger=ledger,
@@ -529,7 +577,7 @@ def _seed_train(cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
             "evaluation_id": evaluation["evaluation_id"],
             "evaluation_status": evaluation["status"],
             "parent_state_version_id": parent_state["state_version_id"],
-            "held_out_absent_from_proposal": leaked == [] and leaked_phrases == [],
+            "held_out_absent_from_proposal": leaked_ids == [] and leaked_targets == [],
         }
     finally:
         for p in (e1_path, e2_path):
@@ -626,18 +674,18 @@ def _run_b4_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
     metrics_now = artefact_hash(dict(FROZEN_METRICS))
     cases_now = artefact_hash(
         {
-            "schema": "b4_frozen_cases_v1",
-            "cases": list(FROZEN_CASES),
-            "composition_failure_marker": COMPOSITION_FAILURE_MARKER,
-            "independent_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
+            "schema": "b4_frozen_observable_cases_v1",
+            "cases": [observable_case(c) for c in FROZEN_CASES],
             "frozen_model_id": FROZEN_MODEL_ID,
             "frozen_seed": FROZEN_SEED,
         }
     )
+    oracle_now = artefact_hash({"schema": "b4_frozen_oracle_v1", "oracle": dict(FROZEN_ORACLE)})
     protocol_checks = [
         {"name": "held_out_absent_from_proposal", "pass": train["held_out_absent_from_proposal"]},
         {"name": "metrics_hash_unchanged", "pass": metrics_now == freeze["metrics_hash"], "frozen": freeze["metrics_hash"], "now": metrics_now},
         {"name": "cases_hash_unchanged", "pass": cases_now == freeze["cases_hash"], "frozen": freeze["cases_hash"], "now": cases_now},
+        {"name": "oracle_hash_unchanged", "pass": oracle_now == freeze["oracle_hash"], "frozen": freeze["oracle_hash"], "now": oracle_now},
         {
             "name": "provenance_closure",
             "pass": provenance_ok,
@@ -659,16 +707,10 @@ def _run_b4_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
         "to_state_version_id": rollback_rec["to_state_version_id"],
         "case_id": rollback_obs["case_id"],
         "outcome_task_score": rollback_obs["scores"]["outcome_task_score"],
-        "primary_hypothesis": rollback_obs["primary_hypothesis"],
+        "critique_action": rollback_obs["critique_action"],
         "run_id": rollback_obs["run_id"],
     }
-    verdict, reasons = _pass_fail(
-        a,
-        b,
-        c,
-        rollback_summary,
-        protocol_checks,
-    )
+    verdict, reasons = _pass_fail(a, b, c, rollback_summary, protocol_checks)
 
     deltas = {
         "C_minus_B_outcome_transfer": (c["mean_outcome_task_score_transfer"] or 0)
@@ -685,10 +727,10 @@ def _run_b4_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
         ),
     }
     regressions = [r for r in reasons if r["name"] == "no_transfer_outcome_regression" and not r["pass"]]
-    control_regressions = [
+    guard_regressions = [
         o["case_id"]
         for o in c_out
-        if o["role"] == "control" and (o["scores"]["outcome_task_score"] or 0) < 1
+        if o["role"] in ("near_miss", "control") and (o["scores"]["outcome_task_score"] or 0) < 1
     ]
 
     report = {
@@ -724,13 +766,12 @@ def _run_b4_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
         "score_deltas": deltas,
         "regressions": {
             "transfer_cases": regressions,
-            "control_case_ids": control_regressions,
+            "guard_case_ids": guard_regressions,
         },
         "rollback": rollback_summary,
         "pass_fail_reasons": reasons,
         "frozen_model_id": FROZEN_MODEL_ID,
         "frozen_seed": FROZEN_SEED,
-        "independent_transfer_outcome": INDEPENDENT_TRANSFER_OUTCOME,
         "cases": [c["case_id"] for c in FROZEN_CASES],
     }
     (evidence_dir / "condition_outputs.json").write_text(
@@ -742,15 +783,15 @@ def _run_b4_once(*, cognition_dir: Path, evidence_dir: Path) -> Dict[str, Any]:
             {
                 "A_baseline": {
                     "transfer": a["mean_outcome_task_score_transfer"],
-                    "control": a["mean_outcome_task_score_control"],
+                    "guard": a["mean_outcome_task_score_guard"],
                 },
                 "B_provisional": {
                     "transfer": b["mean_outcome_task_score_transfer"],
-                    "control": b["mean_outcome_task_score_control"],
+                    "guard": b["mean_outcome_task_score_guard"],
                 },
                 "C_promoted": {
                     "transfer": c["mean_outcome_task_score_transfer"],
-                    "control": c["mean_outcome_task_score_control"],
+                    "guard": c["mean_outcome_task_score_guard"],
                 },
                 "R_rollback_L1": rollback_summary["outcome_task_score"],
             }
