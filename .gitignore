@@ -24,11 +24,12 @@ build/
 # Local eval artifacts
 eval_outputs/
 
+# Frontend QA evidence
+test-results/
+
 # Cognition runtime (Slice A)
 cognition_data/
 *.sqlite3
 framed-clean.tmp/
 slice_a_live_gate/
 slice_a_live_gate_v2/
-
- 

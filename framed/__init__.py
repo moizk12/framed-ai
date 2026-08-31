@@ -1,5 +1,6 @@
 """Flask application factory."""
 import os
+import tempfile
 from flask import Flask
 from flask_cors import CORS
 
@@ -12,33 +13,70 @@ def create_app(config=None):
     app = Flask(
         __name__,
         template_folder=str(repo_root / 'templates'),
-        static_folder=str(repo_root / 'static'),
+        static_folder=None,
     )
     
-    # Basic configuration
-    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-    from framed.analysis.vision import UPLOAD_DIR
-    app.config['UPLOAD_FOLDER'] = UPLOAD_DIR
+    from framed.public_runtime import runtime_defaults, validate_runtime
+
+    # Public runtime configuration is environment-driven and validated after
+    # callers have had a chance to inject test-only dependencies.
+    app.config.update(runtime_defaults())
+    app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL', '')
+    default_data_dir = os.environ.get("FRAMED_DATA_DIR", os.path.join(tempfile.gettempdir(), "framed"))
+    app.config['UPLOAD_FOLDER'] = os.path.join(default_data_dir, "uploads")
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
     
+    public_boundary_explicit = bool(config and "PUBLIC_BETA_ONLY" in config)
     if config:
         app.config.update(config)
+    if app.config.get("TESTING") and not public_boundary_explicit:
+        app.config["PUBLIC_BETA_ONLY"] = False
+
+    validate_runtime(app.config)
     
     CORS(app, resources={r"/*": {"origins": "*"}})
     
     from framed.routes import main
     app.register_blueprint(main)
+
+    from framed.public_store import PublicBetaStore, build_public_repository
+    app.extensions["framed_public_store"] = PublicBetaStore(build_public_repository(app.config))
+
+    from werkzeug.exceptions import RequestEntityTooLarge
+
+    @app.errorhandler(RequestEntityTooLarge)
+    def public_payload_too_large(_error):
+        from flask import jsonify, request
+        from framed.routes import public_error_payload
+
+        if request.path.startswith("/api/v1/"):
+            return jsonify(public_error_payload("payload_too_large", "The upload exceeds the allowed size.")), 413
+        return {"error": "Payload too large"}, 413
     
     try:
-        from framed.analysis.vision import ensure_directories
-        with app.app_context():
-            ensure_directories()
-    except Exception as e:
-        app.logger.warning(f"Could not pre-create directories: {e}")
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    except OSError as e:
+        app.logger.warning(f"Could not pre-create upload directory: {e}")
     
     @app.route('/health')
     def health():
         """Health check endpoint."""
         return {'status': 'healthy', 'service': 'framed'}, 200
+
+    @app.route('/ready')
+    def ready():
+        """Readiness includes the public PostgreSQL authority."""
+        try:
+            app.extensions["framed_public_store"].ready()
+        except Exception:
+            app.logger.warning("Public persistence readiness check failed", exc_info=True)
+            return {'status': 'not_ready', 'service': 'framed'}, 503
+        return {'status': 'ready', 'service': 'framed'}, 200
+
+    @app.route('/version')
+    def version():
+        from framed.public_runtime import safe_version_payload
+
+        return safe_version_payload(app.config), 200
     
     return app

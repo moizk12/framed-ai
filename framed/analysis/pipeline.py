@@ -47,19 +47,27 @@ def run_full_analysis(
     image_path: str,
     photo_id: str = "",
     filename: str = "",
+    *,
+    public_safe: bool = False,
     cognition_run_purpose: Optional[str] = None,
     baseline_run_id: Optional[str] = None,
     comparison_group_id: Optional[str] = None,
     exclude_run_ids: Optional[str] = None,
     exclude_episode_ids: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run the full pipeline and update ECHO memory on success."""
+    """Run the full pipeline with an explicit public/research boundary.
+
+    ``public_safe`` disables legacy memory, learning, caches, and cognition.
+    Cognition parameters are available only to non-public research callers.
+    """
     ensure_directories()
     try:
         analysis_result = analyze_image(
             image_path,
             photo_id=photo_id,
             filename=filename,
+            disable_cache=public_safe,
+            public_safe=public_safe,
             cognition_run_purpose=cognition_run_purpose,
             baseline_run_id=baseline_run_id,
             comparison_group_id=comparison_group_id,
@@ -71,7 +79,7 @@ def run_full_analysis(
         critical_errors = (analysis_result.get("errors", {}) or {}).get("critical") or (analysis_result.get("errors", {}) or {}).get(
             "image_load"
         )
-        if not critical_errors:
+        if not critical_errors and not public_safe:
             from framed.cognition.integration.pipeline_hook import legacy_writes_allowed
 
             if legacy_writes_allowed():
@@ -89,6 +97,8 @@ def analyze_image(
     photo_id: str = "",
     filename: str = "",
     disable_cache: bool = False,
+    *,
+    public_safe: bool = False,
     cognition_run_purpose: Optional[str] = None,
     baseline_run_id: Optional[str] = None,
     comparison_group_id: Optional[str] = None,
@@ -586,7 +596,7 @@ def analyze_image(
         from framed.cognition.integration.pipeline_hook import legacy_writes_allowed
 
         USE_INTELLIGENCE_CORE = os.getenv("FRAMED_USE_INTELLIGENCE_CORE", "true").lower() == "true"
-        if not USE_INTELLIGENCE_CORE and legacy_writes_allowed():
+        if not USE_INTELLIGENCE_CORE and not public_safe and legacy_writes_allowed():
             try:
                 from .interpret_scene import interpret_scene
                 from .interpretive_memory import create_pattern_signature, query_memory_patterns, store_interpretation
@@ -669,7 +679,8 @@ def analyze_image(
                 temporal_memory_data = {}
                 user_history = {}
                 temporal_signature = None
-                if legacy_writes_allowed():
+                allow_legacy_writes = not public_safe and legacy_writes_allowed()
+                if allow_legacy_writes:
                     from .temporal_memory import (
                         create_pattern_signature as create_temporal_signature,
                         format_temporal_memory_for_intelligence,
@@ -685,7 +696,7 @@ def analyze_image(
                     temporal_signature = create_temporal_signature(visual_evidence, semantic_signals_for_intelligence)
                     temporal_memory_data = format_temporal_memory_for_intelligence(temporal_signature, user_id=photo_id)
                     user_history = temporal_memory_data.get("user_trajectory", {})
-                else:
+                elif not public_safe:
                     from framed.cognition.contracts.runs import RunPurpose
 
                     purpose = None
@@ -707,10 +718,12 @@ def analyze_image(
                 intelligence_output = framed_intelligence(
                     visual_evidence=visual_evidence,
                     analysis_result=result,
-                    temporal_memory=temporal_memory_data if legacy_writes_allowed() else None,
+                    temporal_memory=temporal_memory_data if allow_legacy_writes else None,
                     user_history=user_history,
                     pattern_signature=temporal_signature,
+                    public_safe=public_safe,
                     cognition_context=cognition_session.cognition_context if cognition_session else None,
+                    image_path=path,
                 )
                 log_stage_done("intelligence_core", t_request, t_stage)
 
@@ -718,7 +731,7 @@ def analyze_image(
                 if temporal_signature:
                     result["pattern_signature"] = temporal_signature
 
-                if legacy_writes_allowed():
+                if allow_legacy_writes:
                     from .temporal_memory import (
                         store_interpretation as store_temporal_interpretation,
                         track_user_trajectory,
@@ -747,7 +760,7 @@ def analyze_image(
                         internal_exception_type=type(exc).__name__,
                     )
                     result.setdefault("cognition_provenance", {}).update(fail_info)
-                elif cognition_enabled():
+                elif not public_safe and cognition_enabled():
                     result.setdefault("cognition_provenance", {}).update(
                         {
                             "status": "failed",
@@ -760,7 +773,7 @@ def analyze_image(
         else:
             result["intelligence"] = {}
 
-        if file_hash:
+        if file_hash and not public_safe:
             t_stage = time.perf_counter()
             to_cache = strip_cognition_from_result(result) if cognition_enabled() else result
             save_cached_analysis(file_hash, to_cache)

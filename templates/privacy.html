@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Privacy — FRAMED{% endblock %}
+{% block content %}
+<article class="privacy-page">
+  <header><p class="eyebrow">Public beta privacy note</p><h1>What happens to your photograph.</h1><p class="privacy-lede">FRAMED is being prepared for a public beta. This page states the intended public boundary and distinguishes it from the current implementation.</p></header>
+  <div class="privacy-grid">
+    <section><span>01</span><h2>During analysis</h2><p>Your selected photograph stays in your browser until you submit it. It is then sent to the FRAMED analysis service to produce one critique.</p></section>
+    <section><span>02</span><h2>Raw upload</h2><p>The current Flask request path attempts to delete the uploaded file after analysis, including after failures. Infrastructure-level copies and logs require separate production verification before beta release.</p></section>
+    <section><span>03</span><h2>Records and derivatives</h2><p>Analysis identifiers, public response records, limited derivatives, model/deployment provenance and operational logs may be retained for evaluation, security, debugging and deletion tracking. The final retention schedule will be published before release.</p></section>
+    <section><span>04</span><h2>Your feedback</h2><p>Usefulness votes and optional comments may be attached to the specific analysis. They help evaluate future versions; feedback does not instantly retrain or change FRAMED.</p></section>
+    <section><span>05</span><h2>No public continuity</h2><p>This beta does not promise personal memory, cognitive identity or continuity. An anonymous browser session is not treated as a cognitive identity.</p></section>
+    <section><span>06</span><h2>Before public release</h2><p>Storage, deletion, retention and production processor details remain release gates. This note will be updated with verified operational behavior.</p></section>
+  </div>
+  <a class="button" href="{{ url_for('main.index') }}#critique">Return to the critique studio</a>
+</article>
+{% endblock %}

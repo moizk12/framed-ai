@@ -207,6 +207,7 @@ def finalize_critique_with_reflection(
     mentor_mode: str = "Balanced Mentor",
     hitl_mentor_drift_penalty: float = 0.0,
     regenerate_fn: Optional[Callable[[], str]] = None,
+    public_safe: bool = False,
 ) -> Dict[str, Any]:
     """Apply reflection, optional regeneration, and tentative downgrade."""
     intelligence_output = intelligence_output or {}
@@ -230,7 +231,7 @@ def finalize_critique_with_reflection(
             "vocab_guard_triggered": False,
         }
 
-    if intelligence_output.get("recognition", {}).get("what_i_see"):
+    if intelligence_output.get("recognition", {}).get("what_i_see") and not public_safe:
         try:
             from framed.analysis.self_assessment import store_self_assessment
             store_self_assessment(intelligence_output, reflection)
@@ -251,13 +252,20 @@ def finalize_critique_with_reflection(
             critique = regenerate_fn()
         elif intelligence_output.get("recognition", {}).get("what_i_see"):
             from framed.analysis.expression_layer import generate_poetic_critique, integrate_self_correction
-            critique = generate_poetic_critique(intelligence_output=intelligence_output, mentor_mode=mentor_mode)
-            critique = integrate_self_correction(critique, intelligence_output.get("self_critique", {}))
+            critique = generate_poetic_critique(
+                intelligence_output=intelligence_output,
+                mentor_mode=mentor_mode,
+                public_safe=public_safe,
+            )
+            critique = integrate_self_correction(
+                critique,
+                {} if public_safe else intelligence_output.get("self_critique", {}),
+            )
         elif analysis_result is not None:
             from framed.analysis.vision import generate_merged_critique
             critique = generate_merged_critique(analysis_result, mentor_mode)
         reflection = _reflect(critique, intelligence_output, interpretive_conclusions, hitl_mentor_drift_penalty)
-        if intelligence_output.get("recognition", {}).get("what_i_see") and reflection:
+        if intelligence_output.get("recognition", {}).get("what_i_see") and reflection and not public_safe:
             try:
                 from framed.analysis.self_assessment import store_self_assessment
                 store_self_assessment(intelligence_output, reflection)

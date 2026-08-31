@@ -1,0 +1,14 @@
+{
+  "request_id": "req-empty",
+  "analysis_id": "ana-empty",
+  "status": "complete",
+  "critique": "The frame has a clear tonal center, but the available visual evidence is too limited for a more specific compositional recommendation.",
+  "evidence": {
+    "recognition": { "text": "", "confidence": 0.22 },
+    "scene": { "type": "" },
+    "grounding": { "state": "empty", "boxes": [] },
+    "claim_traces": []
+  },
+  "limitations": ["Detailed recognition and grounding evidence were unavailable for this photograph."],
+  "meta": { "duration_ms": 9000, "cached": false, "contract_version": "1" }
+}

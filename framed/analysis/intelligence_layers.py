@@ -41,6 +41,7 @@ def reason_about_recognition(
     visual_evidence: Dict[str, Any],
     require_multiple_hypotheses: bool = False,
     cognition_context: Optional[Dict[str, Any]] = None,
+    image_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Layer 1: Certain Recognition
@@ -162,6 +163,7 @@ OUTPUT FORMAT (JSON):
             response_format={"type": "json_object"},
             max_tokens=1000,
             temperature=0.3,  # Lower temperature for more deterministic recognition
+            image_path=image_path,
         )
         
         if result.get("error"):
