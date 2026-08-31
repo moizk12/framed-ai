@@ -99,6 +99,7 @@ class PlaceholderProvider(LLMProvider):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         response_format: Optional[Dict[str, Any]] = None,
+        image_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         logger.warning("PLACEHOLDER LLM call model=%s", self.model_name)
         mock_content = {
@@ -181,6 +182,7 @@ def call_model_a(
     temperature: Optional[float] = None,
     response_format: Optional[Dict[str, Any]] = None,
     use_fallback: bool = True,
+    image_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     provider = get_model_a_provider()
     if FRAMED_STRICT_LOCAL and isinstance(provider, ProvidersLocalOpenAICompatProvider):
@@ -203,6 +205,7 @@ def call_model_a(
                 max_tokens=max_tokens,
                 temperature=temperature,
                 response_format=response_format,
+                image_path=image_path,
             )
             if result.get("error"):
                 raise RuntimeError(result["error"])
@@ -227,6 +230,7 @@ def call_model_a(
                     max_tokens=max_tokens,
                     temperature=temperature,
                     response_format=response_format,
+                    image_path=image_path,
                 )
             except Exception as e:
                 logger.error("Fallback Model A failed: %s", e)

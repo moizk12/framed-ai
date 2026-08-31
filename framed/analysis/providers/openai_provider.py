@@ -68,6 +68,7 @@ class OpenAIProvider(LLMProvider):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         response_format: Optional[Dict[str, Any]] = None,
+        image_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         client = self._get_client()
         if not client:

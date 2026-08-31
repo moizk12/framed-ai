@@ -1,5 +1,8 @@
+import base64
 import logging
+import mimetypes
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import requests
@@ -39,6 +42,22 @@ def model_id_registered(model_ids: List[str], want: str) -> bool:
         if w in mid.lower() or mid.lower() in w:
             return True
     return False
+
+
+def build_user_content(prompt: str, image_path: Optional[str] = None) -> Any:
+    """Build standard OpenAI-compatible text or text-plus-image content."""
+    if not image_path:
+        return prompt
+
+    path = Path(image_path)
+    mime_type = mimetypes.guess_type(path.name)[0]
+    if not mime_type or not mime_type.startswith("image/"):
+        raise ValueError(f"Cannot determine image MIME type for {path.name!r}")
+    data_url = f"data:{mime_type};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+    return [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]
 
 
 class LocalOpenAICompatProvider(LLMProvider):
@@ -94,6 +113,7 @@ class LocalOpenAICompatProvider(LLMProvider):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         response_format: Optional[Dict[str, Any]] = None,
+        image_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         client = self._get_client()
         if not client:
@@ -101,21 +121,21 @@ class LocalOpenAICompatProvider(LLMProvider):
 
         max_tokens = max_tokens or self.config.get("max_tokens", 4096)
         temp = temperature if temperature is not None else self.config.get("temperature", 0.5)
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        kwargs: Dict[str, Any] = {
-            "model": self.model_name,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temp,
-        }
-        if response_format and response_format.get("type") not in (None, "json_object"):
-            kwargs["response_format"] = response_format
-
         try:
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": build_user_content(prompt, image_path)})
+
+            kwargs: Dict[str, Any] = {
+                "model": self.model_name,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temp,
+            }
+            if response_format and response_format.get("type") not in (None, "json_object"):
+                kwargs["response_format"] = response_format
+
             resp = client.chat.completions.create(**kwargs)
             msg = resp.choices[0].message if resp.choices else None
             content = (msg.content or "") if msg else ""
