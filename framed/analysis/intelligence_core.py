@@ -52,6 +52,7 @@ def framed_intelligence(
     *,
     public_safe: bool = False,
     cognition_context: Optional[Dict[str, Any]] = None,
+    image_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Main intelligence core function.
@@ -117,6 +118,7 @@ def framed_intelligence(
             ve_l1,
             require_multiple_hypotheses=force_multi,
             cognition_context=cognition_context,
+            image_path=image_path,
         )
         if cognition_context:
             recognition["_cognition_context_used"] = True

@@ -723,6 +723,7 @@ def analyze_image(
                     pattern_signature=temporal_signature,
                     public_safe=public_safe,
                     cognition_context=cognition_session.cognition_context if cognition_session else None,
+                    image_path=path,
                 )
                 log_stage_done("intelligence_core", t_request, t_stage)
 
