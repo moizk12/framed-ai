@@ -34,7 +34,9 @@ jobs:
       - name: Security (bandit)
         run: bandit -r framed -q || true
       - name: Tests
-        run: pytest -q
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: timeout --preserve-status --signal=USR1 1200 pytest -q
       - name: Verify fresh PostgreSQL bootstrap and runtime probes
         env:
           DATABASE_URL: postgresql://framed:framed-ci-password@127.0.0.1:5432/framed_public

@@ -44,14 +44,33 @@ def model_id_registered(model_ids: List[str], want: str) -> bool:
     return False
 
 
+_IMAGE_MIME_BY_SUFFIX = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+}
+
+
+def _image_mime_type(path: Path) -> Optional[str]:
+    mime_type = mimetypes.guess_type(path.name)[0]
+    if mime_type and mime_type.startswith("image/"):
+        return mime_type
+    return _IMAGE_MIME_BY_SUFFIX.get(path.suffix.lower())
+
+
 def build_user_content(prompt: str, image_path: Optional[str] = None) -> Any:
     """Build standard OpenAI-compatible text or text-plus-image content."""
     if not image_path:
         return prompt
 
     path = Path(image_path)
-    mime_type = mimetypes.guess_type(path.name)[0]
-    if not mime_type or not mime_type.startswith("image/"):
+    mime_type = _image_mime_type(path)
+    if not mime_type:
         raise ValueError(f"Cannot determine image MIME type for {path.name!r}")
     data_url = f"data:{mime_type};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
     return [
