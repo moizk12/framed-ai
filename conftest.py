@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import faulthandler
-import gc
 import signal
 
 import pytest
@@ -22,4 +21,3 @@ def _release_cognition_ledger_singleton():
     except ImportError:
         return
     clear_ledger()
-    gc.collect()
