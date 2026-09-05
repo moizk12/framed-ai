@@ -33,3 +33,8 @@ cognition_data/
 framed-clean.tmp/
 slice_a_live_gate/
 slice_a_live_gate_v2/
+
+# Transient scientific runs; already tracked frozen/claim-supporting evidence stays tracked.
+framed/tests/test_runs/run_*/
+framed/tests/test_runs/manual_pass_*/
+.pytest_cache/

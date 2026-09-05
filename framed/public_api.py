@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import time
 import uuid
 from typing import Any
@@ -16,7 +17,7 @@ def run_public_analysis(image_path: str, filename: str) -> tuple[dict, int]:
     """Run the existing analysis core without research persistence."""
     from framed.analysis.critique_finalization import CritiqueRuntimeError, finalize_critique_with_reflection
     from framed.analysis.expression_layer import generate_poetic_critique, integrate_self_correction
-    from framed.analysis.vision import run_full_analysis
+    from framed.analysis.pipeline import run_full_analysis
 
     started = time.perf_counter()
     internal = run_full_analysis(
@@ -31,7 +32,7 @@ def run_public_analysis(image_path: str, filename: str) -> tuple[dict, int]:
 
     intelligence = internal.get("intelligence") if isinstance(internal.get("intelligence"), dict) else {}
     recognition = intelligence.get("recognition") if isinstance(intelligence.get("recognition"), dict) else {}
-    if not recognition.get("what_i_see"):
+    if recognition.get("error") or not isinstance(recognition.get("what_i_see"), str) or not recognition["what_i_see"].strip():
         raise PublicAnalysisUnavailable("recognition_unavailable")
 
     try:
@@ -66,6 +67,10 @@ def build_public_analysis_dto(
     duration_ms: int,
 ) -> dict:
     """Construct the v1 DTO from an explicit public field allowlist."""
+    from framed.analysis.critique_finalization import is_runtime_failure_critique
+    critique = internal.get("critique")
+    if not isinstance(critique, str) or not critique.strip() or is_runtime_failure_critique(critique) or re.search(r"(?i)(\[placeholder\]|traceback \(most recent|\"error\"\s*:|timed out|timeouterror)", critique):
+        raise PublicAnalysisUnavailable("critique_unavailable")
     intelligence = _mapping(internal.get("intelligence"))
     recognition = _mapping(intelligence.get("recognition"))
     perception = _mapping(internal.get("perception"))
@@ -105,6 +110,7 @@ def build_public_analysis_dto(
             "scene": {"type": scene_type},
             "grounding": {"state": grounding_state, "boxes": boxes},
             "claim_traces": claim_traces,
+            "measured_signals": _measured_signals(perception, visual),
         },
         "limitations": limitations,
         "meta": {"duration_ms": duration_ms, "cached": False, "contract_version": "1"},
@@ -133,6 +139,12 @@ def _grounding_enabled() -> bool:
 
 def _public_box(value: Any) -> dict | None:
     box = _mapping(value)
+    # The current probe emits approximate heuristic/mock boxes. Unknown sources
+    # also fail closed; a real detector adapter must explicitly supply its source.
+    if box.get("source") not in {"detector", "segmentation"}:
+        return None
+    if (_number(box.get("confidence")) or 0) < 0.7:
+        return None
     coordinates = {name: _number(box.get(name)) for name in ("x", "y", "w", "h")}
     if any(value is None for value in coordinates.values()):
         return None
@@ -147,6 +159,23 @@ def _public_box(value: Any) -> dict | None:
     if confidence is not None:
         result["confidence"] = max(0.0, min(1.0, confidence))
     return result
+
+
+def _measured_signals(perception: dict, visual: dict) -> list[dict]:
+    technical = _mapping(perception.get("technical"))
+    signals = []
+    for key, label, unit, maximum in (
+        ("brightness", "Mean brightness", " / 255", 255),
+        ("contrast", "Tonal spread", " gray levels", 128),
+        ("sharpness", "Edge response", " Laplacian variance", float("inf")),
+    ):
+        value = _number(technical.get(key))
+        if value is not None and 0 <= value <= maximum:
+            signals.append({"label": label, "value": f"{value:.0f}{unit}"})
+    green = _number(_mapping(visual.get("organic_growth")).get("green_coverage"))
+    if green is not None and 0 <= green <= 1 and _mapping(visual.get("validation")).get("is_valid") is not False:
+        signals.append({"label": "Green pixel coverage", "value": f"{green:.0%}"})
+    return signals
 
 
 def _claim_traces(visual: dict) -> list[dict]:

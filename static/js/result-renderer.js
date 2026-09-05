@@ -37,6 +37,20 @@ export function renderResult(root, payload, previewURL) {
   root.querySelector("[data-confidence]").textContent = confidenceLabel(evidence.recognition?.confidence);
   setText(root.querySelector("[data-scene]"), evidence.scene?.type);
   root.querySelector("[data-grounding]").textContent = groundingLabel(evidence.grounding?.state, evidence.grounding?.boxes);
+  root.querySelector("[data-grounding-row]").hidden = evidence.grounding?.state !== "available" || !evidence.grounding?.boxes?.length;
+  const signals = Array.isArray(evidence.measured_signals) ? evidence.measured_signals : [];
+  const signalsList = root.querySelector("[data-signals-list]");
+  signalsList.replaceChildren();
+  signals.filter((signal) => typeof signal.label === "string" && typeof signal.value === "string").forEach((signal) => {
+    const item = document.createElement("div");
+    const label = document.createElement("dt");
+    const value = document.createElement("dd");
+    label.textContent = signal.label;
+    value.textContent = signal.value;
+    item.append(label, value);
+    signalsList.append(item);
+  });
+  root.querySelector("[data-measured-signals]").hidden = !signalsList.children.length;
 
   const traces = Array.isArray(evidence.claim_traces) ? evidence.claim_traces.map(traceText).filter(Boolean) : [];
   const traceRegion = root.querySelector("[data-claim-traces]");

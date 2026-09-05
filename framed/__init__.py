@@ -33,6 +33,10 @@ def create_app(config=None):
         app.config["PUBLIC_BETA_ONLY"] = False
 
     validate_runtime(app.config)
+    from framed.public_limits import AnalysisLimiter
+    app.extensions["framed_analysis_limiter"] = AnalysisLimiter(
+        app.config["PUBLIC_RATE_LIMIT"], app.config["PUBLIC_RATE_WINDOW_SECONDS"]
+    )
     
     CORS(app, resources={r"/*": {"origins": "*"}})
     
@@ -68,6 +72,12 @@ def create_app(config=None):
         """Readiness includes the public PostgreSQL authority."""
         try:
             app.extensions["framed_public_store"].ready()
+            if app.config["FRAMED_ENV"] == "production" and not app.config.get("TESTING"):
+                from framed.analysis.models import public_models_ready
+                from framed.analysis.llm_provider import get_model_a_provider, get_model_b_provider, PlaceholderProvider
+                providers = (get_model_a_provider(), get_model_b_provider())
+                if not public_models_ready() or any(isinstance(p, PlaceholderProvider) or not p.is_available() for p in providers):
+                    return {'status': 'not_ready', 'service': 'framed'}, 503
         except Exception:
             app.logger.warning("Public persistence readiness check failed", exc_info=True)
             return {'status': 'not_ready', 'service': 'framed'}, 503

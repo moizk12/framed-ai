@@ -279,7 +279,7 @@ def finalize_critique_with_reflection(
         critique, reflection, downgraded_to_tentative = _apply_downgrade(
             intelligence_output, interpretive_conclusions, reflection
         )
-    elif check_vocab_guard(critique):
+    elif check_vocab_guard(critique, rules=[] if public_safe else None):
         vocab_guard_triggered = True
         critique, changed = sanitize_banned_vocab(critique)
         # If terms were quoted and left intact, fall back to downgrade.

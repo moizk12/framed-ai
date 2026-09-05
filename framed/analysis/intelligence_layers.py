@@ -42,6 +42,7 @@ def reason_about_recognition(
     require_multiple_hypotheses: bool = False,
     cognition_context: Optional[Dict[str, Any]] = None,
     image_path: Optional[str] = None,
+    public_safe: bool = False,
 ) -> Dict[str, Any]:
     """
     Layer 1: Certain Recognition
@@ -177,6 +178,16 @@ OUTPUT FORMAT (JSON):
         
         # Parse JSON response (Responses API may return plain text or markdown-wrapped JSON)
         recognition = _safe_parse_layer_json(result.get("content") or "")
+        if public_safe and (
+            not isinstance(recognition, dict)
+            or not isinstance(recognition.get("what_i_see"), str)
+            or not recognition["what_i_see"].strip()
+            or not isinstance(recognition.get("evidence"), list)
+            or not isinstance(recognition.get("confidence"), (int, float))
+            or isinstance(recognition.get("confidence"), bool)
+            or not 0 <= recognition["confidence"] <= 1
+        ):
+            return {"what_i_see": "", "error": "malformed_recognition"}
         if recognition is None:
             logger.error("Layer 1 (Recognition) JSON parse failed: empty or invalid JSON")
             return {"what_i_see": "", "evidence": [], "confidence": 0.0, "error": "JSON parse failed"}

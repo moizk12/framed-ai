@@ -15,10 +15,10 @@
       <div><dt>03</dt><dd>Visible evidence</dd></div>
     </dl>
   </div>
-  {# RELEASE: replace hero-photograph.jpg independently of the example and preview images. #}
+
   <figure class="hero-image frame-figure">
-    <img src="{{ url_for('main.static', filename='images/hero-photograph.jpg') }}" alt="Green mountain valley under low cloud at sunrise" width="800" height="600">
-    <figcaption><span>Study 01</span><span>Light · scale · atmosphere</span></figcaption>
+    <img src="{{ url_for('main.static', filename='images/hero-photograph.jpg') }}" alt="Angular silver building and glass facade against a pale sky" width="800" height="600">
+    <figcaption><span>Study 01</span><span>Form · light · perspective</span></figcaption>
   </figure>
 </section>
 
@@ -29,7 +29,7 @@
     <p>JPEG, PNG, or WebP up to 12 MB. Most critiques take a few minutes; first requests may take longer while the service starts.</p>
   </div>
 
-  <div class="studio-shell" data-analysis-app>
+  <div class="studio-shell" data-analysis-app data-analysis-timeout-ms="{{ config.get('PUBLIC_ANALYSIS_TIMEOUT_SECONDS', 300) * 1000 }}">
     <form class="upload-panel" id="analysis-form" novalidate>
       <div class="drop-zone" data-drop-zone tabindex="0" role="button" aria-describedby="file-requirements privacy-note" aria-controls="image-input">
         <input class="visually-hidden" id="image-input" name="image" type="file" accept="image/jpeg,image/png,image/webp" required>
@@ -110,8 +110,9 @@
               <dl class="evidence-grid">
                 <div><dt>Recognition</dt><dd data-recognition></dd><span class="confidence" data-confidence></span></div>
                 <div><dt>Scene</dt><dd data-scene></dd></div>
-                <div><dt>Grounding</dt><dd data-grounding></dd></div>
+                <div data-grounding-row hidden><dt>Grounding</dt><dd data-grounding></dd></div>
               </dl>
+              <section data-measured-signals hidden aria-labelledby="signals-heading"><h4 id="signals-heading">Measured Signals</h4><p>Pixel measurements, not quality scores or inferred meaning.</p><dl class="evidence-grid" data-signals-list></dl></section>
               <div class="claim-traces" data-claim-traces hidden><h4>Claim traces</h4><ul data-claim-trace-list></ul></div>
               <p class="evidence-empty" data-evidence-empty hidden>FRAMED completed the critique, but detailed evidence was not available for this photograph.</p>
             </div>
@@ -149,7 +150,7 @@
 <section class="example-section" id="example" aria-labelledby="example-title">
   <div class="section-intro"><p class="section-number">02 / Example critique</p><h2 id="example-title">A critique you can inspect,<br>not just accept.</h2></div>
   <div class="example-layout">
-    {# RELEASE: replace example-landscape.jpg independently of the hero and preview images. #}
+
     <figure class="example-image frame-figure"><img src="{{ url_for('main.static', filename='images/example-landscape.jpg') }}" alt="Green mountain valley under low cloud at sunrise" width="800" height="600"><figcaption><span>Example photograph</span><span>Landscape study</span></figcaption></figure>
     <div class="example-copy">
       <p class="example-label">Critique excerpt</p>
@@ -170,7 +171,7 @@
 </section>
 
 <section class="proof-section" aria-labelledby="proof-title">
-  <div class="proof-copy"><p class="section-number">04 / Under the frame</p><h2 id="proof-title">A layered system, with evidence kept visible.</h2><p>FRAMED separates visual perception, evidence grounding and structured reasoning before producing a Balanced critique. The public beta keeps that path inspectable without exposing research controls or model internals.</p><ul class="proof-list"><li>Layered</li><li>Evidence-aware</li><li>Regression-tested</li><li>Authored and researched by Moiz</li></ul><p class="build-note">Build evidence will be published with the beta release.</p></div>
+  <div class="proof-copy"><p class="section-number">04 / Under the frame</p><h2 id="proof-title">A layered system, with evidence kept visible.</h2><p>FRAMED separates visual perception, evidence grounding and structured reasoning before producing a Balanced critique. The public beta keeps that path inspectable without exposing research controls or model internals.</p><ul class="proof-list"><li>Layered</li><li>Evidence-aware</li><li>Regression-tested</li><li>Authored and researched by Moiz</li></ul><p class="build-note">Implementation and regression checks are available in the source repository.</p></div>
   <ol class="architecture-flow" aria-label="FRAMED public critique architecture"><li><span>01</span>Image</li><li><span>02</span>Visual perception</li><li><span>03</span>Evidence / grounding</li><li><span>04</span>Structured reasoning</li><li><span>05</span>Balanced critique</li></ol>
 </section>
 
@@ -179,7 +180,7 @@
   <div><h2 id="about-title">Built where photography and engineering meet.</h2><p>Moiz designed and built FRAMED as a long-running exploration of photography, computer vision, software engineering and AI research. The work begins with a simple standard: if a critique cannot show what it noticed and where it is uncertain, it should not ask for a photographer’s trust.</p><a class="text-link" href="https://github.com/moizk12/framed-ai" rel="noreferrer">View the project on GitHub <span aria-hidden="true">↗</span></a></div>
 </section>
 
-<section class="privacy-band" aria-labelledby="privacy-title"><div><p class="section-number">06 / Privacy</p><h2 id="privacy-title">A critique should not quietly become an identity.</h2></div><div><p>Public beta sessions are not treated as memory or continuity. Analysis metadata, response records and feedback may be retained for evaluation, security and product improvement; the current application removes the raw upload after the request completes.</p><a class="text-link" href="{{ url_for('main.privacy') }}">Read the privacy note <span aria-hidden="true">→</span></a></div></section>
+<section class="privacy-band" aria-labelledby="privacy-title"><div><p class="section-number">06 / Privacy</p><h2 id="privacy-title">A critique should not quietly become an identity.</h2></div><div><p>Public critiques do not build personal memory or continuity. Analysis identifiers, timestamps and feedback are stored; the application attempts to delete temporary uploads after each request. Hosting and recognition-provider practices also apply.</p><a class="text-link" href="{{ url_for('main.privacy') }}">Read the privacy note <span aria-hidden="true">→</span></a></div></section>
 {% endblock %}
 {% block scripts %}
 <script type="module" src="{{ url_for('main.static', filename='js/upload.js') }}"></script>

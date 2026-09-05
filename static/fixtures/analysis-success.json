@@ -4,17 +4,53 @@
   "status": "complete",
   "critique": "The road gives the eye an entry point, but the brightest cloud pulls attention away from the valley’s strongest rhythm. A slightly tighter crop from the right would let the ridge and mist carry the frame. Keep the low foreground: its darker texture gives the atmospheric layers something solid to push against.",
   "evidence": {
-    "recognition": { "text": "A green mountain valley with a winding road, layered ridges, low cloud and a bright horizon.", "confidence": 0.84 },
-    "scene": { "type": "mountain landscape at sunrise" },
-    "grounding": { "state": "available", "boxes": [] },
+    "recognition": {
+      "text": "A green mountain valley with a winding road, layered ridges, low cloud and a bright horizon.",
+      "confidence": 0.84
+    },
+    "scene": {
+      "type": "mountain landscape at sunrise"
+    },
+    "grounding": {
+      "state": "available",
+      "boxes": []
+    },
     "claim_traces": [
-      { "claim": "The road creates an entry point", "support": "A continuous light-toned curve begins at the lower-right edge." },
-      { "claim": "The horizon competes for attention", "support": "The highest luminance is concentrated in the upper-right cloud." }
+      {
+        "claim": "The road creates an entry point",
+        "support": "A continuous light-toned curve begins at the lower-right edge."
+      },
+      {
+        "claim": "The horizon competes for attention",
+        "support": "The highest luminance is concentrated in the upper-right cloud."
+      }
+    ],
+    "measured_signals": [
+      {
+        "label": "Mean brightness",
+        "value": "114 / 255"
+      },
+      {
+        "label": "Tonal spread",
+        "value": "50 gray levels"
+      },
+      {
+        "label": "Edge response",
+        "value": "423 Laplacian variance"
+      },
+      {
+        "label": "Green pixel coverage",
+        "value": "1%"
+      }
     ]
   },
   "limitations": [
     "Atmospheric haze reduces fine detail, so depth relationships are interpreted conservatively.",
     "Grounding regions were not supplied with this response; composition claims rely on scene-level evidence."
   ],
-  "meta": { "duration_ms": 12840, "cached": false, "contract_version": "1" }
+  "meta": {
+    "duration_ms": 12840,
+    "cached": false,
+    "contract_version": "1"
+  }
 }

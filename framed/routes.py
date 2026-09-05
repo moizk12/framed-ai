@@ -400,6 +400,11 @@ def _validate_public_upload(upload) -> tuple[bool, str, str, int]:
 def create_public_analysis():
     """Create a Track A analysis through the versioned public contract."""
     request_id = _public_request_id()
+    retry_after = current_app.extensions["framed_analysis_limiter"].admit()
+    if retry_after:
+        response = jsonify(public_error_payload("rate_limited", "FRAMED is at its beta capacity. Please wait and try again.", request_id))
+        response.headers["Retry-After"] = str(retry_after)
+        return response, 429
     mentor_mode = (request.form.get("mentor_mode") or "balanced").strip().lower()
     if mentor_mode not in {"balanced", "balanced mentor"}:
         return _public_error("invalid_mentor_mode", "Balanced Mentor is the only public critique mode.", 400, request_id)
@@ -434,7 +439,7 @@ def create_public_analysis():
         current_app.extensions["framed_public_store"].record_analysis(analysis_id)
         return jsonify(payload), 201
     except PublicAnalysisUnavailable:
-        current_app.logger.warning("Public analysis unavailable request_id=%s", request_id)
+        current_app.logger.warning("Public analysis unavailable request_id=%s", request_id, exc_info=True)
         return _public_error(
             "analysis_unavailable",
             "The critique service could not complete this analysis.",
