@@ -1,3 +1,8 @@
+"""Compatibility surface; pipeline.py is canonical orchestration.
+
+The public API imports pipeline.py directly. Older research callers retain
+the compatibility entrypoints below.
+"""
 import os, uuid, json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed

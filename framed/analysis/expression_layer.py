@@ -391,6 +391,12 @@ def generate_poetic_critique(
             logger.info("Expression layer: cache hit (skipping Model B)")
             return cached
 
+        if public_safe:
+            intelligence_output = {key: intelligence_output[key] for key in (
+                "recognition", "meta_cognition", "mentor", "disagreement_state",
+                "require_multiple_hypotheses", "theme_claim_license",
+            ) if key in intelligence_output}
+
         # Get mentor mode configuration
         mode_config = MENTOR_MODES.get(mentor_mode, MENTOR_MODES["Balanced Mentor"])
 
@@ -548,6 +554,17 @@ You speak with {mode_config["tone"]}.
 Your critique should read like a quiet but demanding conversation between a mentor and an artist.
 End not with advice — but with a question or unresolved pull."""
         
+        if public_safe:
+            from .public_reasoning import STANDALONE_CONTRACT
+            system_prompt += "\n\n" + STANDALONE_CONTRACT
+            prompt = f"""{STANDALONE_CONTRACT}
+Write a warm, specific Balanced Mentor critique of this photograph in plain prose.
+Use two or three short paragraphs, without Markdown, headings, bold markers, or lists.
+Start with recognition, distinguish interpretation from measured evidence,
+acknowledge uncertainty, and offer one practical photographic choice or question.
+{constraints_section}{screenshot_section}{composition_section}{technical_section}{category_section}{theme_license_section}
+Evidence and bounded reasoning:\n{intelligence_text}"""
+
         is_screenshot_ui = bool((intelligence_output.get("recognition") or {}).get("_screenshot_ui"))
         is_composition_depth = bool((intelligence_output.get("recognition") or {}).get("_composition_depth"))
         is_technical_practicality = bool((intelligence_output.get("recognition") or {}).get("_technical_practicality"))
@@ -580,6 +597,8 @@ End not with advice — but with a question or unresolved pull."""
         critique = result.get("content", "").strip()
         
         if not critique:
+            if public_safe:
+                raise CritiqueRuntimeError("public_expression_empty")
             # Mechanical robustness: retry once + deterministic fallback
             logger.warning("Expression layer returned empty critique")
             retry_enabled = os.environ.get("FRAMED_MODEL_B_EMPTY_RETRY", "true").lower() == "true"

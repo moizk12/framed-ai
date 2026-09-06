@@ -8,6 +8,8 @@ import re
 
 DEFAULT_MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 DEFAULT_MAX_IMAGE_PIXELS = 40_000_000
+DEFAULT_ANALYSIS_TIMEOUT_SECONDS = 300
+DEFAULT_WORKER_TIMEOUT_SECONDS = 360
 _MIN_UPLOAD_BYTES = 1024 * 1024
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _SAFE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
@@ -39,6 +41,10 @@ def env_int(name: str, default: int) -> int:
 def runtime_defaults() -> dict:
     return {
         "FRAMED_ENV": os.environ.get("FRAMED_ENV", "development").strip().lower(),
+        "PUBLIC_ANALYSIS_TIMEOUT_SECONDS": env_int("PUBLIC_ANALYSIS_TIMEOUT_SECONDS", DEFAULT_ANALYSIS_TIMEOUT_SECONDS),
+        "PUBLIC_WORKER_TIMEOUT_SECONDS": env_int("PUBLIC_WORKER_TIMEOUT_SECONDS", DEFAULT_WORKER_TIMEOUT_SECONDS),
+        "PUBLIC_RATE_LIMIT": env_int("PUBLIC_RATE_LIMIT", 6),
+        "PUBLIC_RATE_WINDOW_SECONDS": env_int("PUBLIC_RATE_WINDOW_SECONDS", 600),
         "PUBLIC_BETA_ONLY": env_bool("FRAMED_PUBLIC_BETA_ONLY", True),
         "PUBLIC_AUTO_MIGRATE": env_bool("PUBLIC_AUTO_MIGRATE", False),
         "MAX_CONTENT_LENGTH": env_int("FRAMED_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES),
@@ -49,6 +55,11 @@ def runtime_defaults() -> dict:
 
 
 def validate_runtime(config: dict) -> None:
+    for key in ("PUBLIC_ANALYSIS_TIMEOUT_SECONDS", "PUBLIC_WORKER_TIMEOUT_SECONDS", "PUBLIC_RATE_LIMIT", "PUBLIC_RATE_WINDOW_SECONDS"):
+        if not isinstance(config.get(key), int) or config[key] <= 0:
+            raise RuntimeError(f"{key} must be a positive integer")
+    if config["PUBLIC_WORKER_TIMEOUT_SECONDS"] < config["PUBLIC_ANALYSIS_TIMEOUT_SECONDS"] + 30:
+        raise RuntimeError("Worker timeout must exceed browser timeout by at least 30 seconds")
     environment = config.get("FRAMED_ENV")
     if environment not in {"development", "test", "production"}:
         raise RuntimeError("FRAMED_ENV must be development, test, or production")

@@ -52,7 +52,9 @@ jobs:
           app = create_app()
           client = app.test_client()
           assert client.get("/health").status_code == 200
-          assert client.get("/ready").status_code == 200
+          app.extensions["framed_public_store"].ready()
+          # No inference providers/models in this bootstrap check: fail closed.
+          assert client.get("/ready").status_code == 503
           version = client.get("/version")
           assert version.status_code == 200
           assert version.get_json()["api_contract"] == "v1"

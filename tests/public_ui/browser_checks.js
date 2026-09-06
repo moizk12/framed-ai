@@ -4,7 +4,7 @@ const path = require("path");
 
 const ROOT = path.resolve(__dirname, "../..");
 const BASE = "http://127.0.0.1:4173";
-const IMAGE = path.join(ROOT, "static/images/preview-photograph.jpg");
+const IMAGE = path.join(ROOT, "static/images/example-landscape.jpg");
 const FIXTURES = path.join(ROOT, "static/fixtures");
 const EVIDENCE = path.join(ROOT, "test-results/public-ui");
 fs.mkdirSync(EVIDENCE, { recursive: true });
@@ -55,6 +55,8 @@ async function errorJourney(browser, status, fixtureName, expected) {
     await page.locator("[data-result]").waitFor({ state: "visible" });
     check("successful critique", (await page.locator("[data-critique]").textContent()).includes("road gives the eye"));
     check("evidence rendering", (await page.locator("[data-recognition]").textContent()).includes("mountain valley"));
+    check("measured signals visible", await page.locator("[data-measured-signals]").isVisible());
+    check("measured signal count", await page.locator("[data-signals-list] > div").count() === 4);
     check("limitations rendering", await page.locator("[data-limitations] li").count() === 2);
     check("terminal focus moved", await page.locator("[data-result]").evaluate((el) => el === document.activeElement));
     await page.locator('[data-feedback-value="useful"]').click();
@@ -98,7 +100,32 @@ async function errorJourney(browser, status, fixtureName, expected) {
     const privacy = await browser.newPage(); await privacy.goto(`${BASE}/privacy`); check("privacy page", await privacy.locator("h1").count() === 1 && (await privacy.locator("main").textContent()).includes("No public continuity")); await privacy.close();
 
     for (const width of [320, 375, 768, 1280]) {
-      const mobile = await browser.newPage({ viewport: { width, height: 900 } }); await mobile.goto(BASE); const overflow = await mobile.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth); check(`no overflow ${width}`, !overflow); if ([375, 768, 1280].includes(width)) await mobile.screenshot({ path: path.join(EVIDENCE, `landing-${width}.png`), fullPage: true }); await mobile.close();
+      const mobile = await browser.newPage({ viewport: { width, height: 900 } });
+      await mockAnalysis(mobile, fixture("analysis-success.json"), 200, 1500);
+      await mobile.goto(BASE);
+      check(`no overflow ${width}`, await mobile.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+      await mobile.screenshot({ path: path.join(EVIDENCE, `landing-${width}.png`), fullPage: true });
+      await chooseAndSubmit(mobile);
+      await mobile.locator("[data-progress]").waitFor({ state: "visible" });
+      await mobile.screenshot({ path: path.join(EVIDENCE, `loading-${width}.png`) });
+      await mobile.locator("[data-result]").waitFor({ state: "visible" });
+      check(`result signals ${width}`, await mobile.locator("[data-measured-signals]").isVisible());
+      check(`result no overflow ${width}`, await mobile.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+      await mobile.locator("[data-result]").screenshot({ path: path.join(EVIDENCE, `critique-${width}.png`) });
+      await mobile.locator('[data-feedback-value="useful"]').click();
+      await mobile.waitForFunction(() => document.querySelector("[data-feedback-status]")?.textContent.includes("attached"));
+      check(`feedback ${width}`, true);
+      await mobile.close();
+      for (const status of [503, 429]) {
+        const failure = await browser.newPage({ viewport: { width, height: 900 } });
+        await mockAnalysis(failure, fixture(`error-${status}.json`), status);
+        await failure.goto(BASE);
+        await chooseAndSubmit(failure);
+        await failure.locator("[data-error-state]").waitFor({ state: "visible" });
+        check(`failure ${status} ${width}`, !(await failure.locator("[data-result]").isVisible()));
+        await failure.locator("[data-error-state]").screenshot({ path: path.join(EVIDENCE, `error-${status}-${width}.png`) });
+        await failure.close();
+      }
     }
     fs.writeFileSync(path.join(EVIDENCE, "browser-checks.json"), JSON.stringify({ passed: results.length, checks: results }, null, 2));
     console.log(JSON.stringify({ passed: results.length, evidence: EVIDENCE }));

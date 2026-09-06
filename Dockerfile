@@ -48,6 +48,8 @@ EXPOSE 7860
 ARG FRAMED_VERSION=dev
 ARG FRAMED_BUILD_SHA=unknown
 ENV FRAMED_VERSION=${FRAMED_VERSION} FRAMED_BUILD_SHA=${FRAMED_BUILD_SHA}
+LABEL org.opencontainers.image.revision=${FRAMED_BUILD_SHA}
+RUN test "${FRAMED_BUILD_SHA}" != unknown
 
 USER framed
 
@@ -56,4 +58,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/health', timeout=5)"
 
 # Migrate first, then replace the bootstrap process with gunicorn.
-CMD ["sh", "-c", "python -m framed.public_migrations && exec gunicorn -k gthread --threads 4 -w 1 --timeout 120 --keep-alive 5 -b 0.0.0.0:${PORT:-7860} run:app"]
+CMD ["sh", "-c", "python -m framed.public_migrations && exec gunicorn -c gunicorn.conf.py -b 0.0.0.0:${PORT:-7860} run:app"]

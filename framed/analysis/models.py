@@ -3,10 +3,21 @@
 import importlib.util
 import logging
 import os
+from functools import wraps
+from threading import RLock
 
 from .runtime_paths import MODEL_DIR
 
 logger = logging.getLogger(__name__)
+_model_init_lock = RLock()
+
+
+def _serialized_init(loader):
+    @wraps(loader)
+    def load(*args, **kwargs):
+        with _model_init_lock:
+            return loader(*args, **kwargs)
+    return load
 
 
 # YOLO
@@ -14,6 +25,7 @@ YOLO_WEIGHTS = os.environ.get("YOLO_WEIGHTS", os.path.join(MODEL_DIR, "yolov8n.p
 _yolo_model = None
 
 
+@_serialized_init
 def get_yolo_model():
     global _yolo_model
     if _yolo_model is None:
@@ -31,6 +43,7 @@ _clip_processor = None
 _device = None
 
 
+@_serialized_init
 def get_clip_model():
     global _clip_model, _clip_processor, _device
     if _clip_model is None:
@@ -38,9 +51,20 @@ def get_clip_model():
         from transformers import CLIPModel, CLIPProcessor
 
         _device = "cuda" if torch.cuda.is_available() else "cpu"
-        _clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(_device)
-        _clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(_device)
+        processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        _clip_model, _clip_processor = model, processor
     return _clip_model, _clip_processor, _device
+
+
+def warm_public_models():
+    """Initialize once in the serving process, before accepting demo traffic."""
+    get_yolo_model()
+    get_clip_model()
+
+
+def public_models_ready():
+    return _yolo_model is not None and _clip_model is not None and _clip_processor is not None
 
 
 # NIMA (optional TF)

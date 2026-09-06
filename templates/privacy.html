@@ -2,14 +2,14 @@
 {% block title %}Privacy — FRAMED{% endblock %}
 {% block content %}
 <article class="privacy-page">
-  <header><p class="eyebrow">Public beta privacy note</p><h1>What happens to your photograph.</h1><p class="privacy-lede">FRAMED is being prepared for a public beta. This page states the intended public boundary and distinguishes it from the current implementation.</p></header>
+  <header><p class="eyebrow">Public beta privacy note</p><h1>What happens to your photograph.</h1><p class="privacy-lede">Each public critique is a standalone request. Here is what the application processes and stores.</p></header>
   <div class="privacy-grid">
-    <section><span>01</span><h2>During analysis</h2><p>Your selected photograph stays in your browser until you submit it. It is then sent to the FRAMED analysis service to produce one critique.</p></section>
-    <section><span>02</span><h2>Raw upload</h2><p>The current Flask request path attempts to delete the uploaded file after analysis, including after failures. Infrastructure-level copies and logs require separate production verification before beta release.</p></section>
-    <section><span>03</span><h2>Records and derivatives</h2><p>Analysis identifiers, public response records, limited derivatives, model/deployment provenance and operational logs may be retained for evaluation, security, debugging and deletion tracking. The final retention schedule will be published before release.</p></section>
-    <section><span>04</span><h2>Your feedback</h2><p>Usefulness votes and optional comments may be attached to the specific analysis. They help evaluate future versions; feedback does not instantly retrain or change FRAMED.</p></section>
-    <section><span>05</span><h2>No public continuity</h2><p>This beta does not promise personal memory, cognitive identity or continuity. An anonymous browser session is not treated as a cognitive identity.</p></section>
-    <section><span>06</span><h2>Before public release</h2><p>Storage, deletion, retention and production processor details remain release gates. This note will be updated with verified operational behavior.</p></section>
+    <section><span>01</span><h2>During analysis</h2><p>Your photograph stays in your browser until you submit it. FRAMED processes its pixels and sends the image to the configured recognition provider. Later reasoning and expression receive text evidence only. The provider may be locally hosted or a cloud service; its own processing and retention practices apply.</p></section>
+    <section><span>02</span><h2>Raw upload</h2><p>The server uses a temporary file and attempts to delete it when the request finishes, including after failures. A process interruption or deletion failure can leave a temporary file. This does not guarantee deletion from hosting infrastructure or provider systems.</p></section>
+    <section><span>03</span><h2>Stored records</h2><p>The public database stores analysis identifiers and creation times, plus feedback attached to those identifiers. It does not store the uploaded image or critique text. Operational logs can contain diagnostic details. Database records persist until removed by the operator; the application has no automatic retention expiry.</p></section>
+    <section><span>04</span><h2>Your feedback</h2><p>Usefulness votes and optional comments are stored with the analysis identifier. Avoid personal or sensitive information in comments. Feedback helps evaluate future versions; it does not instantly retrain or change FRAMED.</p></section>
+    <section><span>05</span><h2>No public continuity</h2><p>Public analysis does not retrieve or write research memory, track your creative history, or build a personal cognitive identity. Research cognition uses a separate persistence boundary.</p></section>
+    <section><span>06</span><h2>Service limits</h2><p>Requests are subject to shared beta capacity limits. A browser timeout stops waiting for a response; work already running on the server may continue until it finishes.</p></section>
   </div>
   <a class="button" href="{{ url_for('main.index') }}#critique">Return to the critique studio</a>
 </article>

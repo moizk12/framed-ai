@@ -113,7 +113,7 @@ def analyze_image(
     if not photo_id:
         photo_id = file_hash[:16] if file_hash else str(uuid.uuid4())
 
-    cached_result = None if disable_cache else get_cached_analysis(file_hash)
+    cached_result = None if disable_cache or public_safe else get_cached_analysis(file_hash)
     if cached_result and not cognition_enabled():
         cached_result["metadata"]["photo_id"] = photo_id
         cached_result["metadata"]["filename"] = filename

@@ -1,6 +1,6 @@
 const ANALYSIS_ENDPOINT = "/api/v1/analyses";
 const FEEDBACK_ENDPOINT = "/api/v1/feedback";
-const REQUEST_TIMEOUT_MS = 300_000;
+const REQUEST_TIMEOUT_MS = Number(document.querySelector("[data-analysis-app]")?.dataset.analysisTimeoutMs);
 
 export class AnalysisError extends Error {
   constructor(code, message, options = {}) {
@@ -19,7 +19,7 @@ function isObject(value) {
 export function validateAnalysisDTO(payload) {
   if (!isObject(payload) || payload.status !== "complete") return false;
   if (typeof payload.request_id !== "string" || typeof payload.analysis_id !== "string") return false;
-  if (typeof payload.critique !== "string" || !isObject(payload.evidence)) return false;
+  if (typeof payload.critique !== "string" || !payload.critique.trim() || !isObject(payload.evidence)) return false;
   const evidence = payload.evidence;
   if (!isObject(evidence.recognition) || typeof evidence.recognition.text !== "string") return false;
   if (!isObject(evidence.scene) || typeof evidence.scene.type !== "string") return false;
@@ -48,7 +48,7 @@ function messageForStatus(status, payload) {
   if (status === 415) return new AnalysisError("invalid_image", "This file is not a supported JPEG, PNG, or WebP photograph.", { retryable: false, status });
   if (status === 413) return new AnalysisError("oversized", "The photograph is larger than the 12 MB upload limit.", { retryable: false, status });
   if (status === 429) return new AnalysisError("rate_limited", "FRAMED is receiving more requests than it can process right now. Please wait a moment and try again.", { status });
-  if (status === 504) return new AnalysisError("timeout", "The critique took longer than expected and was stopped. You can safely try again.", { status });
+  if (status === 504) return new AnalysisError("timeout", "The critique did not arrive in time. Processing may still finish; please wait before trying again.", { status });
   if (status === 503) return new AnalysisError("unavailable", "The critique service is temporarily unavailable. Your photograph was not successfully analyzed.", { status });
   if (status >= 500) return new AnalysisError("server_error", "FRAMED encountered a service error before the critique was completed.", { status });
   return new AnalysisError("request_failed", "The critique request could not be completed.", { status });
@@ -72,7 +72,7 @@ export async function requestAnalysis(file, externalSignal) {
   } catch (error) {
     if (error instanceof AnalysisError) throw error;
     if (error?.name === "AbortError") {
-      if (didTimeout) throw new AnalysisError("timeout", "The critique took longer than expected and was stopped. You can safely try again.");
+      if (didTimeout) throw new AnalysisError("timeout", "The critique did not arrive in time. Processing may still finish; please wait before trying again.");
       throw new AnalysisError("aborted", "The analysis was cancelled.", { retryable: true });
     }
     throw new AnalysisError("network_error", "FRAMED could not reach the critique service. Check your connection and try again.");

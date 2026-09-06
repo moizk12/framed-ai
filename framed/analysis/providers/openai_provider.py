@@ -3,6 +3,7 @@ import os
 from typing import Any, Dict, Literal, Optional
 
 from .base import LLMProvider
+from .local_openai import build_user_content
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ class OpenAIProvider(LLMProvider):
             return {"content": "", "usage": {}, "model": self.model_name, "error": "OpenAI client not available"}
         max_tokens = max_tokens or self.config.get("max_tokens", 4096)
         if self.role == "reasoning":
-            return self._call_reasoning(client, prompt, system_prompt, max_tokens, response_format)
+            return self._call_reasoning(client, prompt, system_prompt, max_tokens, response_format, image_path)
         return self._call_expression(
             client,
             prompt,
@@ -84,12 +85,17 @@ class OpenAIProvider(LLMProvider):
             temperature if temperature is not None else self.config.get("temperature"),
         )
 
-    def _call_reasoning(self, client, prompt: str, system_prompt: Optional[str], max_tokens: int, response_format: Optional[Dict[str, Any]]):
+    def _call_reasoning(self, client, prompt: str, system_prompt: Optional[str], max_tokens: int, response_format: Optional[Dict[str, Any]], image_path: Optional[str] = None):
+        user_content = build_user_content(prompt, image_path)
+        responses_content = prompt if not image_path else [
+            {"type": "input_text", "text": prompt},
+            {"type": "input_image", "image_url": user_content[1]["image_url"]["url"]},
+        ]
         if hasattr(client, "responses") and hasattr(client.responses, "create"):
             try:
-                kwargs: Dict[str, Any] = {"model": self.model_name, "input": [{"role": "user", "content": prompt}], "max_output_tokens": max_tokens}
+                kwargs: Dict[str, Any] = {"model": self.model_name, "input": [{"role": "user", "content": responses_content}], "max_output_tokens": max_tokens}
                 if system_prompt:
-                    kwargs["input"] = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+                    kwargs["input"] = [{"role": "system", "content": system_prompt}, {"role": "user", "content": responses_content}]
                 kwargs["reasoning"] = self.config.get("reasoning", {"effort": "medium"})
                 kwargs["text"] = self.config.get("text", {"verbosity": "low"})
                 resp = client.responses.create(**kwargs)
@@ -108,7 +114,7 @@ class OpenAIProvider(LLMProvider):
                 logger.warning("Responses API failed, falling back to Chat: %s", e)
 
         messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
-        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": user_content})
         kwargs: Dict[str, Any] = {"model": self.model_name, "messages": messages, "max_completion_tokens": max_tokens, "temperature": 0.3}
         if response_format and response_format.get("type") == "json_object":
             kwargs["response_format"] = {"type": "json_object"}

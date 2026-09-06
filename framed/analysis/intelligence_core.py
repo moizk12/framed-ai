@@ -66,6 +66,8 @@ def framed_intelligence(
         - confidence_governed, require_multiple_hypotheses
     """
     try:
+        if public_safe:
+            temporal_memory = user_history = pattern_signature = cognition_context = None
         logger.info("Starting FRAMED Intelligence Core (7-layer reasoning)")
 
         # Semantic signals for plausibility (from perception layer)
@@ -100,7 +102,7 @@ def framed_intelligence(
             visual_evidence, semantic_signals_for_plaus, clip_data,
             hitl_multi_hypothesis_bias=hitl_calibration.get("multi_hypothesis_bias", 0),
         )
-        if plausibility.get("skip_model_a"):
+        if plausibility.get("skip_model_a") and not public_safe:
             logger.info("Plausibility low: skipping Model A, using minimal intelligence")
             return _create_minimal_intelligence(visual_evidence, plausibility)
 
@@ -119,7 +121,10 @@ def framed_intelligence(
             require_multiple_hypotheses=force_multi,
             cognition_context=cognition_context,
             image_path=image_path,
+            **({"public_safe": True} if public_safe else {}),
         )
+        if public_safe and (recognition.get("error") or not isinstance(recognition.get("what_i_see"), str) or not recognition["what_i_see"].strip()):
+            raise ValueError("public_recognition_unavailable")
         if cognition_context:
             recognition["_cognition_context_used"] = True
             recognition["_memory_reference_ids"] = cognition_context.get("memory_reference_ids", [])
@@ -161,6 +166,18 @@ def framed_intelligence(
         recognition["confidence"] = governed_conf
         recognition["confidence_governance"] = gov_rationale
         recognition["require_multiple_hypotheses"] = force_multi
+
+        if public_safe:
+            from .public_reasoning import reason_standalone
+            standalone = reason_standalone(recognition)
+            return {
+                "recognition": recognition,
+                "meta_cognition": {"confidence": governed_conf, "why_i_believe_this": standalone["why_i_believe_this"]},
+                "mentor": {"observations": standalone["observations"], "questions": standalone["questions"]},
+                "disagreement_state": disagreement,
+                "require_multiple_hypotheses": force_multi,
+                "theme_claim_license": theme_license_dict,
+            }
 
         # === LAYERS 2–7: combined (one call) or fallback (6 calls) ===
         combined_ok = False
