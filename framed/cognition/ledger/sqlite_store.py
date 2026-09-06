@@ -101,6 +101,12 @@ class CognitionLedger:
                     "INSERT INTO schema_version(version, applied_at) VALUES (3, ?)",
                     (ArtefactStore.utc_now(),),
                 )
+            if current < 4:
+                conn.executescript((migrations_dir / "004_controlled_learning.sql").read_text(encoding="utf-8"))
+                conn.execute(
+                    "INSERT INTO schema_version(version, applied_at) VALUES (4, ?)",
+                    (ArtefactStore.utc_now(),),
+                )
 
     def put_artefact(self, schema_name: str, schema_version: str, obj: Any) -> str:
         digest, rel, byte_len = self.artefacts.put(schema_name, schema_version, obj)
@@ -223,6 +229,323 @@ class CognitionLedger:
             )
             conn.commit()
             return target["state_version_id"]
+
+    def get_state_version(self, state_version_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM cognitive_state_versions WHERE state_version_id=?",
+                (state_version_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        snap = self.artefacts.get(row["snapshot_artefact_hash"])
+        return {
+            "state_version_id": row["state_version_id"],
+            "workspace_id": row["workspace_id"],
+            "parent_version_id": row["parent_version_id"],
+            "label": row["label"],
+            "created_at": row["created_at"],
+            "is_active": int(row["is_active"]),
+            "snapshot_artefact_hash": row["snapshot_artefact_hash"],
+            "snapshot": snap,
+        }
+
+    def create_state_version(
+        self,
+        *,
+        workspace_id: str,
+        parent_version_id: Optional[str],
+        label: str,
+        snapshot: Dict[str, Any],
+    ) -> str:
+        state_version_id = str(uuid.uuid4())
+        snap_hash = self.put_artefact("state_snapshot", "v1", snapshot)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO cognitive_state_versions
+                (state_version_id, workspace_id, parent_version_id, label, created_at, is_active, snapshot_artefact_hash)
+                VALUES (?, ?, ?, ?, ?, 0, ?)
+                """,
+                (state_version_id, workspace_id, parent_version_id, label, ArtefactStore.utc_now(), snap_hash),
+            )
+        return state_version_id
+
+    def activate_state_version(self, workspace_id: str, state_version_id: str) -> str:
+        with self._connect() as conn:
+            target = conn.execute(
+                """
+                SELECT state_version_id FROM cognitive_state_versions
+                WHERE workspace_id=? AND state_version_id=? LIMIT 1
+                """,
+                (workspace_id, state_version_id),
+            ).fetchone()
+            if target is None:
+                raise ValueError(f"Unknown cognitive state version: {state_version_id}")
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "UPDATE cognitive_state_versions SET is_active=0 WHERE workspace_id=?",
+                (workspace_id,),
+            )
+            conn.execute(
+                "UPDATE cognitive_state_versions SET is_active=1 WHERE state_version_id=?",
+                (state_version_id,),
+            )
+            conn.commit()
+            return state_version_id
+
+    def get_episode(self, episode_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM episodes WHERE episode_id=?", (episode_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_runs_for_episode(self, episode_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM cognitive_runs WHERE episode_id=? ORDER BY started_at",
+                (episode_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_indexed_episode(self, episode_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM retrieval_index WHERE episode_id=?",
+                (episode_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_runs_retrieving_episode(self, source_episode_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT cr.*
+                FROM cognitive_runs cr
+                JOIN memory_references mr ON mr.run_id = cr.run_id
+                WHERE mr.source_episode_id=?
+                ORDER BY cr.started_at
+                """,
+                (source_episode_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def insert_outcome(
+        self,
+        *,
+        outcome_id: str,
+        workspace_id: str,
+        source_episode_id: str,
+        source_run_id: str,
+        kind: str,
+        verdict: str,
+        created_by: str,
+        artefact_hash: str,
+        created_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO outcomes
+                (outcome_id, workspace_id, source_episode_id, source_run_id, kind, verdict,
+                 created_by, artefact_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    outcome_id,
+                    workspace_id,
+                    source_episode_id,
+                    source_run_id,
+                    kind,
+                    verdict,
+                    created_by,
+                    artefact_hash,
+                    created_at,
+                ),
+            )
+
+    def get_outcome(self, outcome_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM outcomes WHERE outcome_id=?", (outcome_id,)).fetchone()
+        return dict(row) if row else None
+
+    def insert_proposal(
+        self,
+        *,
+        proposal_id: str,
+        workspace_id: str,
+        base_state_version_id: str,
+        outcome_id: str,
+        kind: str,
+        created_by: str,
+        artefact_hash: str,
+        created_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO update_proposals
+                (proposal_id, workspace_id, base_state_version_id, outcome_id, kind,
+                 created_by, artefact_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    proposal_id,
+                    workspace_id,
+                    base_state_version_id,
+                    outcome_id,
+                    kind,
+                    created_by,
+                    artefact_hash,
+                    created_at,
+                ),
+            )
+
+    def get_proposal(self, proposal_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM update_proposals WHERE proposal_id=?",
+                (proposal_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        try:
+            record["payload"] = self.artefacts.get(record["artefact_hash"])
+        except (FileNotFoundError, OSError):
+            record["payload"] = None
+        return record
+
+    def insert_evaluation(
+        self,
+        *,
+        evaluation_id: str,
+        proposal_id: str,
+        status: str,
+        artefact_hash: str,
+        created_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO proposal_evaluations
+                (evaluation_id, proposal_id, status, artefact_hash, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (evaluation_id, proposal_id, status, artefact_hash, created_at),
+            )
+
+    def get_latest_evaluation(self, proposal_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM proposal_evaluations
+                WHERE proposal_id=?
+                ORDER BY created_at DESC, evaluation_id DESC
+                LIMIT 1
+                """,
+                (proposal_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        try:
+            record["payload"] = self.artefacts.get(record["artefact_hash"])
+        except (FileNotFoundError, OSError):
+            record["payload"] = None
+        return record
+
+    def insert_decision(
+        self,
+        *,
+        decision_id: str,
+        proposal_id: str,
+        evaluation_id: Optional[str],
+        action: str,
+        authority_kind: str,
+        actor_id: str,
+        resulting_state_version_id: Optional[str],
+        artefact_hash: str,
+        created_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO promotion_decisions
+                (decision_id, proposal_id, evaluation_id, action, authority_kind, actor_id,
+                 resulting_state_version_id, artefact_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    decision_id,
+                    proposal_id,
+                    evaluation_id,
+                    action,
+                    authority_kind,
+                    actor_id,
+                    resulting_state_version_id,
+                    artefact_hash,
+                    created_at,
+                ),
+            )
+
+    def get_decision_for_proposal(self, proposal_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM promotion_decisions WHERE proposal_id=?",
+                (proposal_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        try:
+            record["payload"] = self.artefacts.get(record["artefact_hash"])
+        except (FileNotFoundError, OSError):
+            record["payload"] = None
+        return record
+
+    def get_decision_by_resulting_state(self, state_version_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM promotion_decisions
+                WHERE resulting_state_version_id=? AND action='accept'
+                LIMIT 1
+                """,
+                (state_version_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def insert_rollback(
+        self,
+        *,
+        rollback_id: str,
+        workspace_id: str,
+        from_state_version_id: str,
+        to_state_version_id: str,
+        authority_kind: str,
+        actor_id: str,
+        artefact_hash: str,
+        created_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO rollback_records
+                (rollback_id, workspace_id, from_state_version_id, to_state_version_id,
+                 authority_kind, actor_id, artefact_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rollback_id,
+                    workspace_id,
+                    from_state_version_id,
+                    to_state_version_id,
+                    authority_kind,
+                    actor_id,
+                    artefact_hash,
+                    created_at,
+                ),
+            )
 
     def open_episode(
         self,

@@ -28,13 +28,49 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements.lock
-          pip install pytest ruff bandit
+          pip install pytest pytest-timeout ruff bandit
       - name: Lint (ruff - non-blocking initially)
         run: ruff check . --output-format=github || true
       - name: Security (bandit)
         run: bandit -r framed -q || true
       - name: Tests
-        run: pytest -q
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          set -uo pipefail
+          WHOLE_RC=0
+          FRAMED_RC=0
+          COGNITION_RC=0
+          TOP_RC=0
+
+          label_rc() {
+            case "$1" in
+              0) echo "PASS" ;;
+              124) echo "TIMEOUT (wall clock)" ;;
+              *) echo "FAIL (rc=$1)" ;;
+            esac
+          }
+
+          echo "=== whole suite (authoritative gate) ==="
+          timeout --kill-after=30 1200 pytest -v --timeout=180 -ra || WHOLE_RC=$?
+
+          echo "=== framed/tests (diagnostic split) ==="
+          timeout --kill-after=30 900 pytest -q --timeout=180 -ra framed/tests || FRAMED_RC=$?
+
+          echo "=== framed/cognition/tests (diagnostic split) ==="
+          timeout --kill-after=30 900 pytest -q --timeout=180 -ra framed/cognition/tests || COGNITION_RC=$?
+
+          echo "=== tests (diagnostic split) ==="
+          timeout --kill-after=30 900 pytest -q --timeout=180 -ra tests || TOP_RC=$?
+
+          echo ""
+          echo "Evidence matrix:"
+          echo "  whole suite bounded run: $(label_rc "$WHOLE_RC")"
+          echo "  framed/tests:            $(label_rc "$FRAMED_RC")"
+          echo "  cognition/tests:       $(label_rc "$COGNITION_RC")"
+          echo "  tests:                   $(label_rc "$TOP_RC")"
+
+          exit "$WHOLE_RC"
       - name: Verify fresh PostgreSQL bootstrap and runtime probes
         env:
           DATABASE_URL: postgresql://framed:framed-ci-password@127.0.0.1:5432/framed_public

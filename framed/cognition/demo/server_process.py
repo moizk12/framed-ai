@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import time
 import urllib.error
@@ -67,6 +68,8 @@ class ManagedServer:
         }
         if os.name == "nt":
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
         self.proc = subprocess.Popen(self.command, **popen_kwargs)
         if not wait_for_http(self.health_url, timeout=timeout):
             self.stop()
@@ -78,11 +81,17 @@ class ManagedServer:
         if self.proc is None:
             return
         if self.proc.poll() is None:
-            self.proc.terminate()
+            if os.name == "nt":
+                self.proc.terminate()
+            else:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
             try:
                 self.proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                self.proc.kill()
+                if os.name == "nt":
+                    self.proc.kill()
+                else:
+                    os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
                 self.proc.wait(timeout=5)
         wait_for_http_gone(self.health_url, timeout=timeout)
         if self.log_handle is not None:
